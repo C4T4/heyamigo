@@ -1,6 +1,6 @@
 {
   "name": "heyamigo",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "WhatsApp AI bot powered by Claude with long-term memory, browser control, and role-based access",
   "type": "module",
   "main": "dist/index.js",
