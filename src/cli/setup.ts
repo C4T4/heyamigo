@@ -246,7 +246,7 @@ export async function runSetup(): Promise<void> {
       'Claude is not logged in.\n' +
         'Run claude in your terminal and follow the login instructions:\n\n' +
         '  claude\n\n' +
-        'Once logged in, re-run: heyamigo setup',
+        'Once logged in, re-run: npx heyamigo setup',
     )
     process.exit(1)
   }
