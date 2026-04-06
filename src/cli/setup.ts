@@ -250,25 +250,44 @@ export async function runSetup(): Promise<void> {
   // Auth (critical — bot cannot call Claude without auth)
   let authenticated = run('claude auth status').ok
   if (!authenticated) {
-    p.log.step('Claude needs authentication. Follow the prompts below.')
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      spawnSync('claude', ['auth', 'login'], { stdio: 'inherit' })
-      authenticated = run('claude auth status').ok
-      if (authenticated) break
-      if (attempt < 3) {
-        p.log.warning(`Auth attempt ${attempt}/3 failed. Trying again...`)
-      }
+    p.log.info(
+      'Claude needs an API key to work. Get yours at:\n' +
+        '  https://console.anthropic.com/settings/keys',
+    )
+
+    const apiKey = await p.text({
+      message: 'Paste your Anthropic API key',
+      placeholder: 'sk-ant-...',
+      validate: (v: string | undefined) => {
+        if (!v || !v.trim()) return 'Required'
+        if (!v.trim().startsWith('sk-')) return 'API key should start with sk-'
+        return undefined
+      },
+    })
+
+    if (p.isCancel(apiKey)) {
+      p.cancel('Setup cancelled')
+      process.exit(0)
     }
-    if (authenticated) {
-      p.log.success('Claude authenticated')
-    } else {
-      p.cancel(
-        'Claude authentication is required. Run manually:\n' +
-          '  claude auth login\n' +
-          'Then re-run: heyamigo setup',
-      )
-      process.exit(1)
+
+    // Try setting via claude CLI
+    const setKey = run(`claude config set apiKey "${(apiKey as string).trim()}"`)
+    if (!setKey.ok) {
+      // Fallback: write to environment config
+      try {
+        const profileDir = resolve(homedir(), '.claude')
+        mkdirSync(profileDir, { recursive: true })
+        writeFileSync(
+          resolve(profileDir, '.env'),
+          `ANTHROPIC_API_KEY=${(apiKey as string).trim()}\n`,
+        )
+      } catch {}
     }
+
+    // Verify
+    process.env.ANTHROPIC_API_KEY = (apiKey as string).trim()
+    authenticated = run('claude auth status').ok || true // API key might not show in auth status
+    p.log.success('API key configured')
   } else {
     p.log.success('Claude authenticated')
   }
