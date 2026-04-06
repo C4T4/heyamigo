@@ -1,3 +1,4 @@
+import { execSync } from 'child_process'
 import { attachIncoming } from '../gateway/incoming.js'
 import { handleReply } from '../gateway/outgoing.js'
 import { logger } from '../logger.js'
@@ -6,6 +7,16 @@ import { replayPending } from '../queue/queue.js'
 import { startSocket } from '../wa/socket.js'
 
 export async function main(): Promise<void> {
+  try {
+    execSync('which claude', { stdio: 'pipe' })
+  } catch {
+    console.error(
+      'Claude CLI not found. Install it first:\n\n' +
+        '  npm install -g @anthropic-ai/claude-code\n',
+    )
+    process.exit(1)
+  }
+
   logger.info('heyamigo starting')
   startScheduler()
   await startSocket((sock) => {

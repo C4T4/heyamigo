@@ -1,5 +1,5 @@
 import * as p from '@clack/prompts'
-import { execSync, spawnSync } from 'child_process'
+import { execSync } from 'child_process'
 import {
   copyFileSync,
   existsSync,
@@ -240,48 +240,16 @@ export async function runSetup(): Promise<void> {
   p.log.success('Claude CLI found')
 
   // Auth (critical — bot uses your Claude subscription, not API)
-  let authenticated = run('claude auth status').ok
+  const authenticated = run('claude auth status').ok
   if (!authenticated) {
-    p.log.info(
-      'Claude needs to sign in with your Anthropic account.\n' +
-        'A URL will appear below. Copy it, open in your browser,\n' +
-        'and complete the sign-in. The CLI will detect it automatically.',
+    p.cancel(
+      'Claude is not logged in.\n' +
+        'Log in first, then re-run setup:\n\n' +
+        '  claude auth login',
     )
-
-    await p.confirm({
-      message: 'Ready to sign in?',
-      initialValue: true,
-    })
-
-    spawnSync('claude', ['auth', 'login'], { stdio: 'inherit' })
-
-    authenticated = run('claude auth status').ok
-    if (authenticated) {
-      p.log.success('Claude authenticated')
-    } else {
-      p.log.warning('Auth may not have completed.')
-      const retry = await p.confirm({
-        message: 'Try again?',
-        initialValue: true,
-      })
-      if (!p.isCancel(retry) && retry) {
-        spawnSync('claude', ['auth', 'login'], { stdio: 'inherit' })
-        authenticated = run('claude auth status').ok
-      }
-      if (authenticated) {
-        p.log.success('Claude authenticated')
-      } else {
-        p.cancel(
-          'Claude sign-in is required. Run manually:\n' +
-            '  claude auth login\n' +
-            'Then re-run: heyamigo setup',
-        )
-        process.exit(1)
-      }
-    }
-  } else {
-    p.log.success('Claude authenticated')
+    process.exit(1)
   }
+  p.log.success('Claude authenticated')
 
   {
 
