@@ -62,30 +62,26 @@ npm install -g @anthropic-ai/claude-code
 claude
 ```
 
-Run `claude` and follow the login instructions. After logging in, exit claude and run `npx @c4t4/heyamigo setup` again. You need an [Anthropic account](https://console.anthropic.com). The bot runs on your Claude subscription — no API keys needed.
+Run `claude` and follow the login instructions. You need an [Anthropic account](https://console.anthropic.com). After logging in, exit claude.
 
-### 2. Clone and set up
+### 2. Run the setup wizard
 
 ```bash
-git clone https://github.com/C4T4/heyamigo.git
-cd heyamigo
-npm install
-npm run setup
+npx @c4t4/heyamigo setup
 ```
 
-The wizard handles the rest:
+That's it. The wizard handles everything:
 - WhatsApp pairing (QR code + pairing code)
 - Browser setup (optional)
 - Personality selection
-- Knowledge import (optional)
 
-Then:
+### 3. Start the bot
 
 ```bash
-heyamigo start
+npx @c4t4/heyamigo start
 ```
 
-That's it. Runs in the background, auto-restarts on crash, survives SSH disconnect.
+Runs in the background, auto-restarts on crash, survives SSH disconnect.
 
 ---
 
