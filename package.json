@@ -9,14 +9,14 @@
   },
   "files": [
     "dist/",
-    "config/config.json",
+    "config/config.example.json",
     "config/access.example.json",
     "config/personalities/",
     "config/memory-instructions.md",
     "config/import-instructions.md",
     "config/import-instructions.HOWTO.md",
     "scripts/",
-    ".env.example",
+    ".gitignore",
     "README.md",
     "LICENSE"
   ],
