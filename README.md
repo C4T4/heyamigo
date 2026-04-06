@@ -171,13 +171,13 @@ All localhost. Nothing public.
 
 Three built-in:
 
-**Sharp** (default)
+[**Sharp**](config/personalities/sharp.md) (default)
 Talks like a smart friend at dinner. Specific, confident, never vague. Won't hedge, won't lecture, won't sound like a brochure. Calls things out when they're obvious, meets people where they actually are. Checks every reply against: would I be embarrassed saying this out loud?
 
-**Casual**
+[**Casual**](config/personalities/casual.md)
 Warm, relaxed, friend-over-coffee energy. Short messages, matches your vibe.
 
-**Professional**
+[**Professional**](config/personalities/professional.md)
 Clear, efficient, business-appropriate. Gets to the answer fast.
 
 Create your own: add a `.md` file to `config/personalities/`, point `config.json` at it.
