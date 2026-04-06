@@ -244,8 +244,9 @@ export async function runSetup(): Promise<void> {
   if (!authenticated) {
     p.cancel(
       'Claude is not logged in.\n' +
-        'Log in first, then re-run setup:\n\n' +
-        '  claude auth login',
+        'Run claude in your terminal and follow the login instructions:\n\n' +
+        '  claude\n\n' +
+        'Once logged in, re-run: heyamigo setup',
     )
     process.exit(1)
   }

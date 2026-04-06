@@ -59,10 +59,10 @@ Controls a real Chrome browser. Navigates pages, takes screenshots, sends them b
 
 ```bash
 npm install -g @anthropic-ai/claude-code
-claude auth login
+claude
 ```
 
-You need an [Anthropic account](https://console.anthropic.com). The bot runs on your Claude subscription — no API keys needed.
+Run `claude` and follow the login instructions. After logging in, exit claude and run `npx heyamigo setup` again. You need an [Anthropic account](https://console.anthropic.com). The bot runs on your Claude subscription — no API keys needed.
 
 ### 2. Clone and set up
 
