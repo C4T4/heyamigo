@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'fs'
+import { config } from '../config.js'
 import { masterIndexPath, treeIndexPath } from './paths.js'
 import { routeIndexes } from './router.js'
 import { ensureScaffold } from './store.js'
@@ -57,7 +58,11 @@ export function buildMemoryPreamble(params: {
 
   const sections: string[] = []
 
-  // Critical section always first
+  // Identity — tell Claude its name
+  const botName = config.triggers.aliases[0] ?? 'amigo'
+  sections.push(`[Identity]\nYour name is ${botName}. People call you ${botName} to get your attention.`)
+
+  // Critical section
   sections.push(
     buildCriticalSection({
       senderNumber: params.senderNumber,

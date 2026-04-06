@@ -769,33 +769,35 @@ export async function runSetup(): Promise<void> {
     }
   }
 
-  // ── Bot name / aliases ────────────────────────────────────────
+  // ── Name your amigo ───────────────────────────────────────────
   p.log.info(
-    'People trigger the bot by mentioning its name in a message. ' +
-    'You can set one or more trigger words.',
+    'Give your amigo a name. People mention this name in a message to get a reply. ' +
+      'You can add multiple names separated by commas.',
   )
 
-  const aliasInput = await p.text({
-    message: 'Bot trigger names (comma-separated)',
-    placeholder: 'bot, claude, ai',
-    initialValue: 'bot, claude, ai',
+  const nameInput = await p.text({
+    message: 'What should your amigo be called?',
+    placeholder: 'amigo',
+    initialValue: 'amigo',
   })
 
-  if (!p.isCancel(aliasInput)) {
-    const aliases = (aliasInput as string)
+  if (!p.isCancel(nameInput)) {
+    const names = (nameInput as string)
       .split(',')
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean)
-    if (aliases.length > 0) {
-      const configPath = resolve(cwd, 'config/config.json')
-      if (existsSync(configPath)) {
-        let cfg = readFileSync(configPath, 'utf-8')
+    if (names.length > 0) {
+      // Always include "heyamigo" as a hidden alias
+      const aliases = [...new Set([...names, 'heyamigo'])]
+      const cfgPath = resolve(cwd, 'config/config.json')
+      if (existsSync(cfgPath)) {
+        let cfg = readFileSync(cfgPath, 'utf-8')
         cfg = cfg.replace(
           /"aliases":\s*\[.*?\]/,
           `"aliases": ${JSON.stringify(aliases)}`,
         )
-        writeFileSync(configPath, cfg)
-        p.log.success(`Trigger names: ${aliases.join(', ')}`)
+        writeFileSync(cfgPath, cfg)
+        p.log.success(`Your amigo responds to: ${names.join(', ')}`)
       }
     }
   }
