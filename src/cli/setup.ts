@@ -1,5 +1,5 @@
 import * as p from '@clack/prompts'
-import { execSync } from 'child_process'
+import { execSync, spawnSync } from 'child_process'
 import {
   copyFileSync,
   existsSync,
@@ -25,6 +25,11 @@ function run(cmd: string): { ok: boolean; output: string } {
 function which(bin: string): string | null {
   const r = run(`which ${bin}`)
   return r.ok ? r.output : null
+}
+
+function runLive(cmd: string): boolean {
+  const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' })
+  return result.status === 0
 }
 
 function setConfigOwnerNumber(configPath: string, number: string): void {
@@ -157,15 +162,12 @@ export async function runSetup(): Promise<void> {
   }
 
   // ── Dependencies ─────────────────────────────────────────────
-  const s1 = p.spinner()
-  s1.start('Installing dependencies')
-  const npm = run('npm install --silent --no-fund --no-audit')
-  if (!npm.ok) {
-    s1.stop('npm install failed')
-    p.cancel('Check npm output and retry')
+  p.log.step('Installing dependencies...')
+  if (!runLive('npm install --no-fund --no-audit')) {
+    p.cancel('npm install failed. Check output above and retry.')
     process.exit(1)
   }
-  s1.stop('Dependencies installed')
+  p.log.success('Dependencies installed')
 
   // ── Config files ─────────────────────────────────────────────
   const configPath = resolve(cwd, 'config/config.json')
@@ -397,17 +399,12 @@ export async function runSetup(): Promise<void> {
         })
 
         if (!p.isCancel(installChrome) && installChrome) {
-          const sc = p.spinner()
-          sc.start('Installing Chromium')
-          const result = run(
-            'apt-get update -qq && apt-get install -y -qq chromium',
-          )
-          if (result.ok) {
-            sc.stop('Chromium installed')
+          p.log.step('Installing Chromium...')
+          if (runLive('apt-get update && apt-get install -y chromium')) {
+            p.log.success('Chromium installed')
             chromeFound = true
           } else {
-            sc.stop('Chromium install failed')
-            p.log.warning('Run manually: apt install -y chromium')
+            p.log.warning('Chromium install failed. Run manually: apt install -y chromium')
           }
         }
       }
@@ -432,22 +429,14 @@ export async function runSetup(): Promise<void> {
           )
 
           if (missing.length > 0) {
-            const sv = p.spinner()
-            sv.start(`Installing ${missing.join(', ')}`)
-            const result = run(
-              `apt-get install -y -qq ${missing.join(' ')}`,
-            )
-            sv.stop(
-              result.ok
-                ? 'noVNC dependencies installed'
-                : 'Some packages failed',
-            )
-            if (!result.ok) {
-              p.log.warning(
-                `Run manually: apt install -y ${missing.join(' ')}`,
-              )
-            } else {
+            p.log.step(`Installing ${missing.join(', ')}...`)
+            if (runLive(`apt-get install -y ${missing.join(' ')}`)) {
+              p.log.success('noVNC dependencies installed')
               vncInstalled = true
+            } else {
+              p.log.warning(
+                `Some packages failed. Run manually: apt install -y ${missing.join(' ')}`,
+              )
             }
           } else {
             p.log.success('noVNC dependencies already installed')
@@ -458,14 +447,9 @@ export async function runSetup(): Promise<void> {
 
       // ── Start browser ────────────────────────────────────────
       if (chromeFound) {
-        const sb = p.spinner()
-        sb.start('Starting Chrome' + (vncInstalled ? ' + noVNC' : ''))
+        p.log.step('Starting Chrome' + (vncInstalled ? ' + noVNC' : '') + '...')
         const scriptPath = resolve(cwd, 'scripts/start-browser.sh')
-        const startResult = run(`bash "${scriptPath}"`)
-        if (startResult.ok) {
-          sb.stop('Browser started')
-        } else {
-          sb.stop('Browser start had issues')
+        if (!runLive(`bash "${scriptPath}"`)) {
           p.log.warning(
             'You can start manually: bash scripts/start-browser.sh',
           )
