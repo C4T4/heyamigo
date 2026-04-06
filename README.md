@@ -55,6 +55,17 @@ Controls a real Chrome browser. Navigates pages, takes screenshots, sends them b
 
 ## Quick start
 
+### 1. Install Claude CLI and log in
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude auth login
+```
+
+You need an [Anthropic account](https://console.anthropic.com). The bot runs on your Claude subscription — no API keys needed.
+
+### 2. Clone and set up
+
 ```bash
 git clone https://github.com/C4T4/heyamigo.git
 cd heyamigo
@@ -62,9 +73,7 @@ npm install
 npm run setup
 ```
 
-The wizard handles everything:
-- Dependencies
-- Claude CLI + auth
+The wizard handles the rest:
 - WhatsApp pairing (QR code + pairing code)
 - Browser setup (optional)
 - Personality selection
@@ -229,7 +238,7 @@ Not compatible with serverless (Lambda, Vercel). Needs a persistent WebSocket co
 ## Requirements
 
 - Node.js 18+
-- Claude CLI + Anthropic account
+- [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) + Anthropic account
 - A WhatsApp account
 - **macOS or Linux** (Windows: use WSL)
 

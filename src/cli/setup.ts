@@ -227,25 +227,17 @@ export async function runSetup(): Promise<void> {
   }
 
   // ── Claude CLI (critical — bot cannot work without this) ─────
-  let claudePath = which('claude')
+  const claudePath = which('claude')
   if (!claudePath) {
-    const s2 = p.spinner()
-    s2.start('Installing Claude CLI')
-    run('npm install -g @anthropic-ai/claude-code')
-    claudePath = which('claude')
-    if (!claudePath) {
-      s2.stop('Claude CLI install failed')
-      p.cancel(
-        'Claude CLI is required. Install manually:\n' +
-          '  npm install -g @anthropic-ai/claude-code\n' +
-          'Then re-run: heyamigo setup',
-      )
-      process.exit(1)
-    }
-    s2.stop('Claude CLI installed')
-  } else {
-    p.log.success('Claude CLI found')
+    p.cancel(
+      'Claude CLI is required but was not found.\n' +
+        'Install it first, then re-run setup:\n\n' +
+        '  npm install -g @anthropic-ai/claude-code\n\n' +
+        'For other install methods see: https://docs.anthropic.com/en/docs/claude-code',
+    )
+    process.exit(1)
   }
+  p.log.success('Claude CLI found')
 
   // Auth (critical — bot uses your Claude subscription, not API)
   let authenticated = run('claude auth status').ok
