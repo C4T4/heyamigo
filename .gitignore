@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+
+# runtime storage (all user data)
+storage/
+
+# claude cli project settings (machine-specific)
+.claude/
+
+# config with private data (live copies, gitignored)
+config/config.json
+config/access.json
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# os
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+*.swp
