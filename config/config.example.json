@@ -1,0 +1,71 @@
+{
+  "whatsapp": {
+    "authDir": "./storage/auth",
+    "browserName": "WhatsApp Bot"
+  },
+
+  "owner": {
+    "number": "",
+    "treatAsAllowedEverywhere": true
+  },
+
+  "triggers": {
+    "aliases": ["heyamigo", "amigo", "claude", "clawd"],
+    "groupMode": "mention",
+    "dmMode": "mention",
+    "replyToBotCounts": true
+  },
+
+  "commands": {
+    "prefix": "/",
+    "reset": ["reset", "clear", "new"],
+    "status": ["status", "info"],
+    "reload": ["reload"]
+  },
+
+  "claude": {
+    "model": "claude-opus-4-6",
+    "personalityFile": "./config/personalities/sharp.md",
+    "addDirs": ["./config/knowledge"],
+    "outputFormat": "json",
+    "contextWindow": 200000
+  },
+
+  "bootstrap": {
+    "historyDepth": 50,
+    "includeHistory": true,
+    "includeChatMetadata": true
+  },
+
+  "reply": {
+    "quoteInGroups": true,
+    "chunkChars": 3500,
+    "chunkDelayMs": 800,
+    "typingIndicator": true,
+    "errorMessage": "Could not process that, please try again.",
+    "maxMessageAgeMs": 10800000
+  },
+
+  "storage": {
+    "messagesDir": "./storage/messages",
+    "sessionsFile": "./storage/sessions.json",
+    "mediaDir": "./storage/media",
+    "mediaRetentionDays": 7
+  },
+
+  "memory": {
+    "dir": "./storage/memory",
+    "instructionsFile": "./config/memory-instructions.md",
+    "importInstructionsFile": "./config/import-instructions.md",
+    "importPermissionMode": "acceptEdits",
+    "digestDebounceMs": 120000,
+    "sweepIntervalMs": 10800000,
+    "sweepMinNewMessages": 5,
+    "maxHistoryForDigest": 100
+  },
+
+  "logging": {
+    "level": "info",
+    "promptRetentionDays": 3
+  }
+}

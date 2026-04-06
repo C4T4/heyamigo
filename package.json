@@ -1,0 +1,67 @@
+{
+  "name": "@c4t4/heyamigo",
+  "version": "0.1.8",
+  "description": "WhatsApp AI bot powered by Claude with long-term memory, browser control, and role-based access",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "heyamigo": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist/",
+    "config/config.example.json",
+    "config/access.example.json",
+    "config/personalities/",
+    "config/memory-instructions.md",
+    "config/import-instructions.md",
+    "config/import-instructions.HOWTO.md",
+    "scripts/",
+    ".gitignore",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "tsx watch src/cli/index.ts dev",
+    "setup": "tsx src/cli/index.ts setup",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "whatsapp",
+    "chatbot",
+    "claude",
+    "ai",
+    "baileys",
+    "bot",
+    "anthropic"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/C4T4/heyamigo.git"
+  },
+  "author": "Catalin Waack",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.2.0",
+    "@hapi/boom": "^10.0.1",
+    "baileys": "7.0.0-rc.9",
+    "commander": "^14.0.3",
+    "fastq": "^1.17.1",
+    "pino": "^9.3.2",
+    "qrcode": "^1.5.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/qrcode": "^1.5.5",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3"
+  }
+}
