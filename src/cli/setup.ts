@@ -8,7 +8,10 @@ import {
   writeFileSync,
 } from 'fs'
 import { homedir } from 'os'
-import { resolve } from 'path'
+import { dirname, resolve } from 'path'
+import { fileURLToPath } from 'url'
+
+const __pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 function run(cmd: string): { ok: boolean; output: string } {
   try {
@@ -33,16 +36,10 @@ function setConfigOwnerNumber(configPath: string, number: string): void {
 }
 
 function findPackageDir(): string | null {
-  // Find where the heyamigo npm package is installed
-  try {
-    const main = require.resolve('heyamigo/package.json')
-    return resolve(main, '..')
-  } catch {}
-  // Fallback: check if we're already in a heyamigo project
-  try {
-    const r = resolve(__dirname, '..', '..')
-    if (existsSync(resolve(r, 'config', 'config.example.json'))) return r
-  } catch {}
+  // __pkgRoot = two levels up from dist/cli/ = package root
+  if (existsSync(resolve(__pkgRoot, 'config', 'config.example.json'))) {
+    return __pkgRoot
+  }
   return null
 }
 
