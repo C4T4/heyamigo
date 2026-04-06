@@ -247,47 +247,46 @@ export async function runSetup(): Promise<void> {
     p.log.success('Claude CLI found')
   }
 
-  // Auth (critical — bot cannot call Claude without auth)
+  // Auth (critical — bot uses your Claude subscription, not API)
   let authenticated = run('claude auth status').ok
   if (!authenticated) {
     p.log.info(
-      'Claude needs an API key to work. Get yours at:\n' +
-        '  https://console.anthropic.com/settings/keys',
+      'Claude needs to sign in with your Anthropic account.\n' +
+        'A URL will appear below. Copy it, open in your browser,\n' +
+        'and complete the sign-in. The CLI will detect it automatically.',
     )
 
-    const apiKey = await p.text({
-      message: 'Paste your Anthropic API key',
-      placeholder: 'sk-ant-...',
-      validate: (v: string | undefined) => {
-        if (!v || !v.trim()) return 'Required'
-        if (!v.trim().startsWith('sk-')) return 'API key should start with sk-'
-        return undefined
-      },
+    await p.confirm({
+      message: 'Ready to sign in?',
+      initialValue: true,
     })
 
-    if (p.isCancel(apiKey)) {
-      p.cancel('Setup cancelled')
-      process.exit(0)
-    }
+    spawnSync('claude', ['auth', 'login'], { stdio: 'inherit' })
 
-    // Try setting via claude CLI
-    const setKey = run(`claude config set apiKey "${(apiKey as string).trim()}"`)
-    if (!setKey.ok) {
-      // Fallback: write to environment config
-      try {
-        const profileDir = resolve(homedir(), '.claude')
-        mkdirSync(profileDir, { recursive: true })
-        writeFileSync(
-          resolve(profileDir, '.env'),
-          `ANTHROPIC_API_KEY=${(apiKey as string).trim()}\n`,
+    authenticated = run('claude auth status').ok
+    if (authenticated) {
+      p.log.success('Claude authenticated')
+    } else {
+      p.log.warning('Auth may not have completed.')
+      const retry = await p.confirm({
+        message: 'Try again?',
+        initialValue: true,
+      })
+      if (!p.isCancel(retry) && retry) {
+        spawnSync('claude', ['auth', 'login'], { stdio: 'inherit' })
+        authenticated = run('claude auth status').ok
+      }
+      if (authenticated) {
+        p.log.success('Claude authenticated')
+      } else {
+        p.cancel(
+          'Claude sign-in is required. Run manually:\n' +
+            '  claude auth login\n' +
+            'Then re-run: heyamigo setup',
         )
-      } catch {}
+        process.exit(1)
+      }
     }
-
-    // Verify
-    process.env.ANTHROPIC_API_KEY = (apiKey as string).trim()
-    authenticated = run('claude auth status').ok || true // API key might not show in auth status
-    p.log.success('API key configured')
   } else {
     p.log.success('Claude authenticated')
   }
