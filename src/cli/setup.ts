@@ -32,11 +32,77 @@ function setConfigOwnerNumber(configPath: string, number: string): void {
   } catch {}
 }
 
-export async function runSetup(): Promise<void> {
-  const cwd = process.cwd()
+function findPackageDir(): string | null {
+  // Find where the heyamigo npm package is installed
+  try {
+    const main = require.resolve('heyamigo/package.json')
+    return resolve(main, '..')
+  } catch {}
+  // Fallback: check if we're already in a heyamigo project
+  try {
+    const r = resolve(__dirname, '..', '..')
+    if (existsSync(resolve(r, 'config', 'config.example.json'))) return r
+  } catch {}
+  return null
+}
 
+function scaffoldProject(targetDir: string, pkgDir: string): void {
+  mkdirSync(targetDir, { recursive: true })
+
+  // Generate package.json for the project
+  const projectPkg = {
+    name: 'my-heyamigo',
+    private: true,
+    type: 'module',
+    dependencies: {
+      heyamigo: '*',
+    },
+  }
+  writeFileSync(
+    resolve(targetDir, 'package.json'),
+    JSON.stringify(projectPkg, null, 2) + '\n',
+  )
+
+  // Copy config templates
+  const configDir = resolve(targetDir, 'config')
+  mkdirSync(configDir, { recursive: true })
+  const configFiles = [
+    'config.example.json',
+    'access.example.json',
+    'memory-instructions.md',
+    'import-instructions.md',
+    'import-instructions.HOWTO.md',
+  ]
+  for (const f of configFiles) {
+    const src = resolve(pkgDir, 'config', f)
+    if (existsSync(src)) copyFileSync(src, resolve(configDir, f))
+  }
+
+  // Copy personalities
+  const persDir = resolve(configDir, 'personalities')
+  mkdirSync(persDir, { recursive: true })
+  for (const f of ['sharp.md', 'casual.md', 'professional.md']) {
+    const src = resolve(pkgDir, 'config', 'personalities', f)
+    if (existsSync(src)) copyFileSync(src, resolve(persDir, f))
+  }
+
+  // Copy scripts
+  const scriptsDir = resolve(targetDir, 'scripts')
+  mkdirSync(scriptsDir, { recursive: true })
+  const browserScript = resolve(pkgDir, 'scripts', 'start-browser.sh')
+  if (existsSync(browserScript)) {
+    copyFileSync(browserScript, resolve(scriptsDir, 'start-browser.sh'))
+    try { execSync(`chmod +x "${resolve(scriptsDir, 'start-browser.sh')}"`) } catch {}
+  }
+
+  // Copy .gitignore
+  const gi = resolve(pkgDir, '.gitignore')
+  if (existsSync(gi)) copyFileSync(gi, resolve(targetDir, '.gitignore'))
+}
+
+export async function runSetup(): Promise<void> {
   console.clear()
-  p.intro('WhatsApp AI Bot')
+  p.intro('heyamigo')
 
   // ── Node.js ──────────────────────────────────────────────────
   const nodeVer = run('node -v')
@@ -50,6 +116,48 @@ export async function runSetup(): Promise<void> {
     process.exit(1)
   }
   p.log.success(`Node.js ${nodeVer.output}`)
+
+  // ── Scaffold project if needed ───────────────────────────────
+  let cwd = process.cwd()
+  const isProject = existsSync(resolve(cwd, 'config', 'config.example.json'))
+
+  if (!isProject) {
+    const pkgDir = findPackageDir()
+
+    const dirName = await p.text({
+      message: 'Where to create the project?',
+      placeholder: './heyamigo',
+      initialValue: './heyamigo',
+    })
+
+    if (p.isCancel(dirName)) {
+      p.cancel('Setup cancelled')
+      process.exit(0)
+    }
+
+    const targetDir = resolve(cwd, dirName as string)
+
+    if (existsSync(targetDir) && existsSync(resolve(targetDir, 'config', 'config.example.json'))) {
+      p.log.info(`Project already exists at ${targetDir}`)
+      cwd = targetDir
+      process.chdir(cwd)
+    } else if (pkgDir) {
+      const s0 = p.spinner()
+      s0.start('Scaffolding project')
+      scaffoldProject(targetDir, pkgDir)
+      cwd = targetDir
+      process.chdir(cwd)
+      s0.stop(`Project created at ${targetDir}`)
+    } else {
+      p.cancel(
+        'Could not find heyamigo package files. Try:\n' +
+          '  git clone https://github.com/C4T4/heyamigo.git\n' +
+          '  cd heyamigo\n' +
+          '  npm install && npm run setup',
+      )
+      process.exit(1)
+    }
+  }
 
   // ── Dependencies ─────────────────────────────────────────────
   const s1 = p.spinner()
