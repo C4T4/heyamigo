@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'fs'
+import { resolve } from 'path'
 import { config } from '../config.js'
 import { masterIndexPath, treeIndexPath } from './paths.js'
 import { routeIndexes } from './router.js'
@@ -60,7 +61,9 @@ export function buildMemoryPreamble(params: {
 
   // Identity — tell Claude its name
   const botName = config.triggers.aliases[0] ?? 'amigo'
+  const personalityPath = resolve(process.cwd(), config.claude.personalityFile)
   sections.push(`[Identity]\nYour name is ${botName}. People call you ${botName} to get your attention.`)
+  sections.push(`[Character]\nWho you are is defined in ${personalityPath}. Stay consistent and loyal to it.`)
 
   // Capabilities
   sections.push(
