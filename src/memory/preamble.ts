@@ -63,7 +63,7 @@ export function buildMemoryPreamble(params: {
   const botName = config.triggers.aliases[0] ?? 'amigo'
   const personalityPath = resolve(process.cwd(), config.claude.personalityFile)
   sections.push(`[Identity]\nYour name is ${botName}. People call you ${botName} to get your attention.`)
-  sections.push(`[Character]\nWho you are is defined in ${personalityPath}. Stay consistent and loyal to it.`)
+  sections.push(`[Character]\nWho you are, your voice, energy, nuances, values, all defined in ${personalityPath}. Read it. Every aspect matters, not just the rules. Align every answer with it.`)
 
   // Capabilities
   sections.push(
