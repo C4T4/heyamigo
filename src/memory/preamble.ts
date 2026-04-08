@@ -77,7 +77,8 @@ export function buildMemoryPreamble(params: {
       'Browser: you have a real Chrome browser available via Playwright.\n' +
       'You can navigate to URLs, click, fill forms, take screenshots, and read page content.\n' +
       'Use the browser tools (mcp__playwright__*) when asked to visit websites, look something up, or take a screenshot.\n' +
-      'To send a screenshot back, take one with the browser tool, then include [IMAGE: /path/to/screenshot.png] in your reply.',
+      'To send a screenshot back, take one with the browser tool, then include [IMAGE: /path/to/screenshot.png] in your reply.\n\n' +
+      'File storage: if you need to save any files (screenshots, research, notes), always save them to storage/temp/. Never save files to the project root.',
   )
 
   // Critical section
