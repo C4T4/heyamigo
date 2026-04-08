@@ -224,9 +224,11 @@ export function checkAccess(params: {
     return storeOnly('group sender not in allowedSenders')
   }
 
-  if (fromMe) return storeOnly('dm owner chatting')
-
   const partnerNumber = jidDecode(jid)?.user ?? ''
+
+  // Self-chat: owner messaging themselves — respond like a direct conversation with the bot
+  const isSelfChat = fromMe && partnerNumber === config.owner.number
+  if (fromMe && !isSelfChat) return storeOnly('dm owner chatting')
   const dmEntry = current.dms.allowed.find((d) => d.number === partnerNumber)
   const mode = dmEntry?.mode ?? current.dms.defaultMode
   if (mode === 'off') return DROP

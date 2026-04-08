@@ -126,19 +126,27 @@ async function processMessages(
         continue
       }
 
+      // Self-chat: owner messaging themselves — always trigger
+      const isSelfChat = stored.fromMe && !isGroup &&
+        jidDecode(stored.jid)?.user === config.owner.number
+
       // Trigger gate: alias / @mention / reply-to-bot depending on mode
-      const trigger = checkTrigger({
-        isGroup,
-        text: stored.text,
-        msg,
-        sock,
-      })
-      if (!trigger.triggered) {
-        logger.info(
-          { ...logCtx, trigger: trigger.reason },
-          'message captured, no trigger',
-        )
-        continue
+      let triggerReason = isSelfChat ? 'self-chat' : ''
+      if (!isSelfChat) {
+        const trigger = checkTrigger({
+          isGroup,
+          text: stored.text,
+          msg,
+          sock,
+        })
+        if (!trigger.triggered) {
+          logger.info(
+            { ...logCtx, trigger: trigger.reason },
+            'message captured, no trigger',
+          )
+          continue
+        }
+        triggerReason = trigger.reason
       }
 
       const { role } = getRoleForContext(stored.senderNumber, isGroup)
@@ -168,7 +176,7 @@ async function processMessages(
       const input = `${memoryPreamble}\n\n---\n\n${core}`
 
       logger.info(
-        { ...logCtx, resume: !!existingSession, trigger: trigger.reason },
+        { ...logCtx, resume: !!existingSession, trigger: triggerReason },
         'message captured, enqueuing',
       )
 
