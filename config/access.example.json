@@ -52,14 +52,16 @@
       "jid": "120363xxxxx@g.us",
       "name": "Family Chat",
       "mode": "active",
-      "allowedSenders": "*"
+      "allowedSenders": "*",
+      "proactive": false
     },
     {
-      "_note": "Active group, only specific people can trigger",
+      "_note": "Active group, only specific people can trigger. Bot can also initiate messages here.",
       "jid": "120363yyyyy@g.us",
       "name": "Work Team",
       "mode": "active",
-      "allowedSenders": ["17861234567", "491701234567"]
+      "allowedSenders": ["17861234567", "491701234567"],
+      "proactive": true
     },
     {
       "_note": "Silent group: stores messages but never responds",
@@ -81,8 +83,8 @@
     "_readme": "Matched by chat partner number, not sender. Owner messages in DMs are always silent.",
     "defaultMode": "off",
     "allowed": [
-      { "_note": "friend can DM the bot", "number": "491701234567", "mode": "active" },
-      { "_note": "colleague, store messages but don't respond", "number": "5511987654321", "mode": "silent" }
+      { "_note": "friend can DM the bot, and bot can proactively message them", "number": "491701234567", "mode": "active", "proactive": true },
+      { "_note": "colleague, store messages but don't respond", "number": "5511987654321", "mode": "silent", "proactive": false }
     ]
   }
 }

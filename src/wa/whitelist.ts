@@ -26,11 +26,13 @@ const GroupEntrySchema = z.object({
   name: z.string(),
   mode: AccessModeSchema,
   allowedSenders: z.union([z.literal('*'), z.array(z.string())]),
+  proactive: z.boolean().default(false),
 })
 
 const DmEntrySchema = z.object({
   number: z.string(),
   mode: AccessModeSchema,
+  proactive: z.boolean().default(false),
 })
 
 const AccessSchema = z
@@ -120,6 +122,21 @@ function save(next: AccessConfig): void {
 
 export function getAccess(): AccessConfig {
   return current
+}
+
+// Guardrail for proactive (unsolicited) messaging. Returns true ONLY if the
+// target chat has an explicit proactive:true entry. Default is deny — no
+// journal/scheduler/observer may message a chat without explicit opt-in.
+export function canSendProactive(jid: string): boolean {
+  const isGroup = jid.endsWith('@g.us')
+  if (isGroup) {
+    const entry = current.groups.find((g) => g.jid === jid)
+    return entry?.proactive === true
+  }
+  const number = jidDecode(jid)?.user
+  if (!number) return false
+  const entry = current.dms.allowed.find((d) => d.number === number)
+  return entry?.proactive === true
 }
 
 export function getRole(senderNumber: string): {
@@ -256,6 +273,7 @@ export async function discoverGroupIfNew(
     name,
     mode: 'off',
     allowedSenders: config.owner.number ? [config.owner.number] : [],
+    proactive: false,
   }
   save({ ...current, groups: [...current.groups, entry] })
   logger.info(
