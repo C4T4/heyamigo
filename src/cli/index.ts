@@ -1,12 +1,23 @@
 #!/usr/bin/env node
+import { readFileSync } from 'fs'
+import { dirname, resolve } from 'path'
+import { fileURLToPath } from 'url'
 import { Command } from 'commander'
+
+const pkgPath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../package.json',
+)
+const pkgVersion = (JSON.parse(readFileSync(pkgPath, 'utf-8')) as {
+  version: string
+}).version
 
 const program = new Command()
 
 program
   .name('heyamigo')
   .description('WhatsApp AI Bot powered by Claude')
-  .version('0.1.0')
+  .version(pkgVersion)
 
 program
   .command('setup')
