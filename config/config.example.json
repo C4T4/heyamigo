@@ -6,7 +6,8 @@
 
   "owner": {
     "number": "",
-    "treatAsAllowedEverywhere": true
+    "treatAsAllowedEverywhere": true,
+    "timezone": "UTC"
   },
 
   "triggers": {
@@ -24,7 +25,7 @@
   },
 
   "claude": {
-    "model": "claude-opus-4-6",
+    "model": "claude-opus-4-7",
     "personalityFile": "./config/personalities/sharp.md",
     "addDirs": ["./config/knowledge"],
     "outputFormat": "json",
@@ -34,7 +35,8 @@
   "bootstrap": {
     "historyDepth": 50,
     "includeHistory": true,
-    "includeChatMetadata": true
+    "includeChatMetadata": true,
+    "recentContextDepth": 3
   },
 
   "reply": {

@@ -744,7 +744,7 @@ export async function runSetup(): Promise<void> {
     message: 'Choose a Claude model',
     options: [
       {
-        value: 'claude-opus-4-6',
+        value: 'claude-opus-4-7',
         label: 'Opus',
         hint: 'highest quality, recommended (default)',
       },
@@ -754,7 +754,7 @@ export async function runSetup(): Promise<void> {
         hint: 'faster, lower cost',
       },
     ],
-    initialValue: 'claude-opus-4-6',
+    initialValue: 'claude-opus-4-7',
   })
 
   if (!p.isCancel(model)) {
@@ -769,7 +769,7 @@ export async function runSetup(): Promise<void> {
       const label =
         model === 'claude-sonnet-4-6'
           ? 'Sonnet'
-          : model === 'claude-opus-4-6'
+          : model === 'claude-opus-4-7'
             ? 'Opus'
             : 'Haiku'
       p.log.success(`Model: ${label}`)

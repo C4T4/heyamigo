@@ -19,7 +19,7 @@ import {
   discoverGroupIfNew,
   getRoleForContext,
 } from '../wa/whitelist.js'
-import { buildInitPayload } from './bootstrap.js'
+import { buildInitPayload, buildRecentContext } from './bootstrap.js'
 import { tryCommand } from './commands.js'
 import { handleReply } from './outgoing.js'
 import { checkTrigger } from './triggers.js'
@@ -165,14 +165,22 @@ async function processMessages(
         isGroup,
         recentText,
       })
-      const core = existingSession
-        ? userContent
-        : await buildInitPayload({
-            jid: stored.jid,
-            sock,
-            userText: userContent,
-            userNumber: stored.senderNumber,
-          })
+      let core: string
+      if (existingSession) {
+        const recent = await buildRecentContext(
+          stored.jid,
+          config.bootstrap.recentContextDepth,
+        )
+        const current = `[Current message]\n${stored.senderNumber}: ${userContent}`
+        core = recent ? `${recent}\n${current}` : userContent
+      } else {
+        core = await buildInitPayload({
+          jid: stored.jid,
+          sock,
+          userText: userContent,
+          userNumber: stored.senderNumber,
+        })
+      }
       const input = `${memoryPreamble}\n\n---\n\n${core}`
 
       logger.info(

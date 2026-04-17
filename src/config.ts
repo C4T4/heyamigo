@@ -12,6 +12,7 @@ const ConfigSchema = z.object({
   owner: z.object({
     number: z.string(),
     treatAsAllowedEverywhere: z.boolean(),
+    timezone: z.string().default('UTC'),
   }),
   triggers: z.object({
     aliases: z.array(z.string()),
@@ -36,6 +37,7 @@ const ConfigSchema = z.object({
     historyDepth: z.number(),
     includeHistory: z.boolean(),
     includeChatMetadata: z.boolean(),
+    recentContextDepth: z.number().default(3),
   }),
   reply: z.object({
     quoteInGroups: z.boolean(),

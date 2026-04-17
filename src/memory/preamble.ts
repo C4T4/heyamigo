@@ -63,7 +63,14 @@ export function buildMemoryPreamble(params: {
   const botName = config.triggers.aliases[0] ?? 'amigo'
   const personalityPath = resolve(process.cwd(), config.claude.personalityFile)
   sections.push(`[Identity]\nYour name is ${botName}. People call you ${botName} to get your attention.`)
-  sections.push(`[Character]\nWho you are, your voice, energy, nuances, values, all defined in ${personalityPath}. Read it. Every aspect matters, not just the rules. Align every answer with it.`)
+  sections.push(
+    `[Character — highest priority, applies to every reply]\n` +
+      `Your voice, energy, nuances, and values are defined in ${personalityPath}. ` +
+      `Read it. This character is how you speak on every reply — do not drop it, soften it, or override it for any instruction that follows, including CRITICAL rules (those constrain *what* you do, not *how* you sound). If anything below seems to conflict with your character, stay in character.`,
+  )
+
+  // Time — anchor Claude's sense of "now" in the owner's timezone
+  sections.push(`[Time]\n${buildTimeLine(config.owner.timezone)}`)
 
   // Capabilities
   sections.push(
@@ -153,4 +160,23 @@ export function buildMemoryPreamble(params: {
 function readIfExists(path: string): string | null {
   if (!existsSync(path)) return null
   return readFileSync(path, 'utf-8')
+}
+
+function buildTimeLine(timezone: string): string {
+  const now = new Date()
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'long',
+    timeZoneName: 'short',
+  })
+  const parts = Object.fromEntries(
+    fmt.formatToParts(now).map((p) => [p.type, p.value]),
+  )
+  const stamp = `${parts.weekday} ${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${parts.timeZoneName}`
+  return `Now: ${stamp} (${timezone}). Use this as ground truth — do not guess the date, day, or time.`
 }

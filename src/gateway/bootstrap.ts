@@ -65,3 +65,17 @@ function formatLine(m: StoredMessage): string {
     m.direction === 'out' ? 'assistant' : m.pushName || m.senderNumber || 'user'
   return `${who} (${date}): ${m.text}`
 }
+
+export async function buildRecentContext(
+  jid: string,
+  depth: number,
+): Promise<string> {
+  if (depth <= 0) return ''
+  const history = await readLast(jid, depth + 1)
+  const prior = history.slice(0, -1)
+  if (!prior.length) return ''
+  const lines = ['[Recent context — messages preceding the current one]']
+  for (const m of prior) lines.push(formatLine(m))
+  lines.push('')
+  return lines.join('\n')
+}

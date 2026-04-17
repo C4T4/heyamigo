@@ -190,7 +190,7 @@ Core settings. The wizard sets these up, but you can edit anytime.
 {
   "owner": { "number": "17861234567" },
   "triggers": { "aliases": ["heyamigo", "amigo", "claude"], "groupMode": "mention" },
-  "claude": { "model": "claude-opus-4-6", "timeoutMs": 60000 },
+  "claude": { "model": "claude-opus-4-7", "timeoutMs": 60000 },
   "reply": { "quoteInGroups": true, "typingIndicator": true }
 }
 ```
