@@ -37,7 +37,88 @@ export type RunClaudeOpts = {
 
 export type RunClaudeResult = {
   stdout: string
+  stderr: string
   durationMs: number
+}
+
+// One NDJSON event from Claude CLI's stream-json output.
+export type StreamJsonEvent = {
+  type?: string
+  subtype?: string
+  [key: string]: unknown
+}
+
+export type ParsedStreamJson = {
+  result: string
+  sessionId: string | null
+  usage?: {
+    input_tokens?: number
+    cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
+    output_tokens?: number
+  }
+  isError: boolean
+  subtype?: string
+  numTurns?: number
+  eventTypes: string[]
+  events: StreamJsonEvent[]
+}
+
+// Parse Claude CLI's --output-format stream-json output. Each line is a JSON
+// event; the final event with type === 'result' carries the completion
+// summary (same shape as the old single-json output format). Returns null if
+// no result event is found — caller should treat that as an error.
+export function parseStreamJson(stdout: string): ParsedStreamJson | null {
+  const events: StreamJsonEvent[] = []
+  const eventTypes: string[] = []
+  const lines = stdout.split(/\r?\n/)
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    try {
+      const parsed = JSON.parse(trimmed) as StreamJsonEvent
+      events.push(parsed)
+      if (typeof parsed.type === 'string') eventTypes.push(parsed.type)
+    } catch {
+      // Ignore malformed lines — Claude CLI occasionally emits preamble or
+      // debug lines that aren't JSON; the structured events we need are
+      // always well-formed.
+    }
+  }
+
+  // Find the final result event. Walk from end to handle any stray events
+  // after 'result' (shouldn't happen but be defensive).
+  let resultEvent: StreamJsonEvent | null = null
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]!.type === 'result') {
+      resultEvent = events[i]!
+      break
+    }
+  }
+  if (!resultEvent) return null
+
+  return {
+    result: typeof resultEvent.result === 'string' ? resultEvent.result : '',
+    sessionId:
+      typeof resultEvent.session_id === 'string'
+        ? resultEvent.session_id
+        : null,
+    usage:
+      resultEvent.usage && typeof resultEvent.usage === 'object'
+        ? (resultEvent.usage as ParsedStreamJson['usage'])
+        : undefined,
+    isError: !!resultEvent.is_error,
+    subtype:
+      typeof resultEvent.subtype === 'string'
+        ? resultEvent.subtype
+        : undefined,
+    numTurns:
+      typeof resultEvent.num_turns === 'number'
+        ? resultEvent.num_turns
+        : undefined,
+    eventTypes,
+    events,
+  }
 }
 
 // Kill the process group of a detached child. Playwright MCP and any Chromium
@@ -74,6 +155,15 @@ export async function runClaude(
       // detached:true puts the child in its own process group, so killGroup
       // can SIGTERM the whole tree (Playwright MCP, Chromium, etc.) at once.
       detached: true,
+      // ANTHROPIC_LOG=debug surfaces the SDK's HTTP layer to stderr:
+      // request URLs, status codes, retries, rate-limit notices. We
+      // capture stderr and put a truncated copy into the promptlog so
+      // we can diagnose API hangs/rate-limits post-mortem instead of
+      // staring at "Claude subprocess is idle, why?".
+      env: {
+        ...process.env,
+        ANTHROPIC_LOG: process.env.ANTHROPIC_LOG ?? 'debug',
+      },
     })
 
     let stdout = ''
@@ -147,7 +237,7 @@ export async function runClaude(
         )
       }
 
-      resolvePromise({ stdout, durationMs })
+      resolvePromise({ stdout, stderr, durationMs })
     })
 
     child.stdin.write(input)

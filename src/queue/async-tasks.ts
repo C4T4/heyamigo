@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, resolve } from 'path'
-import { runClaude, TIMEOUT_MS } from '../ai/spawn.js'
+import { parseStreamJson, runClaude, TIMEOUT_MS } from '../ai/spawn.js'
 import { config } from '../config.js'
 import fastq from 'fastq'
 import type { queueAsPromised } from 'fastq'
@@ -159,7 +159,7 @@ function buildArgs(task: AsyncTask): string[] {
   const args: string[] = [
     '-p',
     '--output-format',
-    'json',
+    'stream-json',
     '--model',
     config.claude.model,
     '--permission-mode',
@@ -187,7 +187,7 @@ async function spawnClaudeForTask(
   prompt: string,
 ): Promise<string> {
   const args = buildArgs(task)
-  const { stdout, durationMs } = await runClaude({
+  const { stdout, stderr, durationMs } = await runClaude({
     args,
     input: prompt,
     timeoutMs: TIMEOUT_MS.async,
@@ -195,15 +195,15 @@ async function spawnClaudeForTask(
   })
   const startedAt = Date.now() - durationMs
 
-  let parsed: ClaudeJsonOutput
-  try {
-    parsed = JSON.parse(stdout) as ClaudeJsonOutput
-  } catch (err) {
-    throw new Error(`async task parse failed: ${(err as Error).message}`)
-  }
-  if (parsed.is_error || parsed.subtype !== 'success' || !parsed.result) {
+  const parsed = parseStreamJson(stdout)
+  if (!parsed) {
     throw new Error(
-      `async task bad output: ${parsed.result ?? stdout.slice(0, 200)}`,
+      `async task stream-json produced no result event: ${stdout.slice(0, 200)}`,
+    )
+  }
+  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
+    throw new Error(
+      `async task bad output: ${parsed.result || stdout.slice(0, 200)}`,
     )
   }
   const output = parsed.result.trim()
@@ -214,6 +214,8 @@ async function spawnClaudeForTask(
     input: prompt,
     output,
     durationMs,
+    stderr,
+    eventTypes: parsed.eventTypes,
   })
   return output
 }
@@ -509,7 +511,7 @@ function buildBrowserArgs(task: AsyncTask, sessionId: string | null): string[] {
   const args: string[] = [
     '-p',
     '--output-format',
-    'json',
+    'stream-json',
     '--model',
     config.claude.model,
     '--permission-mode',
@@ -550,6 +552,7 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
     `${Math.round((Date.now() - task.startedAt * 1000) / 1000)}s`
 
   let stdout: string
+  let stderr: string
   let durationMs: number
   try {
     const result = await runClaude({
@@ -559,6 +562,7 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
       caller: 'browser-task',
     })
     stdout = result.stdout
+    stderr = result.stderr
     durationMs = result.durationMs
   } catch (err) {
     logger.error(
@@ -575,13 +579,11 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
     return
   }
 
-  let parsed: ClaudeJsonOutput
-  try {
-    parsed = JSON.parse(stdout) as ClaudeJsonOutput
-  } catch (err) {
+  const parsed = parseStreamJson(stdout)
+  if (!parsed) {
     logger.error(
-      { err, id: task.id },
-      'browser task: failed to parse claude output',
+      { id: task.id },
+      'browser task stream-json produced no result event',
     )
     await initiate({
       jid: task.jid,
@@ -592,9 +594,9 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
     })
     return
   }
-  if (parsed.is_error || parsed.subtype !== 'success' || !parsed.result) {
+  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
     logger.error(
-      { parsed, id: task.id },
+      { id: task.id, subtype: parsed.subtype, isError: parsed.isError },
       'browser task bad output',
     )
     await initiate({
@@ -609,7 +611,7 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
 
   // Persist the session id. On first call Claude returns the new sessionId;
   // on resume it may return the same or a rotated one.
-  const returnedSessionId = parsed.session_id ?? null
+  const returnedSessionId = parsed.sessionId
   if (returnedSessionId) {
     const now = Math.floor(Date.now() / 1000)
     saveBrowserSession({
@@ -628,6 +630,8 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
     output: parsed.result,
     sessionId: returnedSessionId ?? undefined,
     durationMs,
+    stderr,
+    eventTypes: parsed.eventTypes,
   })
 
   // Route markers the same way the general async lane does.

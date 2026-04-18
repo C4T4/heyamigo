@@ -6,7 +6,7 @@ import {
 } from 'fs'
 import { dirname, resolve } from 'path'
 import { mkdirSync } from 'fs'
-import { runClaude, TIMEOUT_MS } from '../ai/spawn.js'
+import { parseStreamJson, runClaude, TIMEOUT_MS } from '../ai/spawn.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { logPrompt } from '../promptlog.js'
@@ -256,13 +256,13 @@ async function spawnGenerator(prompt: string): Promise<string> {
   const args = [
     '-p',
     '--output-format',
-    'json',
+    'stream-json',
     '--model',
     config.claude.model,
     '--permission-mode',
     'acceptEdits',
   ]
-  const { stdout, durationMs } = await runClaude({
+  const { stdout, stderr, durationMs } = await runClaude({
     args,
     input: prompt,
     timeoutMs: TIMEOUT_MS.background,
@@ -270,17 +270,15 @@ async function spawnGenerator(prompt: string): Promise<string> {
   })
   const startedAt = Date.now() - durationMs
 
-  let parsed: GenResult
-  try {
-    parsed = JSON.parse(stdout) as GenResult
-  } catch (err) {
+  const parsed = parseStreamJson(stdout)
+  if (!parsed) {
     throw new Error(
-      `compressed parse failed: ${(err as Error).message}`,
+      `compressed stream-json produced no result event: ${stdout.slice(0, 200)}`,
     )
   }
-  if (parsed.is_error || parsed.subtype !== 'success' || !parsed.result) {
+  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
     throw new Error(
-      `compressed bad output: ${parsed.result ?? stdout.slice(0, 200)}`,
+      `compressed bad output: ${parsed.result || stdout.slice(0, 200)}`,
     )
   }
   const output = parsed.result.trim()
@@ -291,6 +289,8 @@ async function spawnGenerator(prompt: string): Promise<string> {
     input: prompt,
     output,
     durationMs,
+    stderr,
+    eventTypes: parsed.eventTypes,
   })
   return output
 }

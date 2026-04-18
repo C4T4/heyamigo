@@ -1,4 +1,4 @@
-import { runClaude, TIMEOUT_MS } from '../ai/spawn.js'
+import { parseStreamJson, runClaude, TIMEOUT_MS } from '../ai/spawn.js'
 import { config } from '../config.js'
 import { initiate } from '../gateway/outgoing.js'
 import { logger } from '../logger.js'
@@ -39,13 +39,13 @@ async function spawnComposer(prompt: string): Promise<string> {
   const args = [
     '-p',
     '--output-format',
-    'json',
+    'stream-json',
     '--model',
     config.claude.model,
     '--permission-mode',
     'acceptEdits',
   ]
-  const { stdout, durationMs } = await runClaude({
+  const { stdout, stderr, durationMs } = await runClaude({
     args,
     input: prompt,
     timeoutMs: TIMEOUT_MS.background,
@@ -53,15 +53,15 @@ async function spawnComposer(prompt: string): Promise<string> {
   })
   const startedAt = Date.now() - durationMs
 
-  let parsed: ComposerOutput
-  try {
-    parsed = JSON.parse(stdout) as ComposerOutput
-  } catch (err) {
-    throw new Error(`nudger parse failed: ${(err as Error).message}`)
-  }
-  if (parsed.is_error || parsed.subtype !== 'success' || !parsed.result) {
+  const parsed = parseStreamJson(stdout)
+  if (!parsed) {
     throw new Error(
-      `nudger bad output: ${parsed.result ?? stdout.slice(0, 200)}`,
+      `nudger stream-json produced no result event: ${stdout.slice(0, 200)}`,
+    )
+  }
+  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
+    throw new Error(
+      `nudger bad output: ${parsed.result || stdout.slice(0, 200)}`,
     )
   }
   const output = parsed.result.trim()
@@ -72,6 +72,8 @@ async function spawnComposer(prompt: string): Promise<string> {
     input: prompt,
     output,
     durationMs,
+    stderr,
+    eventTypes: parsed.eventTypes,
   })
   return output
 }

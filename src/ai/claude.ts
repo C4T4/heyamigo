@@ -3,7 +3,7 @@ import { resolve } from 'path'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { logPrompt } from '../promptlog.js'
-import { runClaude, TIMEOUT_MS } from './spawn.js'
+import { parseStreamJson, runClaude, TIMEOUT_MS } from './spawn.js'
 
 export type AskClaudeParams = {
   input: string
@@ -20,21 +20,6 @@ export type AskClaudeResult = {
     cacheCreationTokens: number
     outputTokens: number
     numTurns: number
-  }
-}
-
-type ClaudeJsonOutput = {
-  type?: string
-  subtype?: string
-  session_id?: string
-  result?: string
-  is_error?: boolean
-  num_turns?: number
-  usage?: {
-    input_tokens?: number
-    cache_read_input_tokens?: number
-    cache_creation_input_tokens?: number
-    output_tokens?: number
   }
 }
 
@@ -66,10 +51,14 @@ export function reloadSystemPrompt(): void {
 }
 
 function buildArgs(params: AskClaudeParams): string[] {
+  // stream-json gives per-event visibility into the agent loop (system init,
+  // assistant messages, tool_use, tool_result, final result). We parse the
+  // final 'result' event for the return shape, and log event types for
+  // diagnostic purposes.
   const args: string[] = [
     '-p',
     '--output-format',
-    config.claude.outputFormat,
+    'stream-json',
     '--model',
     config.claude.model,
     '--permission-mode',
@@ -110,7 +99,7 @@ export async function askClaude(
     'spawning claude',
   )
 
-  const { stdout, durationMs } = await runClaude({
+  const { stdout, stderr, durationMs } = await runClaude({
     args,
     input: params.input,
     timeoutMs: TIMEOUT_MS.main,
@@ -118,21 +107,19 @@ export async function askClaude(
   })
 
   const startedAt = Date.now() - durationMs
-  let parsed: ClaudeJsonOutput
-  try {
-    parsed = JSON.parse(stdout) as ClaudeJsonOutput
-  } catch (err) {
-    throw new Error(
-      `failed to parse claude output: ${(err as Error).message}\nstdout: ${stdout.slice(0, 500)}`,
-    )
-  }
+  const parsed = parseStreamJson(stdout)
 
-  if (parsed.is_error || parsed.subtype !== 'success') {
+  if (!parsed) {
     throw new Error(
-      `claude returned error (subtype=${parsed.subtype}): ${parsed.result ?? ''}`,
+      `claude stream-json produced no result event; stdout: ${stdout.slice(0, 500)}`,
     )
   }
-  if (!parsed.result || !parsed.session_id) {
+  if (parsed.isError || parsed.subtype !== 'success') {
+    throw new Error(
+      `claude returned error (subtype=${parsed.subtype}): ${parsed.result}`,
+    )
+  }
+  if (!parsed.result || !parsed.sessionId) {
     throw new Error(
       `claude output missing result or session_id: ${stdout.slice(0, 200)}`,
     )
@@ -140,13 +127,13 @@ export async function askClaude(
 
   const result: AskClaudeResult = {
     reply: parsed.result,
-    sessionId: parsed.session_id,
+    sessionId: parsed.sessionId,
     usage: {
       inputTokens: parsed.usage?.input_tokens ?? 0,
       cacheReadTokens: parsed.usage?.cache_read_input_tokens ?? 0,
       cacheCreationTokens: parsed.usage?.cache_creation_input_tokens ?? 0,
       outputTokens: parsed.usage?.output_tokens ?? 0,
-      numTurns: parsed.num_turns ?? 0,
+      numTurns: parsed.numTurns ?? 0,
     },
   }
 
@@ -159,6 +146,8 @@ export async function askClaude(
     sessionId: result.sessionId,
     usage: result.usage,
     durationMs,
+    stderr,
+    eventTypes: parsed.eventTypes,
   })
 
   return result
