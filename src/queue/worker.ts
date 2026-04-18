@@ -7,7 +7,6 @@ import {
   createJournal,
   getJournal,
   isValidSlug,
-  updateJournalStatus,
 } from '../memory/journals.js'
 import { scheduleDigest } from '../memory/scheduler.js'
 import { enqueueAsyncTask } from './async-tasks.js'
@@ -42,7 +41,7 @@ async function callClaude(job: Job): Promise<Result> {
     updatedAt: Math.floor(Date.now() / 1000),
   })
 
-  const { clean, digest, journals, lifecycleOps, asyncTasks } =
+  const { clean, digest, journals, journalCreates, asyncTasks } =
     extractFlags(reply)
   if (digest) {
     logger.info(
@@ -55,58 +54,37 @@ async function callClaude(job: Job): Promise<Result> {
       reason: digest,
     })
   }
-  // Lifecycle ops run BEFORE entry appends so that a reply creating a new
-  // journal AND flagging its first entry in the same turn works correctly.
-  for (const op of lifecycleOps) {
+  // Creates run BEFORE entry appends so that a reply creating a new journal
+  // AND flagging its first entry in the same turn works correctly.
+  for (const op of journalCreates) {
     if (!isValidSlug(op.slug)) {
       logger.warn(
         { op, jid: job.jid },
-        'journal lifecycle op: invalid slug, dropped',
+        'JOURNAL-NEW: invalid slug, dropped',
       )
       continue
     }
     try {
-      if (op.kind === 'new') {
-        if (getJournal(op.slug)) {
-          logger.info(
-            { slug: op.slug },
-            'JOURNAL-NEW for existing slug, ignored',
-          )
-          continue
-        }
-        createJournal({
-          slug: op.slug,
-          name: titleCase(op.slug),
-          purpose: op.purpose,
-        })
+      if (getJournal(op.slug)) {
         logger.info(
-          { slug: op.slug, jid: job.jid },
-          'journal created via bot marker',
+          { slug: op.slug },
+          'JOURNAL-NEW for existing slug, ignored',
         )
-      } else {
-        const status =
-          op.kind === 'pause'
-            ? 'paused'
-            : op.kind === 'archive'
-              ? 'archived'
-              : 'active'
-        const updated = updateJournalStatus(op.slug, status)
-        if (updated) {
-          logger.info(
-            { slug: op.slug, status, jid: job.jid },
-            'journal status updated via bot marker',
-          )
-        } else {
-          logger.warn(
-            { op, jid: job.jid },
-            'journal lifecycle op: unknown slug, dropped',
-          )
-        }
+        continue
       }
+      createJournal({
+        slug: op.slug,
+        name: titleCase(op.slug),
+        purpose: op.purpose,
+      })
+      logger.info(
+        { slug: op.slug, jid: job.jid },
+        'journal created via bot marker',
+      )
     } catch (err) {
       logger.error(
         { err, op, jid: job.jid },
-        'journal lifecycle op failed',
+        'JOURNAL-NEW failed',
       )
     }
   }

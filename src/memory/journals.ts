@@ -417,10 +417,3 @@ export function saveNudgeState(slug: string, state: NudgeState): void {
   writeFileSync(path, JSON.stringify(state, null, 2) + '\n', 'utf-8')
 }
 
-export function snoozeJournal(slug: string, untilTs: number): boolean {
-  if (!journalExists(slug)) return false
-  const state = loadNudgeState(slug)
-  state.snoozedUntilTs = untilTs
-  saveNudgeState(slug, state)
-  return true
-}

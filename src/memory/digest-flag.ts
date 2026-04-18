@@ -1,20 +1,15 @@
 const TRAILING_TAG_RE =
-  /\[(DIGEST|JOURNAL|JOURNAL-NEW|JOURNAL-PAUSE|JOURNAL-RESUME|JOURNAL-ARCHIVE|ASYNC):\s*([^\]]+)\]\s*$/i
+  /\[(DIGEST|JOURNAL|JOURNAL-NEW|ASYNC):\s*([^\]]+)\]\s*$/i
 
 export type JournalFlag = { slug: string; note: string }
-export type JournalLifecycleOp =
-  | { kind: 'new'; slug: string; purpose: string }
-  | { kind: 'pause'; slug: string }
-  | { kind: 'resume'; slug: string }
-  | { kind: 'archive'; slug: string }
-
+export type JournalCreateOp = { slug: string; purpose: string }
 export type AsyncTaskFlag = { description: string }
 
 export type FlagResult = {
   clean: string
   digest: string | null
   journals: JournalFlag[]
-  lifecycleOps: JournalLifecycleOp[]
+  journalCreates: JournalCreateOp[]
   asyncTasks: AsyncTaskFlag[]
 }
 
@@ -25,17 +20,18 @@ export type LegacyFlagResult = { clean: string; flag: string | null }
 //   [DIGEST: <reason>]
 //   [JOURNAL:<slug> — <note>]         (append entry)
 //   [JOURNAL-NEW:<slug> — <purpose>]  (create journal)
-//   [JOURNAL-PAUSE:<slug>]
-//   [JOURNAL-RESUME:<slug>]
-//   [JOURNAL-ARCHIVE:<slug>]
 //   [ASYNC: <self-sufficient task description>]
-// Multiple tags are supported and can appear in any order at the tail.
-// Tags must be the LAST thing in the reply (after trimming trailing whitespace).
+// Multiple tags supported, any order at the tail. Tags must be the LAST
+// thing in the reply (after trimming trailing whitespace).
+//
+// Journal pause/resume/archive is intentionally NOT a marker. If the owner
+// wants those, Claude edits the journal's index.md frontmatter directly.
+// Keeping the marker vocabulary small keeps Claude's context tight.
 export function extractFlags(reply: string): FlagResult {
   let current = reply
   let digest: string | null = null
   const journals: JournalFlag[] = []
-  const lifecycleOps: JournalLifecycleOp[] = []
+  const journalCreates: JournalCreateOp[] = []
   const asyncTasks: AsyncTaskFlag[] = []
 
   while (true) {
@@ -54,26 +50,7 @@ export function extractFlags(reply: string): FlagResult {
     } else if (kind === 'JOURNAL-NEW') {
       const parsed = parseJournalPayload(payload)
       if (parsed) {
-        lifecycleOps.unshift({
-          kind: 'new',
-          slug: parsed.slug,
-          purpose: parsed.note,
-        })
-      }
-    } else if (
-      kind === 'JOURNAL-PAUSE' ||
-      kind === 'JOURNAL-RESUME' ||
-      kind === 'JOURNAL-ARCHIVE'
-    ) {
-      const slug = payload.trim().toLowerCase()
-      if (/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
-        const op =
-          kind === 'JOURNAL-PAUSE'
-            ? 'pause'
-            : kind === 'JOURNAL-RESUME'
-              ? 'resume'
-              : 'archive'
-        lifecycleOps.unshift({ kind: op, slug })
+        journalCreates.unshift({ slug: parsed.slug, purpose: parsed.note })
       }
     } else if (kind === 'ASYNC') {
       if (payload.length >= 8) {
@@ -84,7 +61,7 @@ export function extractFlags(reply: string): FlagResult {
     current = trimmed.slice(0, match.index).trimEnd()
   }
 
-  return { clean: current, digest, journals, lifecycleOps, asyncTasks }
+  return { clean: current, digest, journals, journalCreates, asyncTasks }
 }
 
 // Legacy helper kept so existing callers still compile.
