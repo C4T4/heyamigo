@@ -10,6 +10,7 @@ import {
   updateJournalStatus,
 } from '../memory/journals.js'
 import { scheduleDigest } from '../memory/scheduler.js'
+import { enqueueAsyncTask } from './async-tasks.js'
 import type { Job, Result } from './types.js'
 
 function isStaleSessionError(err: unknown): boolean {
@@ -41,7 +42,8 @@ async function callClaude(job: Job): Promise<Result> {
     updatedAt: Math.floor(Date.now() / 1000),
   })
 
-  const { clean, digest, journals, lifecycleOps } = extractFlags(reply)
+  const { clean, digest, journals, lifecycleOps, asyncTasks } =
+    extractFlags(reply)
   if (digest) {
     logger.info(
       { jid: job.jid, number: job.senderNumber, reason: digest },
@@ -121,6 +123,20 @@ async function callClaude(job: Job): Promise<Result> {
         'JOURNAL flag pointed at unknown slug, dropped',
       )
     }
+  }
+
+  // Async tasks: Claude delegated long work (browser scrapes, multi-step
+  // research, etc.) to the background lane. The clean reply above is the
+  // user-facing ack and will be sent normally. The async tasks run stateless
+  // in their own queue and report back via initiate() when done.
+  for (const t of asyncTasks) {
+    enqueueAsyncTask({
+      jid: job.jid,
+      senderNumber: job.senderNumber,
+      description: t.description,
+      originatingMessage: job.text,
+      allowedTools: job.allowedTools ?? 'all',
+    })
   }
 
   return { reply: clean }

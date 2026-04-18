@@ -1,5 +1,5 @@
 const TRAILING_TAG_RE =
-  /\[(DIGEST|JOURNAL|JOURNAL-NEW|JOURNAL-PAUSE|JOURNAL-RESUME|JOURNAL-ARCHIVE):\s*([^\]]+)\]\s*$/i
+  /\[(DIGEST|JOURNAL|JOURNAL-NEW|JOURNAL-PAUSE|JOURNAL-RESUME|JOURNAL-ARCHIVE|ASYNC):\s*([^\]]+)\]\s*$/i
 
 export type JournalFlag = { slug: string; note: string }
 export type JournalLifecycleOp =
@@ -8,11 +8,14 @@ export type JournalLifecycleOp =
   | { kind: 'resume'; slug: string }
   | { kind: 'archive'; slug: string }
 
+export type AsyncTaskFlag = { description: string }
+
 export type FlagResult = {
   clean: string
   digest: string | null
   journals: JournalFlag[]
   lifecycleOps: JournalLifecycleOp[]
+  asyncTasks: AsyncTaskFlag[]
 }
 
 // Backward-compat type alias for older imports
@@ -25,6 +28,7 @@ export type LegacyFlagResult = { clean: string; flag: string | null }
 //   [JOURNAL-PAUSE:<slug>]
 //   [JOURNAL-RESUME:<slug>]
 //   [JOURNAL-ARCHIVE:<slug>]
+//   [ASYNC: <self-sufficient task description>]
 // Multiple tags are supported and can appear in any order at the tail.
 // Tags must be the LAST thing in the reply (after trimming trailing whitespace).
 export function extractFlags(reply: string): FlagResult {
@@ -32,6 +36,7 @@ export function extractFlags(reply: string): FlagResult {
   let digest: string | null = null
   const journals: JournalFlag[] = []
   const lifecycleOps: JournalLifecycleOp[] = []
+  const asyncTasks: AsyncTaskFlag[] = []
 
   while (true) {
     const trimmed = current.replace(/\s+$/, '')
@@ -70,12 +75,16 @@ export function extractFlags(reply: string): FlagResult {
               : 'archive'
         lifecycleOps.unshift({ kind: op, slug })
       }
+    } else if (kind === 'ASYNC') {
+      if (payload.length >= 8) {
+        asyncTasks.unshift({ description: payload })
+      }
     }
 
     current = trimmed.slice(0, match.index).trimEnd()
   }
 
-  return { clean: current, digest, journals, lifecycleOps }
+  return { clean: current, digest, journals, lifecycleOps, asyncTasks }
 }
 
 // Legacy helper kept so existing callers still compile.

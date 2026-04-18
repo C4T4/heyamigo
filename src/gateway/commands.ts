@@ -13,6 +13,7 @@ import {
   type JournalStatus,
 } from '../memory/journals.js'
 import { runDigestNow } from '../memory/scheduler.js'
+import { listAsyncTasks } from '../queue/async-tasks.js'
 import { sendText } from '../wa/sender.js'
 
 export type CommandContext = {
@@ -102,6 +103,49 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     }
     const rest = trimmed.slice(prefix.length + cmd.length).trim()
     await handleJournalCmd(ctx, rest)
+    return true
+  }
+
+  if (cmd === 'tasks') {
+    if (!isOwner(ctx.senderNumber)) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        'Tasks are owner-only.',
+        ctx.quoted,
+      )
+      return true
+    }
+    const rest = trimmed.slice(prefix.length + cmd.length).trim().toLowerCase()
+    const scope = rest === 'all' ? 'all' : 'chat'
+    const tasks = scope === 'all' ? listAsyncTasks() : listAsyncTasks(ctx.jid)
+    if (tasks.length === 0) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        scope === 'all'
+          ? 'No async tasks in progress.'
+          : 'No async tasks in progress for this chat. Use /tasks all to see all chats.',
+        ctx.quoted,
+      )
+      return true
+    }
+    const now = Math.floor(Date.now() / 1000)
+    const lines =
+      scope === 'all'
+        ? [`Async tasks (${tasks.length}):`]
+        : [`Async tasks in this chat (${tasks.length}):`]
+    for (const t of tasks) {
+      const age = now - t.startedAt
+      const ageStr =
+        age < 60 ? `${age}s` : age < 3600 ? `${Math.floor(age / 60)}m` : `${Math.floor(age / 3600)}h`
+      const desc = t.description.length > 100
+        ? t.description.slice(0, 97) + '...'
+        : t.description
+      const prefix = scope === 'all' ? `[${t.jid.slice(0, 18)}] ` : ''
+      lines.push(`- ${prefix}${desc} (${ageStr})`)
+    }
+    await sendText(ctx.sock, ctx.jid, lines.join('\n'), ctx.quoted)
     return true
   }
 

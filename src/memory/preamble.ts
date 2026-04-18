@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { config } from '../config.js'
+import { listAsyncTasks } from '../queue/async-tasks.js'
 import {
   buildJournalsPreambleBlock,
   ensureJournalsScaffold,
@@ -169,6 +170,23 @@ export function buildMemoryPreamble(params: {
     instructions.push(JOURNAL_REMINDER)
   }
 
+  // Async tasks in progress for this chat — so Claude doesn't re-promise or
+  // contradict work already running in the background.
+  const asyncTasks = listAsyncTasks(params.jid)
+  if (asyncTasks.length > 0) {
+    const now = Math.floor(Date.now() / 1000)
+    const lines = ['You have background tasks currently running for this chat:']
+    for (const t of asyncTasks) {
+      const ageSec = Math.max(0, now - t.startedAt)
+      lines.push(`- "${t.description}" (started ${formatAge(ageSec)} ago)`)
+    }
+    lines.push(
+      '',
+      'Do NOT re-start or re-promise these. Reply referencing that they are in progress if relevant, but do not emit another [ASYNC:...] for the same work.',
+    )
+    sections.push(`[Async tasks in progress]\n${lines.join('\n')}`)
+  }
+
   sections.push(`[Instruction]\n${instructions.join('\n\n')}`)
 
   return sections.join('\n\n')
@@ -177,6 +195,12 @@ export function buildMemoryPreamble(params: {
 function readIfExists(path: string): string | null {
   if (!existsSync(path)) return null
   return readFileSync(path, 'utf-8')
+}
+
+function formatAge(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  return `${Math.floor(seconds / 3600)}h${Math.floor((seconds % 3600) / 60)}m`
 }
 
 function buildTimeLine(timezone: string): string {

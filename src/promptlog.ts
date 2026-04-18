@@ -10,6 +10,7 @@ export type PromptLogEntry = {
     | 'importer'
     | 'journal-observer'
     | 'journal-nudger'
+    | 'async-task'
   args: string[]
   input: string
   output?: string
