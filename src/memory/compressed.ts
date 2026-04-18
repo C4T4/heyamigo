@@ -257,6 +257,7 @@ async function spawnGenerator(prompt: string): Promise<string> {
     '-p',
     '--output-format',
     'stream-json',
+    '--verbose',
     '--model',
     config.claude.model,
     '--permission-mode',
