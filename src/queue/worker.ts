@@ -1,7 +1,8 @@
 import { askClaude } from '../ai/claude.js'
 import { clearSession, setSession, setUsage } from '../ai/sessions.js'
 import { logger } from '../logger.js'
-import { extractDigestFlag } from '../memory/digest-flag.js'
+import { extractFlags } from '../memory/digest-flag.js'
+import { appendEntry } from '../memory/journals.js'
 import { scheduleDigest } from '../memory/scheduler.js'
 import type { Job, Result } from './types.js'
 
@@ -34,17 +35,31 @@ async function callClaude(job: Job): Promise<Result> {
     updatedAt: Math.floor(Date.now() / 1000),
   })
 
-  const { clean, flag } = extractDigestFlag(reply)
-  if (flag) {
+  const { clean, digest, journals } = extractFlags(reply)
+  if (digest) {
     logger.info(
-      { jid: job.jid, number: job.senderNumber, reason: flag },
+      { jid: job.jid, number: job.senderNumber, reason: digest },
       'DIGEST flag raised, scheduling',
     )
     scheduleDigest({
       jid: job.jid,
       number: job.senderNumber,
-      reason: flag,
+      reason: digest,
     })
+  }
+  for (const j of journals) {
+    const ok = appendEntry(j.slug, {
+      source: 'reactive',
+      jid: job.jid,
+      senderNumber: job.senderNumber,
+      note: j.note,
+    })
+    if (!ok) {
+      logger.warn(
+        { slug: j.slug, jid: job.jid },
+        'JOURNAL flag pointed at unknown slug, dropped',
+      )
+    }
   }
 
   return { reply: clean }

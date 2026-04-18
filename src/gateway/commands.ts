@@ -2,6 +2,15 @@ import type { WAMessage, WASocket } from 'baileys'
 import { clearSession, getSessionInfo } from '../ai/sessions.js'
 import { reloadSystemPrompt } from '../ai/claude.js'
 import { config } from '../config.js'
+import {
+  createJournal,
+  getJournal,
+  isValidSlug,
+  listJournals,
+  readEntries,
+  updateJournalStatus,
+  type JournalStatus,
+} from '../memory/journals.js'
 import { runDigestNow } from '../memory/scheduler.js'
 import { sendText } from '../wa/sender.js'
 
@@ -80,5 +89,228 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     return true
   }
 
+  if (cmd === 'journal' || cmd === 'journals') {
+    if (!isOwner(ctx.senderNumber)) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        'Journals are owner-only.',
+        ctx.quoted,
+      )
+      return true
+    }
+    const rest = trimmed.slice(prefix.length + cmd.length).trim()
+    await handleJournalCmd(ctx, rest)
+    return true
+  }
+
   return false
+}
+
+function isOwner(senderNumber: string): boolean {
+  return !!config.owner.number && senderNumber === config.owner.number
+}
+
+async function handleJournalCmd(
+  ctx: CommandContext,
+  rest: string,
+): Promise<void> {
+  const [subRaw, ...argParts] = rest.split(/\s+/)
+  const sub = (subRaw ?? 'list').toLowerCase()
+  const args = argParts.join(' ').trim()
+
+  if (sub === 'list' || sub === '') {
+    const journals = listJournals()
+    if (journals.length === 0) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        'No journals yet. Create one with:\n/journal create <slug> <purpose>',
+        ctx.quoted,
+      )
+      return
+    }
+    const lines = ['Journals:']
+    for (const j of journals) {
+      lines.push(`- ${j.slug} [${j.status}]: ${j.purpose || j.name}`)
+    }
+    await sendText(ctx.sock, ctx.jid, lines.join('\n'), ctx.quoted)
+    return
+  }
+
+  if (sub === 'create' || sub === 'new') {
+    const [slugRaw, ...purposeParts] = args.split(/\s+/)
+    const slug = (slugRaw ?? '').toLowerCase()
+    const purpose = purposeParts.join(' ').trim()
+    if (!slug || !purpose) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        'Usage: /journal create <slug> <purpose>\nExample: /journal create health Track sleep, symptoms, meds, mood',
+        ctx.quoted,
+      )
+      return
+    }
+    if (!isValidSlug(slug)) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        `Invalid slug "${slug}". Use lowercase letters, digits, hyphens. Max 48 chars.`,
+        ctx.quoted,
+      )
+      return
+    }
+    if (getJournal(slug)) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        `Journal "${slug}" already exists.`,
+        ctx.quoted,
+      )
+      return
+    }
+    try {
+      const j = createJournal({
+        slug,
+        name: titleCase(slug),
+        purpose,
+      })
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        `Journal "${j.slug}" created and active. I'll start tagging relevant entries. Use /journal show ${j.slug} to inspect.`,
+        ctx.quoted,
+      )
+    } catch (err) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        `Create failed: ${(err as Error).message}`,
+        ctx.quoted,
+      )
+    }
+    return
+  }
+
+  if (sub === 'show' || sub === 'info') {
+    const slug = args.split(/\s+/)[0]?.toLowerCase() ?? ''
+    const j = getJournal(slug)
+    if (!j) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        `No journal "${slug}".`,
+        ctx.quoted,
+      )
+      return
+    }
+    const lines = [
+      `${j.name} (${j.slug}) [${j.status}]`,
+      j.purpose,
+    ]
+    if (j.fields.length) lines.push(`Fields: ${j.fields.join(', ')}`)
+    if (j.cadence.checkin) lines.push(`Check-in: ${j.cadence.checkin}`)
+    if (j.cadence.followup_after)
+      lines.push(`Follow-up after: ${j.cadence.followup_after}`)
+    if (j.cadence.nudge_if_silent)
+      lines.push(`Nudge if silent: ${j.cadence.nudge_if_silent}`)
+    const entries = readEntries(j.slug, 5)
+    if (entries.length) {
+      lines.push('', 'Recent entries:')
+      for (const e of entries) {
+        const d = new Date(e.ts * 1000)
+          .toISOString()
+          .slice(0, 16)
+          .replace('T', ' ')
+        lines.push(`- [${d}] ${e.note}`)
+      }
+    } else {
+      lines.push('', '(no entries yet)')
+    }
+    await sendText(ctx.sock, ctx.jid, lines.join('\n'), ctx.quoted)
+    return
+  }
+
+  if (sub === 'entries') {
+    const [slugRaw, nRaw] = args.split(/\s+/)
+    const slug = (slugRaw ?? '').toLowerCase()
+    const n = Math.max(1, Math.min(50, Number(nRaw) || 10))
+    if (!getJournal(slug)) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        `No journal "${slug}".`,
+        ctx.quoted,
+      )
+      return
+    }
+    const entries = readEntries(slug, n)
+    if (!entries.length) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        `No entries in "${slug}" yet.`,
+        ctx.quoted,
+      )
+      return
+    }
+    const lines = [`Last ${entries.length} entries in "${slug}":`]
+    for (const e of entries) {
+      const d = new Date(e.ts * 1000)
+        .toISOString()
+        .slice(0, 16)
+        .replace('T', ' ')
+      lines.push(`- [${d}] (${e.source}) ${e.note}`)
+    }
+    await sendText(ctx.sock, ctx.jid, lines.join('\n'), ctx.quoted)
+    return
+  }
+
+  if (sub === 'pause' || sub === 'resume' || sub === 'archive' || sub === 'activate') {
+    const slug = args.split(/\s+/)[0]?.toLowerCase() ?? ''
+    if (!getJournal(slug)) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        `No journal "${slug}".`,
+        ctx.quoted,
+      )
+      return
+    }
+    const status: JournalStatus =
+      sub === 'pause'
+        ? 'paused'
+        : sub === 'archive'
+          ? 'archived'
+          : 'active'
+    const updated = updateJournalStatus(slug, status)
+    await sendText(
+      ctx.sock,
+      ctx.jid,
+      `Journal "${slug}" is now ${updated?.status}.`,
+      ctx.quoted,
+    )
+    return
+  }
+
+  await sendText(
+    ctx.sock,
+    ctx.jid,
+    [
+      'Journal commands:',
+      '/journal list',
+      '/journal create <slug> <purpose>',
+      '/journal show <slug>',
+      '/journal entries <slug> [n]',
+      '/journal pause|resume|archive <slug>',
+    ].join('\n'),
+    ctx.quoted,
+  )
+}
+
+function titleCase(slug: string): string {
+  return slug
+    .split('-')
+    .map((p) => (p ? p[0]!.toUpperCase() + p.slice(1) : p))
+    .join(' ')
 }

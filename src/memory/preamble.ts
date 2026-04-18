@@ -1,12 +1,18 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { config } from '../config.js'
+import {
+  buildJournalsPreambleBlock,
+  ensureJournalsScaffold,
+} from './journals.js'
 import { masterIndexPath, treeIndexPath } from './paths.js'
 import { routeIndexes } from './router.js'
 import { ensureScaffold } from './store.js'
 import { getRoleForContext, type Role, type RoleName } from '../wa/whitelist.js'
 
 const DIGEST_REMINDER = `When something worth remembering happens (new preference, key fact, life event, changed plan), append [DIGEST: <one-line reason>] to the END of your reply. It will be stripped before sending. Flag sparingly.`
+
+const JOURNAL_REMINDER = `When a message contains info for one of the journals above, append [JOURNAL:<slug> — <one-line note>] to the END of your reply. Multiple tags OK. Only use slugs listed; never invent. Full rules are in your memory instructions.`
 
 function buildCriticalSection(params: {
   senderNumber: string
@@ -51,6 +57,7 @@ export function buildMemoryPreamble(params: {
   recentText?: string
 }): string {
   ensureScaffold()
+  ensureJournalsScaffold()
 
   const { name: roleName, role, userName } = getRoleForContext(
     params.senderNumber,
@@ -152,7 +159,17 @@ export function buildMemoryPreamble(params: {
     sections.push(`${label}\n${entityBlocks.join('\n\n')}`)
   }
 
-  sections.push(`[Instruction]\n${DIGEST_REMINDER}`)
+  // Journals — owner-scoped, shown globally across all chats.
+  const isOwner =
+    !!config.owner.number && params.senderNumber === config.owner.number
+  const journalsBlock = isOwner ? buildJournalsPreambleBlock() : null
+  const instructions: string[] = [DIGEST_REMINDER]
+  if (journalsBlock) {
+    sections.push(`[Journals: active]\n${journalsBlock}`)
+    instructions.push(JOURNAL_REMINDER)
+  }
+
+  sections.push(`[Instruction]\n${instructions.join('\n\n')}`)
 
   return sections.join('\n\n')
 }

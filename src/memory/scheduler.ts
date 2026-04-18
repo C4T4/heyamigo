@@ -95,6 +95,18 @@ async function sweep(): Promise<void> {
         )
     }
   }
+
+  // Journal observer pass: scans recent messages per active journal for
+  // entries Claude missed (i.e. when the bot wasn't mentioned). Runs once
+  // per sweep cycle; each journal maintains its own last-scanned-ts.
+  try {
+    const { runJournalObserverSweep } = await import(
+      './journal-observer.js'
+    )
+    await runJournalObserverSweep()
+  } catch (err) {
+    logger.error({ err }, 'journal observer sweep failed')
+  }
 }
 
 let sweepTimer: NodeJS.Timeout | null = null

@@ -4,7 +4,7 @@ import { config } from './config.js'
 
 export type PromptLogEntry = {
   ts: number
-  caller: 'worker' | 'digester' | 'importer'
+  caller: 'worker' | 'digester' | 'importer' | 'journal-observer'
   args: string[]
   input: string
   output?: string

@@ -1,6 +1,6 @@
 {
   "name": "@c4t4/heyamigo",
-  "version": "0.1.18",
+  "version": "0.2.0",
   "description": "WhatsApp AI bot powered by Claude with long-term memory, browser control, and role-based access",
   "type": "module",
   "main": "dist/index.js",
