@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { config } from '../config.js'
 import { listAsyncTasks } from '../queue/async-tasks.js'
+import { readCompressed } from './compressed.js'
 import {
   buildJournalsPreambleBlock,
   ensureJournalsScaffold,
@@ -111,6 +112,15 @@ export function buildMemoryPreamble(params: {
     // Guest: no memory at all
     sections.push(`[Instruction]\n${DIGEST_REMINDER}`)
     return sections.join('\n\n')
+  }
+
+  // Rolling state index: people + chats + buckets + active journals, 1-3
+  // lines each with path pointers. This is the primary memory surface.
+  // Tree indexes + routed entity indexes remain below as a secondary layer
+  // for Claude when the compressed view doesn't carry enough.
+  const compressed = readCompressed()
+  if (compressed) {
+    sections.push(`[State: current]\n${compressed.trim()}`)
   }
 
   // Full or self: load master + tree indexes

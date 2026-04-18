@@ -3,6 +3,7 @@ import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { logPrompt } from '../promptlog.js'
 import { readLast, type StoredMessage } from '../store/messages.js'
+import { markCompressedDirty } from './compressed.js'
 import {
   readBrief,
   readProfile,
@@ -252,4 +253,8 @@ export async function runDigest(params: {
       logger.error({ err, number }, 'profile digest failed')
     }
   }
+
+  // A profile or brief changed. Mark compressed view dirty so the next
+  // session boot or ensureCompressedFresh() call regenerates it.
+  markCompressedDirty()
 }

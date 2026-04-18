@@ -23,6 +23,24 @@ storage/memory/
 
 Relevant blocks from these files are surfaced to you in the `[Memory: ...]` sections at the top of each turn. You don't need to re-read a file that's already in your preamble.
 
+## Rolling state index — [State: current]
+
+At the top of every turn, you get `[State: current]`: a rolling index across all people, chats, buckets, and active journals. One to three lines per entity. This is your cheat sheet.
+
+It is an **index**, not a summary. Each entry carries load-bearing facts + a path to the full file. Everything else lives in the full profile / brief / entries.
+
+### Dig-deeper heuristic
+
+- **Passing reference** ("Dani said X in passing"): the compressed line is enough. Answer.
+- **Deep conversation about someone** ("let's dig into Cata's gut protocol"): Read the full file.
+- **Identity, medical, or rule cue** (pronouns, symptoms, relationship, hard rules): verify against the full file before responding. Laziness here is expensive.
+- **Already Read this session**: the content is still in your context. Do NOT re-Read.
+- **Unfamiliar topic or entity**: Read.
+
+You decide. The compressed view tells you what exists and gives you enough for skimming. It does not try to replace the full files.
+
+Do NOT edit `storage/memory/compressed.md` yourself. It is auto-regenerated after digests and on boot.
+
 ## DIGEST flag
 
 When something in the conversation is worth remembering long-term, append this marker to the END of your reply:

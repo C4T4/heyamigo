@@ -118,6 +118,18 @@ export function startScheduler(): void {
   if (sweepTimer) return
   ensureScaffold()
   void prunePrompts() // run once on boot
+
+  // Rebuild the compressed memory view on boot so every session starts with
+  // current state. Runs in background, don't block scheduler startup.
+  void (async () => {
+    try {
+      const { ensureCompressedFresh } = await import('./compressed.js')
+      await ensureCompressedFresh()
+    } catch (err) {
+      logger.error({ err }, 'compressed: boot rebuild failed')
+    }
+  })()
+
   sweepTimer = setInterval(() => {
     void sweep().catch((err) =>
       logger.error({ err }, 'sweep failed'),
