@@ -114,7 +114,7 @@ export function reloadAsyncSystemPrompt(): void {
 
 function buildPrompt(task: AsyncTask): string {
   const lines = [
-    `You are a BACKGROUND WORKER. The chat already got its ack ("on it, will report back"). Your output does NOT go to chat by default — it routes through markers to memory files, same way the main chat Claude routes things.`,
+    `You are a BACKGROUND WORKER doing a delayed chat reply. The chat already got an ack ("on it, will report back"). Now you do the work, and your output IS the follow-up chat reply — the full answer the owner is waiting for.`,
     ``,
     `TASK:`,
     task.description,
@@ -124,27 +124,32 @@ function buildPrompt(task: AsyncTask): string {
     ``,
     `Sender: ${task.senderName ?? task.senderNumber}`,
     ``,
-    `HOW TO ROUTE YOUR FINDINGS (markers, at the END of your output, one per line):`,
-    `- [JOURNAL:<slug> — <one-line finding>] for each distinct finding that belongs in a journal. ONE marker per finding — ten findings = ten markers, not one long paragraph. Only use slugs that already exist (check the Journals list in your preamble), or emit [JOURNAL-NEW:<slug> — <purpose>] first to create one in the same output.`,
-    `- [JOURNAL-NEW:<slug> — <one-line purpose>] to create a new journal when the task clearly needs tracking but no journal covers it yet. Propose the slug yourself, conservatively.`,
+    `HOW TO OUTPUT:`,
+    `- Write the full answer as a natural chat reply. Same voice, same style as the main chat Claude. What the owner would have gotten if you'd answered inline, just delayed.`,
+    `- Open with a short "about the X you asked about..." reference so the owner knows which task this is (they may have asked for several). One sentence, then the content.`,
+    `- Concrete findings, no filler. Numbers, names, dates. If you found 10 creators, list them — don't say "multiple creators".`,
+    `- If the task failed or hit a wall (login wall, empty page, bot-detection, timeout), say so honestly and briefly. Don't fabricate.`,
+    ``,
+    `OPTIONAL MARKERS (at the END of your output, same pattern as main chat):`,
+    `- [JOURNAL:<slug> — <one-line finding>] for any finding that belongs in an active journal. These run IN ADDITION to your chat reply — they file structured entries in journals/<slug>/entries.jsonl for future reference, dedup, and cross-session memory. Use existing slugs only (check [Journals: active] in your preamble). ONE marker per finding.`,
+    `- [JOURNAL-NEW:<slug> — <one-line purpose>] if the task clearly deserves a new journal that doesn't exist yet. Conservative — only when the topic is a recurring tracking surface, not a one-off.`,
     `- [DIGEST: <one-line reason>] if you learned something durable about the owner or chat that should update the profile/brief.`,
     ``,
     `CONSTRAINTS:`,
     `- Do NOT emit [ASYNC:...]. No recursive delegation.`,
-    `- Do NOT frame your output as a chat message. No "here's what I found:", no "About the task:". The markers ARE the output.`,
-    `- Keep any pre-marker text SHORT — one sentence max, or empty. Long pre-marker prose is suppressed and not sent to chat. Put the real content inside markers.`,
-    `- If the task failed or the tools didn't produce a usable result (login wall, empty page, bot-detection, timeout), output a short clean message (no markers) explaining what happened. That short text IS sent to chat so the owner knows. Do not fabricate findings.`,
-    `- Stay fully in character.`,
+    `- Markers are bonus persistence, not a substitute for the chat reply. Always write the chat reply first.`,
+    `- Stay fully in character (personality).`,
     ``,
-    `EXAMPLE for an IG scrape task:`,
+    `EXAMPLE for an IG scrape of rivoara_official (with journal tracking):`,
+    `About the @rivoara_official check: bio is "Premium shower filter for HT aftercare". Last 3 posts: day-5 routine walkthrough, filter-science deep dive, Turkey clinic partnership announcement. Grid is clean, ~200 followers. Pattern: aftercare positioning is the lead, product is secondary.`,
+    ``,
     `[JOURNAL:rivoara-spy — IG bio: "Premium shower filter for HT aftercare"]`,
-    `[JOURNAL:rivoara-spy — IG post: day-5 routine angle live]`,
-    `[JOURNAL:rivoara-spy — IG post: Turkey clinic partnership visible in post 3]`,
+    `[JOURNAL:rivoara-spy — IG recent posts: day-5 routine, filter science, Turkey clinic partnership]`,
     ``,
     `EXAMPLE for a failure:`,
-    `Instagram hit login wall on @rivoara_official after 2 navigation attempts. No public data accessible. Auth needs refreshing.`,
+    `About the @rivoara_official check: Instagram threw a login wall after the first navigation. Can't read the bio or posts without auth. The VNC Chrome session looks expired — worth re-logging.`,
     ``,
-    `Do the work now. Then emit your markers.`,
+    `Do the work now. Write the reply. Markers optional at the end.`,
   ]
   return lines.join('\n')
 }
@@ -298,39 +303,36 @@ async function runTask(task: AsyncTask): Promise<void> {
     })
   }
 
-  // Decide what to send to chat.
-  const leftover = clean.trim()
+  // The clean (marker-stripped) text IS the chat reply. Always send it when
+  // present. Markers fired in parallel above are bonus persistence —
+  // journal entries, digests, new journal creation — not a substitute for
+  // the chat reply.
+  const chatText = clean.trim()
   const anyMarkerFired =
     appendedCount > 0 || journalCreates.length > 0 || digest !== null
 
-  let chatText: string | null = null
-  if (!anyMarkerFired) {
-    // No markers — fall back to sending the output as a chat message so the
-    // owner isn't left with silence. Covers both "Claude ignored the marker
-    // rule" and legitimate "short failure explanation" cases.
-    chatText = leftover || null
-  } else if (leftover.length > 0 && leftover.length <= 400) {
-    // Markers fired AND a short pre-marker line — likely an intentional
-    // failure explanation or completion note. Send it.
-    chatText = leftover
-  } else if (leftover.length > 400) {
-    // Long pre-marker prose despite markers firing — Claude didn't follow
-    // the routing contract. Suppress the prose; log for inspection.
-    logger.warn(
-      {
-        id: task.id,
-        jid: task.jid,
-        chars: leftover.length,
-      },
-      'async task produced long pre-marker prose, suppressing chat send',
-    )
-  }
-  // Otherwise: markers fired, no leftover — success, silent. Findings live
-  // in the journal files now.
-
-  if (chatText) {
+  if (chatText.length > 0) {
     await initiate({ jid: task.jid, text: chatText })
+  } else if (anyMarkerFired) {
+    // Worker emitted only markers, no chat text. That's contract-breaking
+    // (chat reply is the primary output) but recoverable — send a short
+    // completion note so the owner isn't left with silence.
+    const bits: string[] = []
+    if (appendedCount > 0) {
+      bits.push(`${appendedCount} journal ${appendedCount === 1 ? 'entry' : 'entries'}`)
+    }
+    if (journalCreates.length > 0) {
+      bits.push(
+        `${journalCreates.length} journal${journalCreates.length === 1 ? '' : 's'} created`,
+      )
+    }
+    if (digest) bits.push('digest scheduled')
+    await initiate({
+      jid: task.jid,
+      text: `Done. ${bits.join(', ')}.`,
+    })
   }
+  // Else: no chat text AND no markers — worker produced nothing. Log only.
 
   logger.info(
     {
@@ -340,7 +342,7 @@ async function runTask(task: AsyncTask): Promise<void> {
       appended: appendedCount,
       createdJournals: journalCreates.length,
       digestFired: !!digest,
-      chatSent: chatText ? chatText.length : 0,
+      chatSent: chatText.length,
     },
     'async task completed',
   )
