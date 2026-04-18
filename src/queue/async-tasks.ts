@@ -1,5 +1,5 @@
-import { readFileSync } from 'fs'
-import { resolve } from 'path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { dirname, resolve } from 'path'
 import { runClaude, TIMEOUT_MS } from '../ai/spawn.js'
 import { config } from '../config.js'
 import fastq from 'fastq'
@@ -24,6 +24,7 @@ type ClaudeJsonOutput = {
   subtype?: string
   result?: string
   is_error?: boolean
+  session_id?: string
 }
 
 // Concurrency: how many async Claude workers can run simultaneously.
@@ -357,4 +358,354 @@ function titleCaseSlug(slug: string): string {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s
+}
+
+// ============================================================================
+// BROWSER LANE
+// ============================================================================
+// A second async lane dedicated to browser work. Key differences vs the
+// general async lane above:
+//
+// - Concurrency is 1. Serialized against itself because (a) the shared
+//   Playwright MCP + Chrome is one physical resource, (b) the session below
+//   is persistent and --resume doesn't allow concurrent resumes.
+// - One GLOBAL persistent session stored at storage/browser-session.json.
+//   First browser task bootstraps fresh (captures sessionId). Subsequent
+//   tasks spawn with --resume <sessionId>, so the browser Claude carries
+//   memory of prior tasks across runs.
+// - Task description is added as a new user message to the persistent
+//   session. The worker sees the accumulated history automatically.
+
+function browserSessionFilePath(): string {
+  return resolve(process.cwd(), config.memory.dir, 'browser-session.json')
+}
+
+type BrowserSessionState = {
+  sessionId: string | null
+  createdAt: number
+  lastUsedAt: number
+  resumeCount: number
+}
+
+function loadBrowserSession(): BrowserSessionState {
+  const path = browserSessionFilePath()
+  if (!existsSync(path)) {
+    return { sessionId: null, createdAt: 0, lastUsedAt: 0, resumeCount: 0 }
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as Partial<BrowserSessionState>
+    return {
+      sessionId: parsed.sessionId ?? null,
+      createdAt: parsed.createdAt ?? 0,
+      lastUsedAt: parsed.lastUsedAt ?? 0,
+      resumeCount: parsed.resumeCount ?? 0,
+    }
+  } catch {
+    return { sessionId: null, createdAt: 0, lastUsedAt: 0, resumeCount: 0 }
+  }
+}
+
+function saveBrowserSession(state: BrowserSessionState): void {
+  const path = browserSessionFilePath()
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify(state, null, 2) + '\n', 'utf-8')
+}
+
+// Reset the browser session. Callable from outside if the session gets
+// corrupted or we want a fresh start. Not wired into any command yet.
+export function resetBrowserSession(): void {
+  saveBrowserSession({
+    sessionId: null,
+    createdAt: 0,
+    lastUsedAt: 0,
+    resumeCount: 0,
+  })
+  logger.info('browser session reset')
+}
+
+const browserQueue: queueAsPromised<AsyncTask, void> = fastq.promise<
+  unknown,
+  AsyncTask,
+  void
+>(async (task) => {
+  inProgress.set(task.id, task)
+  try {
+    await runBrowserTask(task)
+  } catch (err) {
+    logger.error(
+      { err, id: task.id, jid: task.jid },
+      'browser task failed unexpectedly',
+    )
+  } finally {
+    inProgress.delete(task.id)
+  }
+}, 1)
+
+export function enqueueBrowserTask(
+  input: Omit<AsyncTask, 'id' | 'startedAt'>,
+): AsyncTask {
+  const task: AsyncTask = {
+    ...input,
+    id: `browser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    startedAt: Math.floor(Date.now() / 1000),
+  }
+  logger.info(
+    {
+      id: task.id,
+      jid: task.jid,
+      description: task.description.slice(0, 200),
+    },
+    'browser task enqueued',
+  )
+  browserQueue.push(task).catch((err) =>
+    logger.error({ err, id: task.id }, 'browser queue push failed'),
+  )
+  return task
+}
+
+function buildBrowserPrompt(task: AsyncTask, isResume: boolean): string {
+  // Framing tuned for the dedicated browser worker.
+  const lines = [
+    isResume
+      ? `You are the BROWSER WORKER. Another task just came in. You already have memory of prior browser tasks in this session — act on it accordingly. Use the shared Chrome at localhost:9222 via Playwright MCP (already logged into the owner's sessions like TikTok, Instagram, etc. — do NOT log out, do NOT start a new browser instance).`
+      : `You are the BROWSER WORKER. You run in a persistent session dedicated to browser tasks for the owner. The chat already got its ack; your output IS the follow-up chat reply the owner is waiting for. Use the shared Chrome at localhost:9222 via Playwright MCP (already authenticated with the owner's sessions — TikTok, Instagram, etc. — do NOT log out, do NOT launch a new browser).`,
+    ``,
+    `TASK:`,
+    task.description,
+    ``,
+    `ORIGINAL USER MESSAGE (for reference):`,
+    task.originatingMessage,
+    ``,
+    `Sender: ${task.senderName ?? task.senderNumber}`,
+    ``,
+    `HOW TO OUTPUT:`,
+    `- Write the full answer as a natural chat reply. Same voice as the main chat Claude, just delayed.`,
+    `- Open with a short "about the X you asked about..." reference — the owner may have asked for several things.`,
+    `- Concrete findings only. Numbers, names, dates. If you found 10 creators, list them.`,
+    `- Failure mode: page hung, login wall, bot-detection, empty feed — say so briefly. Do NOT fabricate.`,
+    ``,
+    `BAIL CONDITIONS (stop and report, don't burn the clock):`,
+    `- Same tool call with same args retried 3 times → stuck, bail.`,
+    `- 3 consecutive empty/error responses from the site → site is throttling, bail.`,
+    `- Any single tool call running past 5 min → bail.`,
+    `- Autonomy: pick and proceed on low-stakes choices (which hashtag first, which profile to open). For IRREVERSIBLE writes (DM send, post, purchase), do NOT act — stop and report candidates so the owner can confirm in chat.`,
+    ``,
+    `OPTIONAL MARKERS (at the END of your output):`,
+    `- [JOURNAL:<slug> — <one-line finding>] per finding that belongs in an active journal.`,
+    `- [JOURNAL-NEW:<slug> — <purpose>] if a clearly-recurring tracking surface doesn't have a journal yet.`,
+    `- [DIGEST: <reason>] if a durable fact about the owner/chat came up.`,
+    ``,
+    `CONSTRAINTS:`,
+    `- Do NOT emit [ASYNC:...] or [ASYNC-BROWSER:...]. No recursion.`,
+    `- Markers are bonus persistence, not a substitute for the reply.`,
+    `- Stay fully in character (personality).`,
+    ``,
+    `Do the work. Write the reply. Markers optional at the end.`,
+  ]
+  return lines.join('\n')
+}
+
+function buildBrowserArgs(task: AsyncTask, sessionId: string | null): string[] {
+  const args: string[] = [
+    '-p',
+    '--output-format',
+    'json',
+    '--model',
+    config.claude.model,
+    '--permission-mode',
+    'acceptEdits',
+  ]
+  if (sessionId) {
+    // Resume — system prompt and memory-dirs are already baked into session
+    args.push('--resume', sessionId)
+  } else {
+    // First call — bootstrap the persistent session
+    args.push('--append-system-prompt', systemPrompt())
+    for (const dir of config.claude.addDirs) {
+      args.push('--add-dir', resolve(process.cwd(), dir))
+    }
+  }
+  // Memory + media dirs re-added each call (harmless if already baked; needed
+  // on fresh bootstrap; lets the browser worker Read updated memory files
+  // between turns).
+  args.push('--add-dir', resolve(process.cwd(), config.memory.dir))
+  args.push('--add-dir', resolve(process.cwd(), config.storage.mediaDir))
+  if (
+    task.allowedTools &&
+    task.allowedTools !== 'all' &&
+    task.allowedTools.length > 0
+  ) {
+    args.push('--allowedTools', task.allowedTools.join(','))
+  }
+  return args
+}
+
+async function runBrowserTask(task: AsyncTask): Promise<void> {
+  const session = loadBrowserSession()
+  const isResume = !!session.sessionId
+  const prompt = buildBrowserPrompt(task, isResume)
+  const args = buildBrowserArgs(task, session.sessionId)
+  const startedAtMs = Date.now()
+  const elapsedLog = () =>
+    `${Math.round((Date.now() - task.startedAt * 1000) / 1000)}s`
+
+  let stdout: string
+  let durationMs: number
+  try {
+    const result = await runClaude({
+      args,
+      input: prompt,
+      timeoutMs: TIMEOUT_MS.async,
+      caller: 'browser-task',
+    })
+    stdout = result.stdout
+    durationMs = result.durationMs
+  } catch (err) {
+    logger.error(
+      { err, id: task.id, jid: task.jid, elapsed: elapsedLog() },
+      'browser task claude call failed',
+    )
+    await initiate({
+      jid: task.jid,
+      text: `Heads up: the browser task "${truncate(
+        task.description,
+        80,
+      )}" failed. Ask me again and I'll retry.`,
+    })
+    return
+  }
+
+  let parsed: ClaudeJsonOutput
+  try {
+    parsed = JSON.parse(stdout) as ClaudeJsonOutput
+  } catch (err) {
+    logger.error(
+      { err, id: task.id },
+      'browser task: failed to parse claude output',
+    )
+    await initiate({
+      jid: task.jid,
+      text: `Heads up: the browser task "${truncate(
+        task.description,
+        80,
+      )}" returned an unparseable response.`,
+    })
+    return
+  }
+  if (parsed.is_error || parsed.subtype !== 'success' || !parsed.result) {
+    logger.error(
+      { parsed, id: task.id },
+      'browser task bad output',
+    )
+    await initiate({
+      jid: task.jid,
+      text: `Heads up: the browser task "${truncate(
+        task.description,
+        80,
+      )}" returned an error.`,
+    })
+    return
+  }
+
+  // Persist the session id. On first call Claude returns the new sessionId;
+  // on resume it may return the same or a rotated one.
+  const returnedSessionId = parsed.session_id ?? null
+  if (returnedSessionId) {
+    const now = Math.floor(Date.now() / 1000)
+    saveBrowserSession({
+      sessionId: returnedSessionId,
+      createdAt: session.createdAt || now,
+      lastUsedAt: now,
+      resumeCount: (session.resumeCount ?? 0) + (isResume ? 1 : 0),
+    })
+  }
+
+  void logPrompt({
+    ts: Math.floor(startedAtMs / 1000),
+    caller: 'browser-task',
+    args,
+    input: prompt,
+    output: parsed.result,
+    sessionId: returnedSessionId ?? undefined,
+    durationMs,
+  })
+
+  // Route markers the same way the general async lane does.
+  const { extractFlags } = await import('../memory/digest-flag.js')
+  const { clean, digest, journals, journalCreates } = extractFlags(
+    parsed.result,
+  )
+
+  const { appendEntry, createJournal, getJournal, isValidSlug } =
+    await import('../memory/journals.js')
+  for (const op of journalCreates) {
+    if (!isValidSlug(op.slug)) continue
+    if (getJournal(op.slug)) continue
+    try {
+      createJournal({
+        slug: op.slug,
+        name: titleCaseSlug(op.slug),
+        purpose: op.purpose,
+      })
+      logger.info(
+        { slug: op.slug, id: task.id },
+        'journal created via browser task marker',
+      )
+    } catch (err) {
+      logger.error({ err, op, id: task.id }, 'browser JOURNAL-NEW failed')
+    }
+  }
+  let appendedCount = 0
+  for (const j of journals) {
+    const ok = appendEntry(j.slug, {
+      source: 'async',
+      jid: task.jid,
+      senderNumber: task.senderNumber,
+      note: j.note,
+    })
+    if (ok) appendedCount++
+  }
+  if (digest) {
+    const { scheduleDigest } = await import('../memory/scheduler.js')
+    scheduleDigest({
+      jid: task.jid,
+      number: task.senderNumber,
+      reason: digest,
+    })
+  }
+
+  const chatText = clean.trim()
+  if (chatText.length > 0) {
+    await initiate({ jid: task.jid, text: chatText })
+  } else if (
+    appendedCount > 0 ||
+    journalCreates.length > 0 ||
+    digest !== null
+  ) {
+    const bits: string[] = []
+    if (appendedCount > 0) {
+      bits.push(`${appendedCount} journal ${appendedCount === 1 ? 'entry' : 'entries'}`)
+    }
+    if (journalCreates.length > 0) {
+      bits.push(
+        `${journalCreates.length} journal${journalCreates.length === 1 ? '' : 's'} created`,
+      )
+    }
+    if (digest) bits.push('digest scheduled')
+    await initiate({ jid: task.jid, text: `Done. ${bits.join(', ')}.` })
+  }
+
+  logger.info(
+    {
+      id: task.id,
+      jid: task.jid,
+      elapsed: elapsedLog(),
+      isResume,
+      appended: appendedCount,
+      createdJournals: journalCreates.length,
+      digestFired: !!digest,
+      chatSent: chatText.length,
+    },
+    'browser task completed',
+  )
 }

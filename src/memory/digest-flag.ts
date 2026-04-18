@@ -9,7 +9,13 @@
 // replies today (DIGEST ~morning, ASYNC later). This parser closes that
 // whole class of failure.
 
-const KINDS = ['DIGEST', 'JOURNAL', 'JOURNAL-NEW', 'ASYNC'] as const
+const KINDS = [
+  'DIGEST',
+  'JOURNAL',
+  'JOURNAL-NEW',
+  'ASYNC',
+  'ASYNC-BROWSER',
+] as const
 
 export type JournalFlag = { slug: string; note: string }
 export type JournalCreateOp = { slug: string; purpose: string }
@@ -21,6 +27,7 @@ export type FlagResult = {
   journals: JournalFlag[]
   journalCreates: JournalCreateOp[]
   asyncTasks: AsyncTaskFlag[]
+  asyncBrowserTasks: AsyncTaskFlag[]
 }
 
 // Backward-compat type alias for older imports
@@ -73,9 +80,11 @@ function peelTrailingTag(raw: string): PeeledTag | null {
 
 // Peel trailing tags off the end of a reply. Supported:
 //   [DIGEST: <reason>]
-//   [JOURNAL:<slug> — <note>]         (append entry)
-//   [JOURNAL-NEW:<slug> — <purpose>]  (create journal)
-//   [ASYNC: <self-sufficient task description>]
+//   [JOURNAL:<slug> — <note>]                  (append entry)
+//   [JOURNAL-NEW:<slug> — <purpose>]           (create journal)
+//   [ASYNC: <self-sufficient task description>]         (general async lane)
+//   [ASYNC-BROWSER: <self-sufficient task description>] (browser lane,
+//                                                        serialized, 1)
 // Multiple tags supported in any order at the tail. Tags must be the LAST
 // thing in the reply (after trimming trailing whitespace).
 //
@@ -87,6 +96,7 @@ export function extractFlags(reply: string): FlagResult {
   const journals: JournalFlag[] = []
   const journalCreates: JournalCreateOp[] = []
   const asyncTasks: AsyncTaskFlag[] = []
+  const asyncBrowserTasks: AsyncTaskFlag[] = []
 
   while (true) {
     const peeled = peelTrailingTag(current)
@@ -108,10 +118,21 @@ export function extractFlags(reply: string): FlagResult {
       if (payload.length >= 8) {
         asyncTasks.unshift({ description: payload })
       }
+    } else if (kind === 'ASYNC-BROWSER') {
+      if (payload.length >= 8) {
+        asyncBrowserTasks.unshift({ description: payload })
+      }
     }
   }
 
-  return { clean: current, digest, journals, journalCreates, asyncTasks }
+  return {
+    clean: current,
+    digest,
+    journals,
+    journalCreates,
+    asyncTasks,
+    asyncBrowserTasks,
+  }
 }
 
 // Legacy helper kept so existing callers still compile.

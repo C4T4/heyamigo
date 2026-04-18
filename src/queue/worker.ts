@@ -10,7 +10,7 @@ import {
   isValidSlug,
 } from '../memory/journals.js'
 import { scheduleDigest } from '../memory/scheduler.js'
-import { enqueueAsyncTask } from './async-tasks.js'
+import { enqueueAsyncTask, enqueueBrowserTask } from './async-tasks.js'
 import type { Job, Result } from './types.js'
 
 function isStaleSessionError(err: unknown): boolean {
@@ -45,8 +45,14 @@ async function callClaude(job: Job): Promise<Result> {
     updatedAt: Math.floor(Date.now() / 1000),
   })
 
-  const { clean, digest, journals, journalCreates, asyncTasks } =
-    extractFlags(reply)
+  const {
+    clean,
+    digest,
+    journals,
+    journalCreates,
+    asyncTasks,
+    asyncBrowserTasks,
+  } = extractFlags(reply)
   if (digest) {
     logger.info(
       { jid: job.jid, number: job.senderNumber, reason: digest },
@@ -107,12 +113,22 @@ async function callClaude(job: Job): Promise<Result> {
     }
   }
 
-  // Async tasks: Claude delegated long work (browser scrapes, multi-step
-  // research, etc.) to the background lane. The clean reply above is the
-  // user-facing ack and will be sent normally. The async tasks run stateless
-  // in their own queue and report back via initiate() when done.
+  // Async tasks: Claude delegated to background workers. Chat reply above
+  // is the user-facing ack. Two lanes:
+  //   [ASYNC:...] → general lane, stateless, concurrency 3, non-browser work
+  //   [ASYNC-BROWSER:...] → browser lane, persistent session, concurrency 1
+  // Both report back via initiate() when done.
   for (const t of asyncTasks) {
     enqueueAsyncTask({
+      jid: job.jid,
+      senderNumber: job.senderNumber,
+      description: t.description,
+      originatingMessage: job.text,
+      allowedTools: job.allowedTools ?? 'all',
+    })
+  }
+  for (const t of asyncBrowserTasks) {
+    enqueueBrowserTask({
       jid: job.jid,
       senderNumber: job.senderNumber,
       description: t.description,
@@ -133,7 +149,7 @@ async function callClaude(job: Job): Promise<Result> {
       fresh: wasFresh,
       hasDigest: digest !== null,
       journalSlugs: journals.map((j) => j.slug),
-      asyncCount: asyncTasks.length,
+      asyncCount: asyncTasks.length + asyncBrowserTasks.length,
     },
   }
 }

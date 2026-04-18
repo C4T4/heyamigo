@@ -11,6 +11,7 @@ export type PromptLogEntry = {
     | 'journal-observer'
     | 'journal-nudger'
     | 'async-task'
+    | 'browser-task'
     | 'compressed'
   args: string[]
   input: string
