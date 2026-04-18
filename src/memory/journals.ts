@@ -36,7 +36,7 @@ export type Journal = {
 
 export type JournalEntry = {
   ts: number
-  source: 'reactive' | 'observer' | 'manual'
+  source: 'reactive' | 'observer' | 'manual' | 'async'
   jid?: string
   senderNumber?: string
   note: string

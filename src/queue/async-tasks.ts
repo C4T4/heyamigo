@@ -114,7 +114,7 @@ export function reloadAsyncSystemPrompt(): void {
 
 function buildPrompt(task: AsyncTask): string {
   const lines = [
-    `You are running a BACKGROUND TASK for the owner. The chat already got your ack reply. Your only job now is to do the work and output the final message to send them.`,
+    `You are a BACKGROUND WORKER. The chat already got its ack ("on it, will report back"). Your output does NOT go to chat by default — it routes through markers to memory files, same way the main chat Claude routes things.`,
     ``,
     `TASK:`,
     task.description,
@@ -124,15 +124,27 @@ function buildPrompt(task: AsyncTask): string {
     ``,
     `Sender: ${task.senderName ?? task.senderNumber}`,
     ``,
-    `RULES:`,
-    `- Stay fully in character (personality file). This is not customer service.`,
-    `- Do the real work. Use tools (browser, etc.) as needed.`,
-    `- When done, output ONLY the message to send the user. No preamble, no "here's what I found:" framing unless that's the message itself.`,
-    `- Do NOT emit any [DIGEST:...], [JOURNAL:...], [ASYNC:...], or other markers. This is the final output.`,
-    `- Start the message with a short reference to what you were working on so the user knows which task this is about (e.g. "About the TikTok scrape: ..."). They may have asked for multiple things.`,
-    `- If the task is impossible or the tools failed, say so honestly and briefly. Don't fabricate.`,
+    `HOW TO ROUTE YOUR FINDINGS (markers, at the END of your output, one per line):`,
+    `- [JOURNAL:<slug> — <one-line finding>] for each distinct finding that belongs in a journal. ONE marker per finding — ten findings = ten markers, not one long paragraph. Only use slugs that already exist (check the Journals list in your preamble), or emit [JOURNAL-NEW:<slug> — <purpose>] first to create one in the same output.`,
+    `- [JOURNAL-NEW:<slug> — <one-line purpose>] to create a new journal when the task clearly needs tracking but no journal covers it yet. Propose the slug yourself, conservatively.`,
+    `- [DIGEST: <one-line reason>] if you learned something durable about the owner or chat that should update the profile/brief.`,
     ``,
-    `Output the final user-facing message now.`,
+    `CONSTRAINTS:`,
+    `- Do NOT emit [ASYNC:...]. No recursive delegation.`,
+    `- Do NOT frame your output as a chat message. No "here's what I found:", no "About the task:". The markers ARE the output.`,
+    `- Keep any pre-marker text SHORT — one sentence max, or empty. Long pre-marker prose is suppressed and not sent to chat. Put the real content inside markers.`,
+    `- If the task failed or the tools didn't produce a usable result (login wall, empty page, bot-detection, timeout), output a short clean message (no markers) explaining what happened. That short text IS sent to chat so the owner knows. Do not fabricate findings.`,
+    `- Stay fully in character.`,
+    ``,
+    `EXAMPLE for an IG scrape task:`,
+    `[JOURNAL:rivoara-spy — IG bio: "Premium shower filter for HT aftercare"]`,
+    `[JOURNAL:rivoara-spy — IG post: day-5 routine angle live]`,
+    `[JOURNAL:rivoara-spy — IG post: Turkey clinic partnership visible in post 3]`,
+    ``,
+    `EXAMPLE for a failure:`,
+    `Instagram hit login wall on @rivoara_official after 2 navigation attempts. No public data accessible. Auth needs refreshing.`,
+    ``,
+    `Do the work now. Then emit your markers.`,
   ]
   return lines.join('\n')
 }
@@ -222,29 +234,123 @@ async function runTask(task: AsyncTask): Promise<void> {
     return
   }
 
-  // Strip any accidental trailing markers Claude emitted despite instructions.
-  // Import lazily to avoid an import cycle (digest-flag already stands alone,
-  // but being explicit here keeps this module independent).
+  // Parse markers from the worker's output and route them through the same
+  // handlers the main chat uses. The async worker's job is to emit findings
+  // as markers; clean pre-marker text is only sent to chat when short (a
+  // failure explanation or tight ack) or when no markers fired at all.
   const { extractFlags } = await import('../memory/digest-flag.js')
-  const { clean } = extractFlags(output)
-  if (!clean.trim()) {
-    logger.warn(
-      { id: task.id, jid: task.jid },
-      'async task produced empty output after flag strip',
-    )
-    return
+  const { clean, digest, journals, journalCreates } = extractFlags(output)
+
+  // Journal creates run first so an entry flagged in the same output against
+  // a new slug lands correctly.
+  const { appendEntry, createJournal, getJournal, isValidSlug } =
+    await import('../memory/journals.js')
+  for (const op of journalCreates) {
+    if (!isValidSlug(op.slug)) {
+      logger.warn(
+        { op, id: task.id },
+        'async JOURNAL-NEW: invalid slug, dropped',
+      )
+      continue
+    }
+    if (getJournal(op.slug)) continue
+    try {
+      createJournal({
+        slug: op.slug,
+        name: titleCaseSlug(op.slug),
+        purpose: op.purpose,
+      })
+      logger.info(
+        { slug: op.slug, id: task.id },
+        'journal created via async marker',
+      )
+    } catch (err) {
+      logger.error(
+        { err, op, id: task.id },
+        'async JOURNAL-NEW failed',
+      )
+    }
   }
-  const sent = await initiate({ jid: task.jid, text: clean })
+
+  let appendedCount = 0
+  for (const j of journals) {
+    const ok = appendEntry(j.slug, {
+      source: 'async',
+      jid: task.jid,
+      senderNumber: task.senderNumber,
+      note: j.note,
+    })
+    if (ok) appendedCount++
+    else {
+      logger.warn(
+        { slug: j.slug, id: task.id },
+        'async JOURNAL marker pointed at unknown slug, dropped',
+      )
+    }
+  }
+
+  if (digest) {
+    const { scheduleDigest } = await import('../memory/scheduler.js')
+    scheduleDigest({
+      jid: task.jid,
+      number: task.senderNumber,
+      reason: digest,
+    })
+  }
+
+  // Decide what to send to chat.
+  const leftover = clean.trim()
+  const anyMarkerFired =
+    appendedCount > 0 || journalCreates.length > 0 || digest !== null
+
+  let chatText: string | null = null
+  if (!anyMarkerFired) {
+    // No markers — fall back to sending the output as a chat message so the
+    // owner isn't left with silence. Covers both "Claude ignored the marker
+    // rule" and legitimate "short failure explanation" cases.
+    chatText = leftover || null
+  } else if (leftover.length > 0 && leftover.length <= 400) {
+    // Markers fired AND a short pre-marker line — likely an intentional
+    // failure explanation or completion note. Send it.
+    chatText = leftover
+  } else if (leftover.length > 400) {
+    // Long pre-marker prose despite markers firing — Claude didn't follow
+    // the routing contract. Suppress the prose; log for inspection.
+    logger.warn(
+      {
+        id: task.id,
+        jid: task.jid,
+        chars: leftover.length,
+      },
+      'async task produced long pre-marker prose, suppressing chat send',
+    )
+  }
+  // Otherwise: markers fired, no leftover — success, silent. Findings live
+  // in the journal files now.
+
+  if (chatText) {
+    await initiate({ jid: task.jid, text: chatText })
+  }
+
   logger.info(
     {
       id: task.id,
       jid: task.jid,
-      sent,
       elapsed: elapsedLog(),
-      chars: clean.length,
+      appended: appendedCount,
+      createdJournals: journalCreates.length,
+      digestFired: !!digest,
+      chatSent: chatText ? chatText.length : 0,
     },
     'async task completed',
   )
+}
+
+function titleCaseSlug(slug: string): string {
+  return slug
+    .split('-')
+    .map((p) => (p ? p[0]!.toUpperCase() + p.slice(1) : p))
+    .join(' ')
 }
 
 function truncate(s: string, n: number): string {
