@@ -110,6 +110,9 @@ async function sweep(): Promise<void> {
 }
 
 let sweepTimer: NodeJS.Timeout | null = null
+let nudgeTimer: NodeJS.Timeout | null = null
+
+const NUDGE_TICK_MS = 5 * 60 * 1000 // 5 minutes
 
 export function startScheduler(): void {
   if (sweepTimer) return
@@ -120,16 +123,41 @@ export function startScheduler(): void {
       logger.error({ err }, 'sweep failed'),
     )
   }, config.memory.sweepIntervalMs)
+
+  // Faster tick just for proactive journal nudges (check-ins, silent-nudges).
+  // The memory-sweep cycle (default 3h) is too coarse for a "daily 21:00"
+  // check-in. This tick is cheap: it only spawns Claude when something is
+  // actually due for a journal.
+  nudgeTimer = setInterval(() => {
+    void runNudgeTickSafe()
+  }, NUDGE_TICK_MS)
+
   logger.info(
-    { intervalMs: config.memory.sweepIntervalMs },
+    {
+      intervalMs: config.memory.sweepIntervalMs,
+      nudgeTickMs: NUDGE_TICK_MS,
+    },
     'memory scheduler started',
   )
+}
+
+async function runNudgeTickSafe(): Promise<void> {
+  try {
+    const { runNudgeTick } = await import('./journal-nudger.js')
+    await runNudgeTick()
+  } catch (err) {
+    logger.error({ err }, 'nudge tick failed')
+  }
 }
 
 export function stopScheduler(): void {
   if (sweepTimer) {
     clearInterval(sweepTimer)
     sweepTimer = null
+  }
+  if (nudgeTimer) {
+    clearInterval(nudgeTimer)
+    nudgeTimer = null
   }
   for (const t of pendingTimers.values()) clearTimeout(t)
   pendingTimers.clear()

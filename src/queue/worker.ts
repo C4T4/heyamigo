@@ -2,7 +2,13 @@ import { askClaude } from '../ai/claude.js'
 import { clearSession, setSession, setUsage } from '../ai/sessions.js'
 import { logger } from '../logger.js'
 import { extractFlags } from '../memory/digest-flag.js'
-import { appendEntry } from '../memory/journals.js'
+import {
+  appendEntry,
+  createJournal,
+  getJournal,
+  isValidSlug,
+  updateJournalStatus,
+} from '../memory/journals.js'
 import { scheduleDigest } from '../memory/scheduler.js'
 import type { Job, Result } from './types.js'
 
@@ -35,7 +41,7 @@ async function callClaude(job: Job): Promise<Result> {
     updatedAt: Math.floor(Date.now() / 1000),
   })
 
-  const { clean, digest, journals } = extractFlags(reply)
+  const { clean, digest, journals, lifecycleOps } = extractFlags(reply)
   if (digest) {
     logger.info(
       { jid: job.jid, number: job.senderNumber, reason: digest },
@@ -46,6 +52,61 @@ async function callClaude(job: Job): Promise<Result> {
       number: job.senderNumber,
       reason: digest,
     })
+  }
+  // Lifecycle ops run BEFORE entry appends so that a reply creating a new
+  // journal AND flagging its first entry in the same turn works correctly.
+  for (const op of lifecycleOps) {
+    if (!isValidSlug(op.slug)) {
+      logger.warn(
+        { op, jid: job.jid },
+        'journal lifecycle op: invalid slug, dropped',
+      )
+      continue
+    }
+    try {
+      if (op.kind === 'new') {
+        if (getJournal(op.slug)) {
+          logger.info(
+            { slug: op.slug },
+            'JOURNAL-NEW for existing slug, ignored',
+          )
+          continue
+        }
+        createJournal({
+          slug: op.slug,
+          name: titleCase(op.slug),
+          purpose: op.purpose,
+        })
+        logger.info(
+          { slug: op.slug, jid: job.jid },
+          'journal created via bot marker',
+        )
+      } else {
+        const status =
+          op.kind === 'pause'
+            ? 'paused'
+            : op.kind === 'archive'
+              ? 'archived'
+              : 'active'
+        const updated = updateJournalStatus(op.slug, status)
+        if (updated) {
+          logger.info(
+            { slug: op.slug, status, jid: job.jid },
+            'journal status updated via bot marker',
+          )
+        } else {
+          logger.warn(
+            { op, jid: job.jid },
+            'journal lifecycle op: unknown slug, dropped',
+          )
+        }
+      }
+    } catch (err) {
+      logger.error(
+        { err, op, jid: job.jid },
+        'journal lifecycle op failed',
+      )
+    }
   }
   for (const j of journals) {
     const ok = appendEntry(j.slug, {
@@ -63,6 +124,13 @@ async function callClaude(job: Job): Promise<Result> {
   }
 
   return { reply: clean }
+}
+
+function titleCase(slug: string): string {
+  return slug
+    .split('-')
+    .map((p) => (p ? p[0]!.toUpperCase() + p.slice(1) : p))
+    .join(' ')
 }
 
 export async function processJob(job: Job): Promise<Result> {

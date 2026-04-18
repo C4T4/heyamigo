@@ -1,24 +1,37 @@
 const TRAILING_TAG_RE =
-  /\[(DIGEST|JOURNAL):\s*([^\]]+)\]\s*$/i
+  /\[(DIGEST|JOURNAL|JOURNAL-NEW|JOURNAL-PAUSE|JOURNAL-RESUME|JOURNAL-ARCHIVE):\s*([^\]]+)\]\s*$/i
 
 export type JournalFlag = { slug: string; note: string }
+export type JournalLifecycleOp =
+  | { kind: 'new'; slug: string; purpose: string }
+  | { kind: 'pause'; slug: string }
+  | { kind: 'resume'; slug: string }
+  | { kind: 'archive'; slug: string }
 
 export type FlagResult = {
   clean: string
   digest: string | null
   journals: JournalFlag[]
+  lifecycleOps: JournalLifecycleOp[]
 }
 
 // Backward-compat type alias for older imports
 export type LegacyFlagResult = { clean: string; flag: string | null }
 
-// Peel trailing [DIGEST:...] and [JOURNAL:<slug> — <note>] tags off the end of
-// a reply. Multiple tags are supported and can appear in any order at the tail.
+// Peel trailing tags off the end of a reply. Supported:
+//   [DIGEST: <reason>]
+//   [JOURNAL:<slug> — <note>]         (append entry)
+//   [JOURNAL-NEW:<slug> — <purpose>]  (create journal)
+//   [JOURNAL-PAUSE:<slug>]
+//   [JOURNAL-RESUME:<slug>]
+//   [JOURNAL-ARCHIVE:<slug>]
+// Multiple tags are supported and can appear in any order at the tail.
 // Tags must be the LAST thing in the reply (after trimming trailing whitespace).
 export function extractFlags(reply: string): FlagResult {
   let current = reply
   let digest: string | null = null
   const journals: JournalFlag[] = []
+  const lifecycleOps: JournalLifecycleOp[] = []
 
   while (true) {
     const trimmed = current.replace(/\s+$/, '')
@@ -32,13 +45,37 @@ export function extractFlags(reply: string): FlagResult {
       if (digest === null) digest = payload
     } else if (kind === 'JOURNAL') {
       const parsed = parseJournalPayload(payload)
-      if (parsed) journals.unshift(parsed) // unshift to preserve original order
+      if (parsed) journals.unshift(parsed)
+    } else if (kind === 'JOURNAL-NEW') {
+      const parsed = parseJournalPayload(payload)
+      if (parsed) {
+        lifecycleOps.unshift({
+          kind: 'new',
+          slug: parsed.slug,
+          purpose: parsed.note,
+        })
+      }
+    } else if (
+      kind === 'JOURNAL-PAUSE' ||
+      kind === 'JOURNAL-RESUME' ||
+      kind === 'JOURNAL-ARCHIVE'
+    ) {
+      const slug = payload.trim().toLowerCase()
+      if (/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
+        const op =
+          kind === 'JOURNAL-PAUSE'
+            ? 'pause'
+            : kind === 'JOURNAL-RESUME'
+              ? 'resume'
+              : 'archive'
+        lifecycleOps.unshift({ kind: op, slug })
+      }
     }
 
     current = trimmed.slice(0, match.index).trimEnd()
   }
 
-  return { clean: current, digest, journals }
+  return { clean: current, digest, journals, lifecycleOps }
 }
 
 // Legacy helper kept so existing callers still compile.

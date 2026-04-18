@@ -68,6 +68,10 @@ function journalObserverStatePath(slug: string): string {
   return resolve(journalDir(slug), 'observer-state.json')
 }
 
+function journalNudgeStatePath(slug: string): string {
+  return resolve(journalDir(slug), 'nudge-state.json')
+}
+
 // ---------- low-level fs ----------
 
 function ensureDirFor(path: string): void {
@@ -208,12 +212,18 @@ export function createJournal(input: CreateJournalInput): Journal {
     throw new Error(`Journal "${input.slug}" already exists.`)
   }
   const now = new Date().toISOString().slice(0, 10)
+  // Default cadence: nudge after 3 days of silence on this topic. No daily
+  // check-in by default — that would be too pushy for most journals. Owner
+  // can tune by editing the journal's index.md frontmatter directly.
+  const cadence: Journal['cadence'] = input.cadence ?? {
+    nudge_if_silent: '3d',
+  }
   const journal: Journal = {
     slug: input.slug,
     name: input.name,
     purpose: input.purpose,
     fields: input.fields ?? [],
-    cadence: input.cadence ?? {},
+    cadence,
     status: 'active',
     quiet_hours: input.quiet_hours,
     created_at: now,
@@ -375,4 +385,42 @@ export function setLastScannedTs(
   const state = loadObserverState(slug)
   state.jids[jid] = { lastScannedTs: ts }
   saveObserverState(slug, state)
+}
+
+// ---------- nudge state ----------
+
+export type NudgeState = {
+  lastCheckinTs: number
+  lastSilentNudgeTs: number
+  snoozedUntilTs: number
+}
+
+export function loadNudgeState(slug: string): NudgeState {
+  const raw = readIfExists(journalNudgeStatePath(slug))
+  if (!raw)
+    return { lastCheckinTs: 0, lastSilentNudgeTs: 0, snoozedUntilTs: 0 }
+  try {
+    const parsed = JSON.parse(raw) as Partial<NudgeState>
+    return {
+      lastCheckinTs: parsed.lastCheckinTs ?? 0,
+      lastSilentNudgeTs: parsed.lastSilentNudgeTs ?? 0,
+      snoozedUntilTs: parsed.snoozedUntilTs ?? 0,
+    }
+  } catch {
+    return { lastCheckinTs: 0, lastSilentNudgeTs: 0, snoozedUntilTs: 0 }
+  }
+}
+
+export function saveNudgeState(slug: string, state: NudgeState): void {
+  const path = journalNudgeStatePath(slug)
+  ensureDirFor(path)
+  writeFileSync(path, JSON.stringify(state, null, 2) + '\n', 'utf-8')
+}
+
+export function snoozeJournal(slug: string, untilTs: number): boolean {
+  if (!journalExists(slug)) return false
+  const state = loadNudgeState(slug)
+  state.snoozedUntilTs = untilTs
+  saveNudgeState(slug, state)
+  return true
 }

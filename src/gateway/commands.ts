@@ -8,6 +8,7 @@ import {
   isValidSlug,
   listJournals,
   readEntries,
+  snoozeJournal,
   updateJournalStatus,
   type JournalStatus,
 } from '../memory/journals.js'
@@ -104,7 +105,76 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     return true
   }
 
+  if (cmd === 'snooze') {
+    if (!isOwner(ctx.senderNumber)) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        'Snooze is owner-only.',
+        ctx.quoted,
+      )
+      return true
+    }
+    const rest = trimmed.slice(prefix.length + cmd.length).trim()
+    await handleSnoozeCmd(ctx, rest)
+    return true
+  }
+
   return false
+}
+
+async function handleSnoozeCmd(
+  ctx: CommandContext,
+  rest: string,
+): Promise<void> {
+  const [slugRaw, durationRaw] = rest.split(/\s+/)
+  const slug = (slugRaw ?? '').toLowerCase()
+  const duration = (durationRaw ?? '24h').toLowerCase()
+  if (!slug) {
+    await sendText(
+      ctx.sock,
+      ctx.jid,
+      'Usage: /snooze <slug> [duration]\nDuration: e.g. 6h, 2d (default 24h)',
+      ctx.quoted,
+    )
+    return
+  }
+  if (!getJournal(slug)) {
+    await sendText(ctx.sock, ctx.jid, `No journal "${slug}".`, ctx.quoted)
+    return
+  }
+  const secs = parseDuration(duration)
+  if (!secs) {
+    await sendText(
+      ctx.sock,
+      ctx.jid,
+      `Bad duration "${duration}". Use formats like 6h, 2d, 30m.`,
+      ctx.quoted,
+    )
+    return
+  }
+  const until = Math.floor(Date.now() / 1000) + secs
+  snoozeJournal(slug, until)
+  await sendText(
+    ctx.sock,
+    ctx.jid,
+    `Snoozed "${slug}" for ${duration}. No nudges until ${new Date(
+      until * 1000,
+    ).toISOString().slice(0, 16).replace('T', ' ')} UTC.`,
+    ctx.quoted,
+  )
+}
+
+function parseDuration(raw: string): number | null {
+  const m = raw.match(/^(\d+)\s*([mhd])$/)
+  if (!m) return null
+  const n = Number(m[1])
+  const u = m[2]
+  if (!Number.isFinite(n) || n <= 0) return null
+  if (u === 'm') return n * 60
+  if (u === 'h') return n * 3600
+  if (u === 'd') return n * 86400
+  return null
 }
 
 function isOwner(senderNumber: string): boolean {

@@ -133,6 +133,50 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+// Proactive outbound: send a message to a chat without an incoming trigger.
+// Chunks, persists to the message log, never throws. Callers are responsible
+// for the canSendProactive() gate — this function does not re-check it.
+export async function initiate(params: {
+  jid: string
+  text: string
+}): Promise<boolean> {
+  const sock = getSocket()
+  if (!sock) {
+    logger.warn({ jid: params.jid }, 'initiate: no socket available')
+    return false
+  }
+  const raw = params.text.replaceAll('—', ', ').replaceAll('–', '-')
+  if (!raw.trim()) return false
+
+  try {
+    const chunks = chunkText(raw, config.reply.chunkChars)
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!
+      await sendText(sock, params.jid, chunk)
+      await append({
+        id: `initiate-${Date.now()}-${i}`,
+        jid: params.jid,
+        direction: 'out',
+        fromMe: true,
+        sender: sock.user?.id ?? '',
+        senderNumber: config.owner.number,
+        timestamp: Math.floor(Date.now() / 1000),
+        text: chunk,
+        messageType: 'conversation',
+      })
+      if (i < chunks.length - 1) await sleep(config.reply.chunkDelayMs)
+    }
+    logger.info(
+      { jid: params.jid, chars: raw.length },
+      'proactive message sent',
+    )
+    return true
+  } catch (err) {
+    logger.error({ err, jid: params.jid }, 'initiate failed')
+    return false
+  }
+}
+
 export function chunkText(text: string, maxChars: number): string[] {
   if (text.length <= maxChars) return [text]
   const chunks: string[] = []

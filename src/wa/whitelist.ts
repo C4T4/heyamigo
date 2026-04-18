@@ -124,9 +124,11 @@ export function getAccess(): AccessConfig {
   return current
 }
 
-// Guardrail for proactive (unsolicited) messaging. Returns true ONLY if the
-// target chat has an explicit proactive:true entry. Default is deny — no
-// journal/scheduler/observer may message a chat without explicit opt-in.
+// Guardrail for proactive (unsolicited) messaging. Default deny.
+//
+// Exception: the owner's own self-DM is always allowed — the owner implicitly
+// consents to the bot nudging them in their own DM. Other DMs and groups
+// require an explicit `proactive: true` entry in access.json.
 export function canSendProactive(jid: string): boolean {
   const isGroup = jid.endsWith('@g.us')
   if (isGroup) {
@@ -135,6 +137,8 @@ export function canSendProactive(jid: string): boolean {
   }
   const number = jidDecode(jid)?.user
   if (!number) return false
+  // Owner's self-DM is always allowed.
+  if (config.owner.number && number === config.owner.number) return true
   const entry = current.dms.allowed.find((d) => d.number === number)
   return entry?.proactive === true
 }
