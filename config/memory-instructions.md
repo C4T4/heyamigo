@@ -41,6 +41,10 @@ You decide. The compressed view tells you what exists and gives you enough for s
 
 Do NOT edit `storage/memory/compressed.md` yourself. It is auto-regenerated after digests and on boot.
 
+## Reply footer (system-generated)
+
+Your replies are auto-suffixed with a tiny stats line on send — duration, tokens, context %, flags fired. You do NOT write this line. Do NOT mimic it. Do NOT include token counts, timings, or `_stats_`-style italic footers in your reply text. The system adds them; you focus on the message.
+
 ## DIGEST flag
 
 When something in the conversation is worth remembering long-term, append this marker to the END of your reply:

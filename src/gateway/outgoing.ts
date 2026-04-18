@@ -2,7 +2,7 @@ import { existsSync, unlinkSync } from 'fs'
 import { isJidGroup, type WAMessage } from 'baileys'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
-import type { Job, Result } from '../queue/types.js'
+import type { Job, ReplyStats, Result } from '../queue/types.js'
 import { append } from '../store/messages.js'
 import { detectMediaType, sendFile, sendText } from '../wa/sender.js'
 import { getSocket } from '../wa/socket.js'
@@ -47,6 +47,11 @@ export async function handleReply(
   const isGroup = isJidGroup(job.jid) === true
   const quoted = isGroup && config.reply.quoteInGroups ? originalMsg : undefined
 
+  const footer =
+    result.stats && config.reply.showStats
+      ? formatStatsFooter(result.stats)
+      : ''
+
   try {
     // Send files first (images, videos, PDFs, audio, etc.)
     for (const filePath of files) {
@@ -58,11 +63,21 @@ export async function handleReply(
         isFirst && text && text.length <= 1000 && files.length === 1 && supportsCaption
           ? text
           : undefined
+      // Append footer to caption at send time only (not to storage). Only
+      // when this media file is the final user-facing payload (no text
+      // coming after, single file with caption case).
+      const willHaveTextAfter =
+        !!text &&
+        !(files.length === 1 && text.length <= 1000 && supportsCaption)
+      const captionForSend =
+        caption && footer && !willHaveTextAfter
+          ? `${caption}\n\n${footer}`
+          : caption
       await sendFile(
         sock,
         job.jid,
         filePath,
-        caption,
+        captionForSend,
         isFirst ? quoted : undefined,
       )
       await append({
@@ -92,7 +107,10 @@ export async function handleReply(
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i]!
         const q = i === 0 && files.length === 0 ? quoted : undefined
-        await sendText(sock, job.jid, chunk, q)
+        const isLast = i === chunks.length - 1
+        const chunkForSend =
+          isLast && footer ? `${chunk}\n\n${footer}` : chunk
+        await sendText(sock, job.jid, chunkForSend, q)
 
         await append({
           id: `reply-${Date.now()}-${i}`,
@@ -131,6 +149,58 @@ export async function handleReply(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
+}
+
+// Append-only-at-send footer. Never stored, never in Claude's recent-context
+// feedback loop. Adaptive: shows only what's interesting for this reply.
+export function formatStatsFooter(stats: ReplyStats): string {
+  const parts: string[] = []
+
+  // Duration — always
+  const secs = stats.durationMs / 1000
+  parts.push(secs < 10 ? `${secs.toFixed(1)}s` : `${Math.round(secs)}s`)
+
+  // Tokens in / out — always. Show cache hit only when it's meaningful.
+  const inStr = compactTokens(stats.inputTokens + stats.cacheReadTokens)
+  const outStr = compactTokens(stats.outputTokens)
+  const cacheStr =
+    stats.cacheReadTokens >= 500
+      ? ` (${compactTokens(stats.cacheReadTokens)} cached)`
+      : ''
+  parts.push(`${inStr}↑${cacheStr} ${outStr}↓`)
+
+  // Context % — only when worth calling out
+  if (stats.contextWindow > 0) {
+    const pct = Math.round(
+      (stats.totalContextTokens / stats.contextWindow) * 100,
+    )
+    if (pct >= 90) parts.push(`⚠ ${pct}% ctx`)
+    else if (pct >= 70) parts.push(`${pct}% ctx`)
+  }
+
+  // Fresh session — resume is default, says nothing
+  if (stats.fresh) parts.push('fresh')
+
+  // Journal flagged — show each slug (usually 0 or 1)
+  for (const slug of stats.journalSlugs) parts.push(`+journal:${slug}`)
+
+  // Digest fired
+  if (stats.hasDigest) parts.push('+digest')
+
+  // Async spawned
+  if (stats.asyncCount > 0) {
+    parts.push(
+      stats.asyncCount === 1 ? '+async' : `+${stats.asyncCount} async`,
+    )
+  }
+
+  return `_${parts.join(' · ')}_`
+}
+
+function compactTokens(n: number): string {
+  if (n < 1000) return String(n)
+  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`
+  return `${Math.round(n / 1000)}k`
 }
 
 // Proactive outbound: send a message to a chat without an incoming trigger.

@@ -45,7 +45,8 @@
     "chunkDelayMs": 800,
     "typingIndicator": true,
     "errorMessage": "Could not process that, please try again.",
-    "maxMessageAgeMs": 10800000
+    "maxMessageAgeMs": 10800000,
+    "showStats": true
   },
 
   "storage": {

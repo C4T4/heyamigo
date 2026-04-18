@@ -1,5 +1,6 @@
 import { askClaude } from '../ai/claude.js'
 import { clearSession, setSession, setUsage } from '../ai/sessions.js'
+import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { extractFlags } from '../memory/digest-flag.js'
 import {
@@ -20,11 +21,14 @@ function isStaleSessionError(err: unknown): boolean {
 }
 
 async function callClaude(job: Job): Promise<Result> {
+  const startedAt = Date.now()
+  const wasFresh = !job.sessionId
   const { reply, sessionId, usage } = await askClaude({
     input: job.input,
     sessionId: job.sessionId,
     allowedTools: job.allowedTools,
   })
+  const durationMs = Date.now() - startedAt
 
   if (!job.sessionId) {
     setSession(job.jid, sessionId)
@@ -117,7 +121,21 @@ async function callClaude(job: Job): Promise<Result> {
     })
   }
 
-  return { reply: clean }
+  return {
+    reply: clean,
+    stats: {
+      durationMs,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cacheReadTokens: usage.cacheReadTokens,
+      totalContextTokens,
+      contextWindow: config.claude.contextWindow,
+      fresh: wasFresh,
+      hasDigest: digest !== null,
+      journalSlugs: journals.map((j) => j.slug),
+      asyncCount: asyncTasks.length,
+    },
+  }
 }
 
 function titleCase(slug: string): string {

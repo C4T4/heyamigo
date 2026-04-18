@@ -46,6 +46,7 @@ const ConfigSchema = z.object({
     typingIndicator: z.boolean(),
     errorMessage: z.string(),
     maxMessageAgeMs: z.number(),
+    showStats: z.boolean().default(true),
   }),
   storage: z.object({
     messagesDir: z.string(),
