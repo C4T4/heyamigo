@@ -39,6 +39,34 @@ export function detectMediaType(
   return MEDIA_TYPES[type] ?? null
 }
 
+// Baileys' extensionForMediaMessage throws when the media's mimetype is
+// undefined — happens on some forwarded documents (notably PDFs shared in
+// contexts that strip metadata). Fall back to the filename's extension,
+// then to .bin. Never throws.
+function resolveMediaExtension(msg: WAMessage): string {
+  try {
+    const ext = extensionForMediaMessage(msg.message!)
+    if (ext) return ext
+  } catch {
+    // baileys tripped on missing mimetype — try fileName instead
+  }
+  const content = msg.message
+  if (content) {
+    const type = getContentType(content)
+    if (type) {
+      const mediaMsg = (content as Record<string, unknown>)[type] as
+        | Record<string, unknown>
+        | undefined
+      const fileName = mediaMsg?.fileName as string | undefined
+      if (fileName) {
+        const m = fileName.match(/\.([a-zA-Z0-9]+)$/)
+        if (m && m[1]) return m[1].toLowerCase()
+      }
+    }
+  }
+  return 'bin'
+}
+
 export async function downloadAndSave(
   msg: WAMessage,
   jid: string,
@@ -48,7 +76,7 @@ export async function downloadAndSave(
 
   try {
     const buffer = await downloadMediaMessage(msg, 'buffer', {})
-    const ext = extensionForMediaMessage(msg.message!) || 'bin'
+    const ext = resolveMediaExtension(msg)
     const id = msg.key.id || `${Date.now()}`
     const dir = mediaDir(jid)
     await mkdir(dir, { recursive: true })
