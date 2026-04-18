@@ -16,6 +16,8 @@ const DIGEST_REMINDER = `When something worth remembering happens (new preferenc
 
 const JOURNAL_REMINDER = `When a message contains info for one of the journals above, append [JOURNAL:<slug> — <one-line note>] to the END of your reply. Multiple tags OK. Only use slugs listed; never invent. Full rules are in your memory instructions.`
 
+const ASYNC_REMINDER = `BROWSER / SCRAPE / MULTI-STEP RESEARCH = always async. Never call browser tools (browser_navigate, browser_click, browser_take_screenshot, browser_evaluate, any mcp__*playwright*) inline — they block this chat for minutes when pages hang. Instead: send a short ack ("On it, will report back.") AND append [ASYNC: <self-sufficient task description>] at the END of your reply. The async worker has full browser access and will report back here. Even for "just one URL" — always async.`
+
 function buildCriticalSection(params: {
   senderNumber: string
   roleName: RoleName
@@ -90,10 +92,9 @@ export function buildMemoryPreamble(params: {
       '  [AUDIO: /absolute/path/to/file.mp3]\n' +
       '  [DOCUMENT: /absolute/path/to/file.pdf]\n' +
       'The tag will be stripped from the message. Use absolute paths only.\n\n' +
-      'Browser: you have a real Chrome browser available via Playwright.\n' +
-      'You can navigate to URLs, click, fill forms, take screenshots, and read page content.\n' +
-      'Use the browser tools (mcp__playwright__*) when asked to visit websites, look something up, or take a screenshot.\n' +
-      'To send a screenshot back, take one with the browser tool, then include [IMAGE: /path/to/screenshot.png] in your reply.\n\n' +
+      'Browser (Playwright MCP): a real Chrome browser is available for navigation, clicks, forms, screenshots, page content. ' +
+      'DO NOT call browser tools inline from this main chat lane — they block the chat queue for minutes when pages stall (login walls, anti-bot, rate limits). ' +
+      'ALL browser work goes through the async lane. When a request needs browser: send a short ack AND append [ASYNC: <self-sufficient task description>] at the END of your reply. The async worker has full browser access; it will send the result back to this chat as a new message. Even a single URL check goes async. No exceptions.\n\n' +
       'File storage: if you need to save any files (screenshots, research, notes), always save them to storage/temp/. Never save files to the project root.',
   )
 
@@ -174,7 +175,10 @@ export function buildMemoryPreamble(params: {
   const isOwner =
     !!config.owner.number && params.senderNumber === config.owner.number
   const journalsBlock = isOwner ? buildJournalsPreambleBlock() : null
-  const instructions: string[] = [DIGEST_REMINDER]
+  // ASYNC reminder goes first so it's the most prominent rule — it's the
+  // one that prevents the main chat queue from jamming on browser work.
+  // The preamble's Capabilities section also reinforces it.
+  const instructions: string[] = [ASYNC_REMINDER, DIGEST_REMINDER]
   if (journalsBlock) {
     sections.push(`[Journals: active]\n${journalsBlock}`)
     instructions.push(JOURNAL_REMINDER)
