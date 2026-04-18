@@ -1,4 +1,3 @@
-import { spawn } from 'child_process'
 import {
   existsSync,
   readFileSync,
@@ -7,6 +6,7 @@ import {
 } from 'fs'
 import { dirname, resolve } from 'path'
 import { mkdirSync } from 'fs'
+import { runClaude, TIMEOUT_MS } from '../ai/spawn.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { logPrompt } from '../promptlog.js'
@@ -262,66 +262,37 @@ async function spawnGenerator(prompt: string): Promise<string> {
     '--permission-mode',
     'acceptEdits',
   ]
-  const startedAt = Date.now()
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn('claude', args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: process.cwd(),
-    })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (c: Buffer) => {
-      stdout += c.toString('utf-8')
-    })
-    child.stderr.on('data', (c: Buffer) => {
-      stderr += c.toString('utf-8')
-    })
-    const logFail = (error: string) =>
-      void logPrompt({
-        ts: Math.floor(startedAt / 1000),
-        caller: 'compressed',
-        args,
-        input: prompt,
-        error,
-        durationMs: Date.now() - startedAt,
-      })
-    child.on('error', (err) => {
-      logFail(`spawn failed: ${err.message}`)
-      rejectPromise(err)
-    })
-    child.on('close', (code) => {
-      if (code !== 0) {
-        logFail(`exit ${code}: ${stderr.slice(0, 300)}`)
-        return rejectPromise(new Error(`compressed generator exit ${code}`))
-      }
-      try {
-        const parsed = JSON.parse(stdout) as GenResult
-        if (
-          parsed.is_error ||
-          parsed.subtype !== 'success' ||
-          !parsed.result
-        ) {
-          logFail(`bad output: ${parsed.result ?? stderr.slice(0, 200)}`)
-          return rejectPromise(new Error('compressed generator bad output'))
-        }
-        const output = parsed.result.trim()
-        void logPrompt({
-          ts: Math.floor(startedAt / 1000),
-          caller: 'compressed',
-          args,
-          input: prompt,
-          output,
-          durationMs: Date.now() - startedAt,
-        })
-        resolvePromise(output)
-      } catch (err) {
-        logFail(`parse failed: ${(err as Error).message}`)
-        rejectPromise(err as Error)
-      }
-    })
-    child.stdin.write(prompt)
-    child.stdin.end()
+  const { stdout, durationMs } = await runClaude({
+    args,
+    input: prompt,
+    timeoutMs: TIMEOUT_MS.background,
+    caller: 'compressed',
   })
+  const startedAt = Date.now() - durationMs
+
+  let parsed: GenResult
+  try {
+    parsed = JSON.parse(stdout) as GenResult
+  } catch (err) {
+    throw new Error(
+      `compressed parse failed: ${(err as Error).message}`,
+    )
+  }
+  if (parsed.is_error || parsed.subtype !== 'success' || !parsed.result) {
+    throw new Error(
+      `compressed bad output: ${parsed.result ?? stdout.slice(0, 200)}`,
+    )
+  }
+  const output = parsed.result.trim()
+  void logPrompt({
+    ts: Math.floor(startedAt / 1000),
+    caller: 'compressed',
+    args,
+    input: prompt,
+    output,
+    durationMs,
+  })
+  return output
 }
 
 let buildInFlight: Promise<void> | null = null

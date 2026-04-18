@@ -1,6 +1,6 @@
-import { spawn } from 'child_process'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { runClaude, TIMEOUT_MS } from '../ai/spawn.js'
 import { config } from '../config.js'
 import fastq from 'fastq'
 import type { queueAsPromised } from 'fastq'
@@ -169,73 +169,35 @@ async function spawnClaudeForTask(
   prompt: string,
 ): Promise<string> {
   const args = buildArgs(task)
-  const startedAt = Date.now()
-
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn('claude', args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: process.cwd(),
-    })
-
-    let stdout = ''
-    let stderr = ''
-
-    child.stdout.on('data', (c: Buffer) => {
-      stdout += c.toString('utf-8')
-    })
-    child.stderr.on('data', (c: Buffer) => {
-      stderr += c.toString('utf-8')
-    })
-
-    const logFail = (error: string) =>
-      void logPrompt({
-        ts: Math.floor(startedAt / 1000),
-        caller: 'async-task',
-        args,
-        input: prompt,
-        error,
-        durationMs: Date.now() - startedAt,
-      })
-
-    child.on('error', (err) => {
-      logFail(`spawn failed: ${err.message}`)
-      rejectPromise(err)
-    })
-
-    child.on('close', (code) => {
-      if (code !== 0) {
-        logFail(`exit ${code}: ${stderr.slice(0, 300)}`)
-        return rejectPromise(new Error(`async task exit ${code}`))
-      }
-      try {
-        const parsed = JSON.parse(stdout) as ClaudeJsonOutput
-        if (
-          parsed.is_error ||
-          parsed.subtype !== 'success' ||
-          !parsed.result
-        ) {
-          logFail(`bad output: ${parsed.result ?? stderr.slice(0, 200)}`)
-          return rejectPromise(new Error('async task bad output'))
-        }
-        const output = parsed.result.trim()
-        void logPrompt({
-          ts: Math.floor(startedAt / 1000),
-          caller: 'async-task',
-          args,
-          input: prompt,
-          output,
-          durationMs: Date.now() - startedAt,
-        })
-        resolvePromise(output)
-      } catch (err) {
-        logFail(`parse failed: ${(err as Error).message}`)
-        rejectPromise(err as Error)
-      }
-    })
-
-    child.stdin.write(prompt)
-    child.stdin.end()
+  const { stdout, durationMs } = await runClaude({
+    args,
+    input: prompt,
+    timeoutMs: TIMEOUT_MS.async,
+    caller: 'async-task',
   })
+  const startedAt = Date.now() - durationMs
+
+  let parsed: ClaudeJsonOutput
+  try {
+    parsed = JSON.parse(stdout) as ClaudeJsonOutput
+  } catch (err) {
+    throw new Error(`async task parse failed: ${(err as Error).message}`)
+  }
+  if (parsed.is_error || parsed.subtype !== 'success' || !parsed.result) {
+    throw new Error(
+      `async task bad output: ${parsed.result ?? stdout.slice(0, 200)}`,
+    )
+  }
+  const output = parsed.result.trim()
+  void logPrompt({
+    ts: Math.floor(startedAt / 1000),
+    caller: 'async-task',
+    args,
+    input: prompt,
+    output,
+    durationMs,
+  })
+  return output
 }
 
 async function runTask(task: AsyncTask): Promise<void> {

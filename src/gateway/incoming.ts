@@ -214,25 +214,45 @@ async function processMessages(
         if (typingHeartbeat) clearInterval(typingHeartbeat)
         typingHeartbeat = null
       }
+      // Defense-in-depth: if nothing else clears the heartbeat within 10 min
+      // (e.g. a code path forgot), force-stop. Prevents runaway "typing..."
+      // indicators when the pipeline silently fails.
+      const typingSafetyCap = setTimeout(
+        () => {
+          if (typingHeartbeat) {
+            logger.warn(
+              { jid: job.jid },
+              'typingHeartbeat safety-cap fired, forcing clear',
+            )
+            stopTyping()
+          }
+        },
+        10 * 60 * 1000,
+      )
+      typingSafetyCap.unref()
 
       enqueue(job)
-        .then((result) => {
-          stopTyping()
-          return handleReply(job, result, msg)
-        })
+        .then((result) => handleReply(job, result, msg))
         .catch((err) => {
-          stopTyping()
-          logger.error({ err, jid: job.jid }, 'pipeline failed')
-          void handleReply(
-            job,
-            { reply: config.reply.errorMessage },
-            msg,
-          ).catch((e) =>
+          const isTimeout =
+            err instanceof Error && err.name === 'ClaudeTimeoutError'
+          logger.error(
+            { err, jid: job.jid, isTimeout },
+            'pipeline failed',
+          )
+          const replyText = isTimeout
+            ? 'That request timed out. The task was cancelled, queue is moving.'
+            : config.reply.errorMessage
+          return handleReply(job, { reply: replyText }, msg).catch((e) =>
             logger.error(
               { err: e, jid: job.jid },
               'failed to send error reply',
             ),
           )
+        })
+        .finally(() => {
+          stopTyping()
+          clearTimeout(typingSafetyCap)
         })
     } catch (err) {
       logger.error(

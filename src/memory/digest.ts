@@ -1,4 +1,4 @@
-import { spawn } from 'child_process'
+import { runClaude, TIMEOUT_MS } from '../ai/spawn.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { logPrompt } from '../promptlog.js'
@@ -33,79 +33,37 @@ async function spawnDigester(prompt: string): Promise<string> {
     '--permission-mode',
     'acceptEdits',
   ]
-  const startedAt = Date.now()
-
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn('claude', args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: process.cwd(),
-    })
-
-    let stdout = ''
-    let stderr = ''
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf-8')
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf-8')
-    })
-
-    const logFail = (error: string) =>
-      void logPrompt({
-        ts: Math.floor(startedAt / 1000),
-        caller: 'digester',
-        args,
-        input: prompt,
-        error,
-        durationMs: Date.now() - startedAt,
-      })
-
-    child.on('error', (err) => {
-      logFail(`spawn failed: ${err.message}`)
-      rejectPromise(new Error(`digester spawn failed: ${err.message}`))
-    })
-
-    child.on('close', (code) => {
-      if (code !== 0) {
-        logFail(`exit ${code}: ${stderr.slice(0, 300)}`)
-        return rejectPromise(
-          new Error(
-            `digester exit ${code}: ${stderr.slice(0, 300)}`,
-          ),
-        )
-      }
-      try {
-        const parsed = JSON.parse(stdout) as DigestClaudeOutput
-        if (parsed.is_error || parsed.subtype !== 'success' || !parsed.result) {
-          logFail(`bad output: ${parsed.result ?? stderr.slice(0, 200)}`)
-          return rejectPromise(
-            new Error(
-              `digester bad output: ${parsed.result ?? stderr.slice(0, 200)}`,
-            ),
-          )
-        }
-        const output = parsed.result.trim()
-        void logPrompt({
-          ts: Math.floor(startedAt / 1000),
-          caller: 'digester',
-          args,
-          input: prompt,
-          output,
-          durationMs: Date.now() - startedAt,
-        })
-        resolvePromise(output)
-      } catch (err) {
-        logFail(`parse failed: ${(err as Error).message}`)
-        rejectPromise(
-          new Error(`digester parse failed: ${(err as Error).message}`),
-        )
-      }
-    })
-
-    child.stdin.write(prompt)
-    child.stdin.end()
+  const { stdout, durationMs } = await runClaude({
+    args,
+    input: prompt,
+    timeoutMs: TIMEOUT_MS.background,
+    caller: 'digester',
   })
+  const startedAt = Date.now() - durationMs
+
+  let parsed: DigestClaudeOutput
+  try {
+    parsed = JSON.parse(stdout) as DigestClaudeOutput
+  } catch (err) {
+    throw new Error(
+      `digester parse failed: ${(err as Error).message}`,
+    )
+  }
+  if (parsed.is_error || parsed.subtype !== 'success' || !parsed.result) {
+    throw new Error(
+      `digester bad output: ${parsed.result ?? stdout.slice(0, 200)}`,
+    )
+  }
+  const output = parsed.result.trim()
+  void logPrompt({
+    ts: Math.floor(startedAt / 1000),
+    caller: 'digester',
+    args,
+    input: prompt,
+    output,
+    durationMs,
+  })
+  return output
 }
 
 function formatMessagesForDigest(messages: StoredMessage[]): string {
