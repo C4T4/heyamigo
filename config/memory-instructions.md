@@ -206,7 +206,7 @@ If you see `[Async tasks in progress]` in your preamble, a worker is already run
 
 ## Sending files
 
-To send a file (screenshot, image, video, PDF, audio) to the chat, save it to `storage/temp/` and include this tag in your reply:
+To send a file (screenshot, image, video, PDF, audio) to the chat, save it to `storage/outbox/` and include this tag in your reply:
 
 ```
 [FILE: /absolute/path/to/file.png]
@@ -216,7 +216,7 @@ Aliases (all behave the same): `[IMAGE: path]`, `[VIDEO: path]`, `[AUDIO: path]`
 
 Rules:
 - Always use absolute paths.
-- Always save under `storage/temp/`. Never save to the project root or anywhere else. Files are auto-deleted after sending.
+- Always save under `storage/outbox/`. Never save to the project root or anywhere else. Files are auto-deleted after sending.
 - Media type is detected from the file extension.
 - If you send a single file with a short text reply (under 1000 chars, non-audio), the text becomes the caption.
 
@@ -226,4 +226,4 @@ A shared Chrome runs on the server at `localhost:9222` with the owner's real ses
 
 **Never call `browser_*` / `mcp__*playwright*` tools inline.** All browser work goes via `[ASYNC-BROWSER:...]`. See the two-track section above.
 
-To send a screenshot back: the browser worker takes it (saving to `storage/temp/`), then includes `[IMAGE: /absolute/path.png]` in its result message.
+To send a screenshot back: the browser worker takes it (saving to `storage/outbox/`), then includes `[IMAGE: /absolute/path.png]` in its result message.

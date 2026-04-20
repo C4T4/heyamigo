@@ -204,8 +204,10 @@ function compactTokens(n: number): string {
 }
 
 // Proactive outbound: send a message to a chat without an incoming trigger.
-// Chunks, persists to the message log, never throws. Callers are responsible
-// for the canSendProactive() gate — this function does not re-check it.
+// Extracts [FILE:]/[IMAGE:]/etc tags the same way handleReply does — files
+// get sent as WhatsApp media, remaining text sent normally. Chunks, persists
+// to the message log, never throws. Callers are responsible for the
+// canSendProactive() gate — this function does not re-check it.
 export async function initiate(params: {
   jid: string
   text: string
@@ -218,26 +220,72 @@ export async function initiate(params: {
   const raw = params.text.replaceAll('—', ', ').replaceAll('–', '-')
   if (!raw.trim()) return false
 
+  const { text, files } = extractFiles(raw)
+
   try {
-    const chunks = chunkText(raw, config.reply.chunkChars)
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]!
-      await sendText(sock, params.jid, chunk)
+    // Send any files first — images, video, PDFs, audio, etc.
+    for (const filePath of files) {
+      const isFirst = filePath === files[0]
+      const mediaType = detectMediaType(filePath)
+      const supportsCaption = mediaType !== 'audio'
+      const caption =
+        isFirst &&
+        text &&
+        text.length <= 1000 &&
+        files.length === 1 &&
+        supportsCaption
+          ? text
+          : undefined
+      await sendFile(sock, params.jid, filePath, caption)
       await append({
-        id: `initiate-${Date.now()}-${i}`,
+        id: `initiate-file-${Date.now()}`,
         jid: params.jid,
         direction: 'out',
         fromMe: true,
         sender: sock.user?.id ?? '',
         senderNumber: config.owner.number,
         timestamp: Math.floor(Date.now() / 1000),
-        text: chunk,
-        messageType: 'conversation',
+        text: caption || `[${mediaType}: ${filePath}]`,
+        messageType: `${mediaType}Message`,
+        mediaPath: filePath,
+        mediaType,
       })
-      if (i < chunks.length - 1) await sleep(config.reply.chunkDelayMs)
+      logger.info(
+        { jid: params.jid, path: filePath, mediaType },
+        'proactive file sent',
+      )
+      try { unlinkSync(filePath) } catch {}
+      if (files.length > 1) await sleep(config.reply.chunkDelayMs)
     }
+
+    // Send text — skip only when it was used as the caption on a single file
+    const textAlreadySent =
+      files.length === 1 &&
+      text &&
+      text.length <= 1000 &&
+      detectMediaType(files[0]!) !== 'audio'
+    if (text && !textAlreadySent) {
+      const chunks = chunkText(text, config.reply.chunkChars)
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i]!
+        await sendText(sock, params.jid, chunk)
+        await append({
+          id: `initiate-${Date.now()}-${i}`,
+          jid: params.jid,
+          direction: 'out',
+          fromMe: true,
+          sender: sock.user?.id ?? '',
+          senderNumber: config.owner.number,
+          timestamp: Math.floor(Date.now() / 1000),
+          text: chunk,
+          messageType: 'conversation',
+        })
+        if (i < chunks.length - 1) await sleep(config.reply.chunkDelayMs)
+      }
+    }
+
     logger.info(
-      { jid: params.jid, chars: raw.length },
+      { jid: params.jid, files: files.length, chars: text.length },
       'proactive message sent',
     )
     return true

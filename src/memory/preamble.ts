@@ -94,7 +94,7 @@ export function buildMemoryPreamble(params: {
       'The tag will be stripped from the message. Use absolute paths only.\n\n' +
       'Browser (Playwright MCP): a real Chrome at localhost:9222 with the owner\'s sessions logged in (TikTok, Instagram, etc.). DO NOT call browser tools yourself — they belong to the BROWSER TRACK, a parallel Claude worker with its own persistent session on that Chrome. ' +
       'When a request needs browser work: send a short ack AND append [ASYNC-BROWSER: <self-sufficient task description>] at the END of your reply. The browser worker picks it up, does the work in the logged-in Chrome, sends the result back to this chat as a new message. Single URL, quick check, full scrape — all go via [ASYNC-BROWSER:...]. No exceptions.\n\n' +
-      'File storage: if you need to save any files (screenshots, research, notes), always save them to storage/temp/. Never save files to the project root.',
+      'File storage: if you need to save files to send to the chat (screenshots, downloaded media), save them to storage/outbox/ — they auto-delete after send. For scratch/research/notes that should not be sent, use storage/temp/. Never save to the project root.',
   )
 
   // Critical section
