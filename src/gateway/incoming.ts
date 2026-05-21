@@ -12,11 +12,19 @@ import { logger } from '../logger.js'
 import { buildMemoryPreamble } from '../memory/preamble.js'
 import { enqueue } from '../queue/queue.js'
 import type { Job } from '../queue/types.js'
-import { downloadAndSave, mediaPromptTag } from '../store/media.js'
+import {
+  detectMediaType,
+  downloadAndSave,
+  getMediaSize,
+  mediaPromptTag,
+} from '../store/media.js'
 import { append, type StoredMessage } from '../store/messages.js'
+import { getDailyTokens } from '../store/usage.js'
+import { sendText } from '../wa/sender.js'
 import {
   checkAccess,
   discoverGroupIfNew,
+  getLimitsForUser,
   getRoleForContext,
 } from '../wa/whitelist.js'
 import { buildInitPayload, buildRecentContext } from './bootstrap.js'
@@ -92,6 +100,41 @@ async function processMessages(
         continue
       }
 
+      // File-size gate: refuse oversized media BEFORE downloading. Per-role
+      // cap; owner is always unlimited. If a file is too big we store the
+      // message (text/caption preserved for history), tell the user, and
+      // skip the Claude call — Claude would have no useful payload anyway.
+      const limits = getLimitsForUser(stored.senderNumber, isGroup)
+      const incomingMediaType = detectMediaType(msg)
+      if (
+        incomingMediaType &&
+        limits.maxFileBytes !== null &&
+        decision.respond
+      ) {
+        const size = getMediaSize(msg)
+        if (size !== null && size > limits.maxFileBytes) {
+          await append(stored)
+          const mb = (limits.maxFileBytes / (1024 * 1024)).toFixed(1)
+          const quoted = isGroup && config.reply.quoteInGroups ? msg : undefined
+          await sendText(
+            sock,
+            stored.jid,
+            `File too large (max ${mb} MB). I can't read this one — try a smaller version.`,
+            quoted,
+          ).catch((err) =>
+            logger.error(
+              { err, jid: stored.jid },
+              'failed to send oversized-file notice',
+            ),
+          )
+          logger.info(
+            { ...logCtx, size, cap: limits.maxFileBytes },
+            'oversized media rejected',
+          )
+          continue
+        }
+      }
+
       // Download media if present (image, video, audio, document)
       const media = await downloadAndSave(msg, stored.jid)
       if (media) {
@@ -147,6 +190,24 @@ async function processMessages(
           continue
         }
         triggerReason = trigger.reason
+      }
+
+      // Daily token cap: silent drop once the user has burned their budget
+      // for the day. Owner is exempt (limits.dailyTokenLimit is null).
+      if (limits.dailyTokenLimit !== null) {
+        const used = getDailyTokens(stored.senderNumber)
+        if (used >= limits.dailyTokenLimit) {
+          logger.info(
+            {
+              ...logCtx,
+              used,
+              cap: limits.dailyTokenLimit,
+              trigger: triggerReason,
+            },
+            'daily token quota exhausted, silent drop',
+          )
+          continue
+        }
       }
 
       const { role } = getRoleForContext(stored.senderNumber, isGroup)

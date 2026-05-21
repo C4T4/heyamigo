@@ -39,6 +39,28 @@ export function detectMediaType(
   return MEDIA_TYPES[type] ?? null
 }
 
+// fileLength comes off the wire as `number | Long`. Long is the protobuf
+// long-int wrapper; calling .toNumber() loses precision above 2^53 but media
+// sizes are nowhere near that. Returns null if the size can't be determined.
+export function getMediaSize(msg: WAMessage): number | null {
+  const content = msg.message
+  if (!content) return null
+  const type = getContentType(content)
+  if (!type) return null
+  const mediaMsg = (content as Record<string, unknown>)[type] as
+    | Record<string, unknown>
+    | undefined
+  const raw = mediaMsg?.fileLength
+  if (raw == null) return null
+  if (typeof raw === 'number') return raw
+  if (typeof raw === 'object' && raw !== null) {
+    const obj = raw as { toNumber?: () => number }
+    if (typeof obj.toNumber === 'function') return obj.toNumber()
+  }
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
+}
+
 // Baileys' extensionForMediaMessage throws when the media's mimetype is
 // undefined — happens on some forwarded documents (notably PDFs shared in
 // contexts that strip metadata). Fall back to the filename's extension,

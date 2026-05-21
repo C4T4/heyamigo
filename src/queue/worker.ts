@@ -2,6 +2,7 @@ import { askClaude } from '../ai/claude.js'
 import { clearSession, setSession, setUsage } from '../ai/sessions.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
+import { addDailyTokens } from '../store/usage.js'
 import { extractFlags } from '../memory/digest-flag.js'
 import {
   appendEntry,
@@ -44,6 +45,13 @@ async function callClaude(job: Job): Promise<Result> {
     totalContextTokens,
     updatedAt: Math.floor(Date.now() / 1000),
   })
+
+  // Per-user daily token accounting. Owner sender is exempt by check at the
+  // incoming gate, but we still bill so /usage reflects reality if added.
+  // Cache-read tokens are excluded — they don't cost real budget.
+  if (job.senderNumber) {
+    addDailyTokens(job.senderNumber, usage.inputTokens + usage.outputTokens)
+  }
 
   const {
     clean,
