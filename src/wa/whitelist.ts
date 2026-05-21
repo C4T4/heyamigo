@@ -126,6 +126,27 @@ function load(): AccessConfig {
   return AccessSchema.parse(JSON.parse(content))
 }
 
+// Per-field merge: access.json's role definition overrides individual fields
+// of DEFAULT_ROLES, instead of replacing the whole role object. This means
+// adding new role fields (maxFileBytes, dailyTokenLimit, …) in code stays
+// effective for existing installs whose access.json predates those fields.
+function resolveRoles(): Record<string, Role> {
+  const configured = current.roles ?? {}
+  const out: Record<string, Role> = {}
+  const names = new Set<string>([
+    ...Object.keys(DEFAULT_ROLES),
+    ...Object.keys(configured),
+  ])
+  for (const name of names) {
+    const def = DEFAULT_ROLES[name]
+    const cfg = configured[name as RoleName]
+    if (def && cfg) out[name] = { ...def, ...cfg }
+    else if (cfg) out[name] = cfg
+    else if (def) out[name] = def
+  }
+  return out
+}
+
 function save(next: AccessConfig): void {
   writeFileSync(ACCESS_FILE, JSON.stringify(next, null, 2) + '\n', 'utf-8')
   current = next
@@ -160,7 +181,7 @@ export function getRole(senderNumber: string): {
   userName?: string
 } {
   const users = current.users ?? {}
-  const roles = { ...DEFAULT_ROLES, ...(current.roles ?? {}) }
+  const roles = resolveRoles()
   const entry = users[senderNumber]
   if (entry) {
     const roleName = entry.role
@@ -191,7 +212,7 @@ export function getRoleForContext(
   isGroup: boolean,
 ): { name: RoleName; role: Role; userName?: string } {
   const users = current.users ?? {}
-  const roles = { ...DEFAULT_ROLES, ...(current.roles ?? {}) }
+  const roles = resolveRoles()
   const entry = users[senderNumber]
   if (entry) {
     return {
