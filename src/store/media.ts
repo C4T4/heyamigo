@@ -14,6 +14,7 @@ export type MediaInfo = {
   mediaType: 'image' | 'video' | 'audio' | 'document' | 'sticker'
   mediaPath: string
   mediaMime: string
+  bytes: number
 }
 
 const MEDIA_TYPES: Record<string, MediaInfo['mediaType']> = {
@@ -123,6 +124,7 @@ export async function downloadAndSave(
       mediaType,
       mediaPath: filePath,
       mediaMime: mimetype,
+      bytes: buffer.length,
     }
   } catch (err) {
     logger.error({ err, jid, msgId: msg.key.id }, 'media download failed')

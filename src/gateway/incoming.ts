@@ -1,3 +1,4 @@
+import { unlink } from 'fs/promises'
 import {
   getContentType,
   isJidGroup,
@@ -114,12 +115,11 @@ async function processMessages(
         const size = getMediaSize(msg)
         if (size !== null && size > limits.maxFileBytes) {
           await append(stored)
-          const mb = (limits.maxFileBytes / (1024 * 1024)).toFixed(1)
           const quoted = isGroup && config.reply.quoteInGroups ? msg : undefined
           await sendText(
             sock,
             stored.jid,
-            `File too large (max ${mb} MB). I can't read this one — try a smaller version.`,
+            'Could not process that, please try a smaller file.',
             quoted,
           ).catch((err) =>
             logger.error(
@@ -137,6 +137,40 @@ async function processMessages(
 
       // Download media if present (image, video, audio, document)
       const media = await downloadAndSave(msg, stored.jid)
+
+      // Post-download safety net: re-check against the real buffer size.
+      // Catches cases the pre-download gate missed — protobuf fileLength
+      // missing, nested in documentWithCaptionMessage, stickers, etc.
+      // Only enforced when we'd otherwise respond; silent groups keep the
+      // archive intact regardless of size.
+      if (
+        media &&
+        limits.maxFileBytes !== null &&
+        decision.respond &&
+        media.bytes > limits.maxFileBytes
+      ) {
+        await unlink(media.mediaPath).catch(() => undefined)
+        await append(stored)
+        const quoted =
+          isGroup && config.reply.quoteInGroups ? msg : undefined
+        await sendText(
+          sock,
+          stored.jid,
+          'Could not process that, please try a smaller file.',
+          quoted,
+        ).catch((err) =>
+          logger.error(
+            { err, jid: stored.jid },
+            'failed to send oversized-file notice',
+          ),
+        )
+        logger.info(
+          { ...logCtx, bytes: media.bytes, cap: limits.maxFileBytes },
+          'oversized media rejected (post-download)',
+        )
+        continue
+      }
+
       if (media) {
         stored.mediaType = media.mediaType
         stored.mediaPath = media.mediaPath
