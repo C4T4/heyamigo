@@ -1,6 +1,6 @@
 import type { WAMessage, WASocket } from 'baileys'
 import { clearSession, getSessionInfo } from '../ai/sessions.js'
-import { reloadAllSystemPrompts } from '../ai/providers.js'
+import { getProvider, reloadAllSystemPrompts } from '../ai/providers.js'
 import { config } from '../config.js'
 import { runDigestNow } from '../memory/scheduler.js'
 import { sendText } from '../wa/sender.js'
@@ -26,16 +26,17 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
   if (!cmd) return false
 
   if (config.commands.reset.includes(cmd)) {
-    const existed = clearSession(ctx.jid)
+    const provider = getProvider()
+    const existed = clearSession(ctx.jid, provider.name)
     const reply = existed
-      ? 'Session reset. Next message will bootstrap a fresh Claude session.'
+      ? `Session reset. Next message will bootstrap a fresh ${provider.name} session.`
       : 'No session to reset.'
     await sendText(ctx.sock, ctx.jid, reply, ctx.quoted)
     return true
   }
 
   if (config.commands.status.includes(cmd)) {
-    const info = getSessionInfo(ctx.jid)
+    const info = getSessionInfo(ctx.jid, getProvider().name)
     if (!info) {
       await sendText(
         ctx.sock,
@@ -61,7 +62,7 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
 
   if (config.commands.reload.includes(cmd)) {
     reloadAllSystemPrompts()
-    const existed = clearSession(ctx.jid)
+    const existed = clearSession(ctx.jid, getProvider().name)
     const reply = existed
       ? 'Personality reloaded and session reset.'
       : 'Personality reloaded.'

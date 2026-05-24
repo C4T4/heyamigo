@@ -24,7 +24,8 @@ function isStaleSessionError(err: unknown): boolean {
 async function callClaude(job: Job): Promise<Result> {
   const startedAt = Date.now()
   const wasFresh = !job.sessionId
-  const { reply, sessionId, usage } = await getProvider().ask({
+  const provider = getProvider()
+  const { reply, sessionId, usage } = await provider.ask({
     input: job.input,
     sessionId: job.sessionId,
     allowedTools: job.allowedTools,
@@ -32,7 +33,7 @@ async function callClaude(job: Job): Promise<Result> {
   const durationMs = Date.now() - startedAt
 
   if (!job.sessionId) {
-    setSession(job.jid, sessionId)
+    setSession(job.jid, provider.name, sessionId)
   }
 
   const totalContextTokens =
@@ -40,7 +41,7 @@ async function callClaude(job: Job): Promise<Result> {
     usage.cacheReadTokens +
     usage.cacheCreationTokens +
     usage.outputTokens
-  setUsage(job.jid, {
+  setUsage(job.jid, provider.name, {
     ...usage,
     totalContextTokens,
     updatedAt: Math.floor(Date.now() / 1000),
@@ -178,7 +179,7 @@ export async function processJob(job: Job): Promise<Result> {
         { jid: job.jid, staleId: job.sessionId },
         'stale session detected, clearing and retrying with fresh bootstrap',
       )
-      clearSession(job.jid)
+      clearSession(job.jid, getProvider().name)
       return callClaude({ ...job, sessionId: undefined, allowedTools: job.allowedTools })
     }
     throw err

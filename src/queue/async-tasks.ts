@@ -294,7 +294,19 @@ function truncate(s: string, n: number): string {
 // - Task description is added as a new user message to the persistent
 //   session. The worker sees the accumulated history automatically.
 
-function browserSessionFilePath(): string {
+// Per-provider browser session storage. Each CLI's session ids are opaque
+// to the other, so swapping providers must not feed one's session id to
+// the other. Filename includes the provider name to keep them separate;
+// the legacy provider-less filename is auto-migrated to claude on read.
+function browserSessionFilePath(provider: string): string {
+  return resolve(
+    process.cwd(),
+    config.memory.dir,
+    `browser-session-${provider}.json`,
+  )
+}
+
+function legacyBrowserSessionFilePath(): string {
   return resolve(process.cwd(), config.memory.dir, 'browser-session.json')
 }
 
@@ -305,13 +317,20 @@ type BrowserSessionState = {
   resumeCount: number
 }
 
-function loadBrowserSession(): BrowserSessionState {
-  const path = browserSessionFilePath()
+function loadBrowserSession(provider: string): BrowserSessionState {
+  const path = browserSessionFilePath(provider)
+  let source = path
   if (!existsSync(path)) {
-    return { sessionId: null, createdAt: 0, lastUsedAt: 0, resumeCount: 0 }
+    const legacy = legacyBrowserSessionFilePath()
+    if (provider === 'claude' && existsSync(legacy)) {
+      // One-time migration: legacy file was implicitly claude.
+      source = legacy
+    } else {
+      return { sessionId: null, createdAt: 0, lastUsedAt: 0, resumeCount: 0 }
+    }
   }
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as Partial<BrowserSessionState>
+    const parsed = JSON.parse(readFileSync(source, 'utf-8')) as Partial<BrowserSessionState>
     return {
       sessionId: parsed.sessionId ?? null,
       createdAt: parsed.createdAt ?? 0,
@@ -323,22 +342,24 @@ function loadBrowserSession(): BrowserSessionState {
   }
 }
 
-function saveBrowserSession(state: BrowserSessionState): void {
-  const path = browserSessionFilePath()
+function saveBrowserSession(provider: string, state: BrowserSessionState): void {
+  const path = browserSessionFilePath(provider)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, JSON.stringify(state, null, 2) + '\n', 'utf-8')
 }
 
-// Reset the browser session. Callable from outside if the session gets
-// corrupted or we want a fresh start. Not wired into any command yet.
+// Reset the browser session for the active provider. Callable from outside
+// if the session gets corrupted or we want a fresh start. Not wired into
+// any command yet.
 export function resetBrowserSession(): void {
-  saveBrowserSession({
+  const provider = getProvider().name
+  saveBrowserSession(provider, {
     sessionId: null,
     createdAt: 0,
     lastUsedAt: 0,
     resumeCount: 0,
   })
-  logger.info('browser session reset')
+  logger.info({ provider }, 'browser session reset')
 }
 
 const browserQueue: queueAsPromised<AsyncTask, void> = fastq.promise<
@@ -432,7 +453,8 @@ function browserAddDirs(): string[] {
 }
 
 async function runBrowserTask(task: AsyncTask): Promise<void> {
-  const session = loadBrowserSession()
+  const provider = getProvider()
+  const session = loadBrowserSession(provider.name)
   const isResume = !!session.sessionId
   const prompt = buildBrowserPrompt(task, isResume)
   const elapsedLog = () =>
@@ -441,7 +463,7 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
   let reply: string
   let returnedSessionId: string | undefined
   try {
-    const result = await getProvider().runTask({
+    const result = await provider.runTask({
       input: prompt,
       caller: 'browser-task',
       mode: 'auto',
@@ -472,7 +494,7 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
   // sessionId; on resume it may return the same or a rotated one.
   if (returnedSessionId) {
     const now = Math.floor(Date.now() / 1000)
-    saveBrowserSession({
+    saveBrowserSession(provider.name, {
       sessionId: returnedSessionId,
       createdAt: session.createdAt || now,
       lastUsedAt: now,

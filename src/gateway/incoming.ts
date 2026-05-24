@@ -7,6 +7,7 @@ import {
   type WAMessage,
   type WASocket,
 } from 'baileys'
+import { getProvider } from '../ai/providers.js'
 import { getSession } from '../ai/sessions.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
@@ -246,7 +247,7 @@ async function processMessages(
 
       const { role } = getRoleForContext(stored.senderNumber, isGroup)
 
-      const existingSession = getSession(stored.jid)
+      const existingSession = getSession(stored.jid, getProvider().name)
       let userContent = stored.text
       if (media) {
         const tag = mediaPromptTag(media, stored.text)

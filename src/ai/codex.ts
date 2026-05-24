@@ -7,7 +7,7 @@
 //   - exec mode with --json (NDJSON event stream on stdout)
 //   - --add-dir for extra writable roots
 //   - --sandbox for tier (read-only / workspace-write / danger-full-access)
-//   - --resume <id> for session continuation
+//   - `resume <id>` subcommand for session continuation (not a flag)
 //   - prompt passed on stdin (matches the spawn plumbing that already
 //     pipes input to child.stdin)
 //
@@ -87,9 +87,10 @@ function buildExecArgs(params: {
   args.push('--sandbox', sandboxFor(params.mode))
 
   if (params.sessionId) {
-    // Resume keeps the prior conversation; system prompt and add-dirs
-    // were baked in on the original turn.
-    args.push('--resume', params.sessionId)
+    // Resume is a subcommand of exec, not a flag: `codex exec [opts] resume
+    // <SESSION_ID> [prompt]`. System prompt and add-dirs were baked in on
+    // the original turn so we don't re-pass them here.
+    args.push('resume', params.sessionId)
   } else {
     for (const dir of params.addDirs ?? []) {
       args.push('--add-dir', resolve(process.cwd(), dir))
