@@ -1,8 +1,7 @@
-import { parseStreamJson, runClaude, TIMEOUT_MS } from '../ai/spawn.js'
+import { getProvider } from '../ai/providers.js'
 import { config } from '../config.js'
 import { initiate } from '../gateway/outgoing.js'
 import { logger } from '../logger.js'
-import { logPrompt } from '../promptlog.js'
 import { readLast, type StoredMessage } from '../store/messages.js'
 import { canSendProactive } from '../wa/whitelist.js'
 import {
@@ -21,13 +20,6 @@ import {
 
 type NudgeKind = 'checkin' | 'silent'
 
-type ComposerOutput = {
-  type?: string
-  subtype?: string
-  result?: string
-  is_error?: boolean
-}
-
 // Default nudge target: owner's self-DM. Group/other-chat nudges would require
 // explicit opt-in via access.json; we don't schedule those automatically in v1.
 function defaultNudgeJid(): string | null {
@@ -36,47 +28,13 @@ function defaultNudgeJid(): string | null {
 }
 
 async function spawnComposer(prompt: string): Promise<string> {
-  const args = [
-    '-p',
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--model',
-    config.claude.model,
-    '--permission-mode',
-    'acceptEdits',
-  ]
-  const { stdout, stderr, durationMs } = await runClaude({
-    args,
+  const { reply } = await getProvider().runTask({
     input: prompt,
-    timeoutMs: TIMEOUT_MS.background,
     caller: 'journal-nudger',
+    mode: 'auto',
+    lane: 'background',
   })
-  const startedAt = Date.now() - durationMs
-
-  const parsed = parseStreamJson(stdout)
-  if (!parsed) {
-    throw new Error(
-      `nudger stream-json produced no result event: ${stdout.slice(0, 200)}`,
-    )
-  }
-  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
-    throw new Error(
-      `nudger bad output: ${parsed.result || stdout.slice(0, 200)}`,
-    )
-  }
-  const output = parsed.result.trim()
-  void logPrompt({
-    ts: Math.floor(startedAt / 1000),
-    caller: 'journal-nudger',
-    args,
-    input: prompt,
-    output,
-    durationMs,
-    stderr,
-    eventTypes: parsed.eventTypes,
-  })
-  return output
+  return reply
 }
 
 function formatMsg(m: StoredMessage): string {

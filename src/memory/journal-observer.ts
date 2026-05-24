@@ -1,7 +1,6 @@
-import { parseStreamJson, runClaude, TIMEOUT_MS } from '../ai/spawn.js'
+import { getProvider } from '../ai/providers.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
-import { logPrompt } from '../promptlog.js'
 import { readLast, type StoredMessage } from '../store/messages.js'
 import {
   appendEntry,
@@ -12,63 +11,22 @@ import {
   type Journal,
 } from './journals.js'
 
-type ObserverClaudeOutput = {
-  type?: string
-  subtype?: string
-  result?: string
-  is_error?: boolean
-}
-
 // How many recent messages to include in the scan window on each sweep.
 // Observer runs every memory.sweepIntervalMs (default 3h), so this window
 // must cover at least that much chat activity to avoid gaps.
 const SCAN_WINDOW = 200
 
-// How many recent entries to show Claude for dedup context.
+// How many recent entries to show the observer for dedup context.
 const DEDUP_WINDOW = 20
 
 async function spawnObserver(prompt: string): Promise<string> {
-  const args = [
-    '-p',
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--model',
-    config.claude.model,
-    '--permission-mode',
-    'acceptEdits',
-  ]
-  const { stdout, stderr, durationMs } = await runClaude({
-    args,
+  const { reply } = await getProvider().runTask({
     input: prompt,
-    timeoutMs: TIMEOUT_MS.background,
     caller: 'journal-observer',
+    mode: 'auto',
+    lane: 'background',
   })
-  const startedAt = Date.now() - durationMs
-
-  const parsed = parseStreamJson(stdout)
-  if (!parsed) {
-    throw new Error(
-      `journal observer stream-json produced no result event: ${stdout.slice(0, 200)}`,
-    )
-  }
-  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
-    throw new Error(
-      `journal observer bad output: ${parsed.result || stdout.slice(0, 200)}`,
-    )
-  }
-  const output = parsed.result.trim()
-  void logPrompt({
-    ts: Math.floor(startedAt / 1000),
-    caller: 'journal-observer',
-    args,
-    input: prompt,
-    output,
-    durationMs,
-    stderr,
-    eventTypes: parsed.eventTypes,
-  })
-  return output
+  return reply
 }
 
 function formatMsg(m: StoredMessage): string {

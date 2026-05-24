@@ -26,6 +26,11 @@ const ConfigSchema = z.object({
     status: z.array(z.string()),
     reload: z.array(z.string()),
   }),
+  ai: z
+    .object({
+      provider: z.enum(['claude', 'codex']).default('claude'),
+    })
+    .default({ provider: 'claude' }),
   claude: z.object({
     model: z.string(),
     personalityFile: z.string(),

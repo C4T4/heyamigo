@@ -6,10 +6,8 @@ import {
 } from 'fs'
 import { dirname, resolve } from 'path'
 import { mkdirSync } from 'fs'
-import { parseStreamJson, runClaude, TIMEOUT_MS } from '../ai/spawn.js'
-import { config } from '../config.js'
+import { getProvider } from '../ai/providers.js'
 import { logger } from '../logger.js'
-import { logPrompt } from '../promptlog.js'
 import { listJournals, readEntries } from './journals.js'
 import { memoryRoot, treeRoot, entityIndexPath } from './paths.js'
 
@@ -245,55 +243,14 @@ ${raw}
 Output ONLY the compressed index in the exact format above. No preamble, no explanation, no code fences.`
 }
 
-type GenResult = {
-  type?: string
-  subtype?: string
-  result?: string
-  is_error?: boolean
-}
-
 async function spawnGenerator(prompt: string): Promise<string> {
-  const args = [
-    '-p',
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--model',
-    config.claude.model,
-    '--permission-mode',
-    'acceptEdits',
-  ]
-  const { stdout, stderr, durationMs } = await runClaude({
-    args,
+  const { reply } = await getProvider().runTask({
     input: prompt,
-    timeoutMs: TIMEOUT_MS.background,
     caller: 'compressed',
+    mode: 'auto',
+    lane: 'background',
   })
-  const startedAt = Date.now() - durationMs
-
-  const parsed = parseStreamJson(stdout)
-  if (!parsed) {
-    throw new Error(
-      `compressed stream-json produced no result event: ${stdout.slice(0, 200)}`,
-    )
-  }
-  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
-    throw new Error(
-      `compressed bad output: ${parsed.result || stdout.slice(0, 200)}`,
-    )
-  }
-  const output = parsed.result.trim()
-  void logPrompt({
-    ts: Math.floor(startedAt / 1000),
-    caller: 'compressed',
-    args,
-    input: prompt,
-    output,
-    durationMs,
-    stderr,
-    eventTypes: parsed.eventTypes,
-  })
-  return output
+  return reply
 }
 
 let buildInFlight: Promise<void> | null = null

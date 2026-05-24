@@ -2,26 +2,20 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
-import { logPrompt } from '../promptlog.js'
+import { logPrompt, type PromptLogEntry } from '../promptlog.js'
+import type {
+  AiProvider,
+  AskParams,
+  AskResult,
+  RunTaskParams,
+  RunTaskResult,
+  TaskMode,
+} from './provider.js'
 import { parseStreamJson, runClaude, TIMEOUT_MS } from './spawn.js'
 
-export type AskClaudeParams = {
-  input: string
-  sessionId?: string
-  allowedTools?: string[] | 'all'
-}
-
-export type AskClaudeResult = {
-  reply: string
-  sessionId: string
-  usage: {
-    inputTokens: number
-    cacheReadTokens: number
-    cacheCreationTokens: number
-    outputTokens: number
-    numTurns: number
-  }
-}
+// Back-compat aliases — older callers import these names.
+export type AskClaudeParams = AskParams
+export type AskClaudeResult = AskResult
 
 let cachedSystemPrompt: string | null = null
 
@@ -152,4 +146,126 @@ export async function askClaude(
   })
 
   return result
+}
+
+// Claude's per-mode permission + tool defaults. The caller can still override
+// allowedTools explicitly; mode just sets the floor.
+function permissionModeFor(mode: TaskMode): string {
+  switch (mode) {
+    case 'read-only':
+      return 'default' // prompts on writes; we layer allowedTools to enforce
+    case 'auto':
+    case 'full':
+      return 'acceptEdits'
+  }
+}
+
+function defaultAllowedToolsFor(mode: TaskMode): string[] | undefined {
+  if (mode === 'read-only') return ['Read', 'Grep', 'Glob', 'WebFetch']
+  return undefined // no restriction
+}
+
+function buildTaskArgs(params: RunTaskParams): string[] {
+  const args: string[] = [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--model',
+    config.claude.model,
+    '--permission-mode',
+    permissionModeFor(params.mode),
+  ]
+
+  if (params.sessionId) {
+    args.push('--resume', params.sessionId)
+  } else if (params.includeSystemPrompt) {
+    args.push('--append-system-prompt', systemPrompt())
+  }
+
+  // On fresh sessions, fold the configured baseline read dirs in too. On
+  // resume Claude already has them baked into the session state.
+  if (!params.sessionId && params.includeSystemPrompt) {
+    for (const dir of config.claude.addDirs) {
+      args.push('--add-dir', resolve(process.cwd(), dir))
+    }
+  }
+
+  for (const dir of params.addDirs ?? []) {
+    args.push('--add-dir', resolve(process.cwd(), dir))
+  }
+
+  const allowedTools =
+    params.allowedTools && params.allowedTools !== 'all'
+      ? params.allowedTools
+      : defaultAllowedToolsFor(params.mode)
+  if (allowedTools && allowedTools.length > 0) {
+    args.push('--allowedTools', allowedTools.join(','))
+  }
+
+  return args
+}
+
+function laneTimeoutMs(lane: RunTaskParams['lane']): number {
+  return TIMEOUT_MS[lane]
+}
+
+export async function runClaudeTask(
+  params: RunTaskParams,
+): Promise<RunTaskResult> {
+  const args = buildTaskArgs(params)
+  const { stdout, stderr, durationMs } = await runClaude({
+    args,
+    input: params.input,
+    timeoutMs: laneTimeoutMs(params.lane),
+    caller: params.caller as PromptLogEntry['caller'],
+  })
+  const startedAt = Date.now() - durationMs
+
+  const parsed = parseStreamJson(stdout)
+  if (!parsed) {
+    throw new Error(
+      `${params.caller} stream-json produced no result event: ${stdout.slice(0, 200)}`,
+    )
+  }
+  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
+    throw new Error(
+      `${params.caller} bad output: ${parsed.result || stdout.slice(0, 200)}`,
+    )
+  }
+
+  const reply = parsed.result.trim()
+  const usage = {
+    inputTokens: parsed.usage?.input_tokens ?? 0,
+    cacheReadTokens: parsed.usage?.cache_read_input_tokens ?? 0,
+    cacheCreationTokens: parsed.usage?.cache_creation_input_tokens ?? 0,
+    outputTokens: parsed.usage?.output_tokens ?? 0,
+    numTurns: parsed.numTurns ?? 0,
+  }
+
+  void logPrompt({
+    ts: Math.floor(startedAt / 1000),
+    caller: params.caller as PromptLogEntry['caller'],
+    args,
+    input: params.input,
+    output: reply,
+    sessionId: parsed.sessionId ?? undefined,
+    usage,
+    durationMs,
+    stderr,
+    eventTypes: parsed.eventTypes,
+  })
+
+  return {
+    reply,
+    sessionId: parsed.sessionId ?? undefined,
+    usage,
+  }
+}
+
+export const claudeProvider: AiProvider = {
+  name: 'claude',
+  ask: askClaude,
+  runTask: runClaudeTask,
+  reloadSystemPrompt,
 }

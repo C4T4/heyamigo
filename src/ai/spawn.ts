@@ -33,6 +33,11 @@ export type RunClaudeOpts = {
   timeoutMs: number
   caller: PromptLogEntry['caller']
   cwd?: string
+  // Binary to spawn. Defaults to 'claude' for back-compat. Set to 'codex' (or
+  // any other CLI) when invoking an alternative provider. The ANTHROPIC_LOG
+  // env override is only applied when bin is 'claude' — other providers don't
+  // understand it and may emit spurious warnings.
+  bin?: string
 }
 
 export type RunClaudeResult = {
@@ -146,24 +151,28 @@ export async function runClaude(
   opts: RunClaudeOpts,
 ): Promise<RunClaudeResult> {
   const { args, input, timeoutMs, caller } = opts
+  const bin = opts.bin ?? 'claude'
   const startedAt = Date.now()
 
   return new Promise<RunClaudeResult>((resolvePromise, rejectPromise) => {
-    const child = spawn('claude', args, {
+    const env: NodeJS.ProcessEnv = { ...process.env }
+    if (bin === 'claude') {
+      // ANTHROPIC_LOG=debug surfaces the SDK's HTTP layer to stderr:
+      // request URLs, status codes, retries, rate-limit notices. We
+      // capture stderr and put a truncated copy into the promptlog so
+      // we can diagnose API hangs/rate-limits post-mortem instead of
+      // staring at "Claude subprocess is idle, why?". Only meaningful
+      // for the Anthropic CLI; other providers ignore it.
+      env.ANTHROPIC_LOG = process.env.ANTHROPIC_LOG ?? 'debug'
+    }
+
+    const child = spawn(bin, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: opts.cwd ?? process.cwd(),
       // detached:true puts the child in its own process group, so killGroup
       // can SIGTERM the whole tree (Playwright MCP, Chromium, etc.) at once.
       detached: true,
-      // ANTHROPIC_LOG=debug surfaces the SDK's HTTP layer to stderr:
-      // request URLs, status codes, retries, rate-limit notices. We
-      // capture stderr and put a truncated copy into the promptlog so
-      // we can diagnose API hangs/rate-limits post-mortem instead of
-      // staring at "Claude subprocess is idle, why?".
-      env: {
-        ...process.env,
-        ANTHROPIC_LOG: process.env.ANTHROPIC_LOG ?? 'debug',
-      },
+      env,
     })
 
     let stdout = ''
@@ -208,7 +217,7 @@ export async function runClaude(
       clearTimeout(timer)
       logFail(`spawn failed: ${err.message}`)
       rejectPromise(
-        new ClaudeSpawnError(caller, `claude spawn failed: ${err.message}`),
+        new ClaudeSpawnError(caller, `${bin} spawn failed: ${err.message}`),
       )
     })
 
@@ -232,7 +241,7 @@ export async function runClaude(
         return rejectPromise(
           new ClaudeSpawnError(
             caller,
-            `claude exited with code ${code}: ${stderr.slice(0, 500)}`,
+            `${bin} exited with code ${code}: ${stderr.slice(0, 500)}`,
           ),
         )
       }

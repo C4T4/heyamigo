@@ -27,6 +27,43 @@ function which(bin: string): string | null {
   return r.ok ? r.output : null
 }
 
+// Idempotently add the Playwright MCP entry to ~/.codex/config.toml so the
+// Codex CLI auto-launches the same MCP server Claude uses. We don't have a
+// TOML parser available; the entry has a fixed, simple shape so a text-level
+// presence check + append is safe enough here. Returns true if the entry was
+// added or already present, false on write failure.
+function addPlaywrightToCodexConfig(cdpUrl: string): boolean {
+  const codexDir = resolve(homedir(), '.codex')
+  const configPath = resolve(codexDir, 'config.toml')
+
+  const block = [
+    '',
+    '[mcp_servers.playwright]',
+    'command = "npx"',
+    `args = ["@playwright/mcp@latest", "--cdp-endpoint", "${cdpUrl}"]`,
+    '',
+  ].join('\n')
+
+  try {
+    mkdirSync(codexDir, { recursive: true })
+    let existing = ''
+    if (existsSync(configPath)) {
+      existing = readFileSync(configPath, 'utf-8')
+      // Match both [mcp_servers.playwright] and [mcp_servers."playwright"].
+      if (/\[mcp_servers\.(?:"?)playwright(?:"?)\]/.test(existing)) {
+        return true
+      }
+    }
+    const next = existing.endsWith('\n') || existing === ''
+      ? existing + block
+      : existing + '\n' + block
+    writeFileSync(configPath, next, 'utf-8')
+    return true
+  } catch {
+    return false
+  }
+}
+
 function runLive(cmd: string): boolean {
   const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' })
   return result.status === 0
@@ -357,17 +394,26 @@ export async function runSetup(): Promise<void> {
       p.log.warning(
         'Automated browser setup is available on Linux only. ' +
           'On macOS/Windows: start Chrome with --remote-debugging-port=9222 manually, ' +
-          'then run: claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "http://localhost:9222"',
+          'then for Claude: claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "http://localhost:9222"; ' +
+          'for Codex: add [mcp_servers.playwright] to ~/.codex/config.toml.',
       )
     } else {
       // ── Check if already running ─────────────────────────────
       const cdpUrl = 'http://localhost:9222'
       const alreadyRunning = run(`curl -s '${cdpUrl}/json/version'`)
       const mcpConfigured = run('claude mcp list 2>/dev/null').output.includes('playwright')
+      const hasCodex = !!which('codex')
 
       if (alreadyRunning.ok && alreadyRunning.output.includes('Browser') && mcpConfigured) {
         p.log.success('Chrome already running (localhost:9222)')
         p.log.success('Claude already connected to Chrome')
+        if (hasCodex) {
+          if (addPlaywrightToCodexConfig(cdpUrl)) {
+            p.log.success('Codex connected to Chrome (~/.codex/config.toml)')
+          } else {
+            p.log.warning('Could not write ~/.codex/config.toml — add [mcp_servers.playwright] manually')
+          }
+        }
         p.log.info(
           'View browser (SSH tunnel):\n' +
             `  ssh -L 6090:127.0.0.1:6090 ${process.env.USER || 'root'}@<server-ip>\n` +
@@ -476,6 +522,18 @@ export async function runSetup(): Promise<void> {
             p.log.warning(
               'Run manually: claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "http://localhost:9222"',
             )
+          }
+
+          // Mirror the MCP entry into Codex if it's installed, so the same
+          // browser lane works when ai.provider is flipped to codex.
+          if (hasCodex) {
+            if (addPlaywrightToCodexConfig(cdpUrl)) {
+              p.log.success('Codex connected to Chrome (~/.codex/config.toml)')
+            } else {
+              p.log.warning(
+                'Could not write ~/.codex/config.toml — add [mcp_servers.playwright] manually',
+              )
+            }
           }
 
           if (vncInstalled) {

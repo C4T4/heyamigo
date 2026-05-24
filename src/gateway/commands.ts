@@ -1,6 +1,6 @@
 import type { WAMessage, WASocket } from 'baileys'
 import { clearSession, getSessionInfo } from '../ai/sessions.js'
-import { reloadSystemPrompt } from '../ai/claude.js'
+import { reloadAllSystemPrompts } from '../ai/providers.js'
 import { config } from '../config.js'
 import { runDigestNow } from '../memory/scheduler.js'
 import { sendText } from '../wa/sender.js'
@@ -60,7 +60,7 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
   }
 
   if (config.commands.reload.includes(cmd)) {
-    reloadSystemPrompt()
+    reloadAllSystemPrompts()
     const existed = clearSession(ctx.jid)
     const reply = existed
       ? 'Personality reloaded and session reset.'

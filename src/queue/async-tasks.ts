@@ -1,12 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, resolve } from 'path'
-import { parseStreamJson, runClaude, TIMEOUT_MS } from '../ai/spawn.js'
+import { getProvider } from '../ai/providers.js'
 import { config } from '../config.js'
 import fastq from 'fastq'
 import type { queueAsPromised } from 'fastq'
 import { initiate } from '../gateway/outgoing.js'
 import { logger } from '../logger.js'
-import { logPrompt } from '../promptlog.js'
 
 export type AsyncTask = {
   id: string
@@ -19,15 +18,7 @@ export type AsyncTask = {
   startedAt: number
 }
 
-type ClaudeJsonOutput = {
-  type?: string
-  subtype?: string
-  result?: string
-  is_error?: boolean
-  session_id?: string
-}
-
-// Concurrency: how many async Claude workers can run simultaneously.
+// Concurrency: how many async workers can run simultaneously.
 // Start conservative — each process is expensive (Playwright, multi-minute runs).
 // Tune via config.asyncTasks.concurrency once we have real usage data.
 const CONCURRENCY = 3
@@ -45,7 +36,7 @@ const queue: queueAsPromised<AsyncTask, void> = fastq.promise<
 >(async (task) => {
   inProgress.set(task.id, task)
   try {
-    await runTask(task)
+    await executeAsyncTask(task)
   } catch (err) {
     logger.error(
       { err, id: task.id, jid: task.jid },
@@ -85,33 +76,6 @@ export function listAsyncTasks(jid?: string): AsyncTask[] {
 }
 
 // ---------- task runner ----------
-
-let cachedSystemPrompt: string | null = null
-
-function systemPrompt(): string {
-  if (cachedSystemPrompt !== null) return cachedSystemPrompt
-  const personality = readFileSync(
-    resolve(process.cwd(), config.claude.personalityFile),
-    'utf-8',
-  )
-  let memoryInstructions = ''
-  try {
-    memoryInstructions = readFileSync(
-      resolve(process.cwd(), config.memory.instructionsFile),
-      'utf-8',
-    )
-  } catch {
-    // optional
-  }
-  cachedSystemPrompt = memoryInstructions
-    ? `${personality}\n\n---\n\n${memoryInstructions}`
-    : personality
-  return cachedSystemPrompt
-}
-
-export function reloadAsyncSystemPrompt(): void {
-  cachedSystemPrompt = null
-}
 
 function buildPrompt(task: AsyncTask): string {
   const lines = [
@@ -155,79 +119,30 @@ function buildPrompt(task: AsyncTask): string {
   return lines.join('\n')
 }
 
-function buildArgs(task: AsyncTask): string[] {
-  const args: string[] = [
-    '-p',
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--model',
-    config.claude.model,
-    '--permission-mode',
-    'acceptEdits',
-    '--append-system-prompt',
-    systemPrompt(),
+function asyncTaskAddDirs(): string[] {
+  return [
+    ...config.claude.addDirs,
+    config.memory.dir,
+    config.storage.mediaDir,
   ]
-  for (const dir of config.claude.addDirs) {
-    args.push('--add-dir', resolve(process.cwd(), dir))
-  }
-  args.push('--add-dir', resolve(process.cwd(), config.memory.dir))
-  args.push('--add-dir', resolve(process.cwd(), config.storage.mediaDir))
-  if (
-    task.allowedTools &&
-    task.allowedTools !== 'all' &&
-    task.allowedTools.length > 0
-  ) {
-    args.push('--allowedTools', task.allowedTools.join(','))
-  }
-  return args
 }
 
-async function spawnClaudeForTask(
-  task: AsyncTask,
-  prompt: string,
-): Promise<string> {
-  const args = buildArgs(task)
-  const { stdout, stderr, durationMs } = await runClaude({
-    args,
-    input: prompt,
-    timeoutMs: TIMEOUT_MS.async,
-    caller: 'async-task',
-  })
-  const startedAt = Date.now() - durationMs
-
-  const parsed = parseStreamJson(stdout)
-  if (!parsed) {
-    throw new Error(
-      `async task stream-json produced no result event: ${stdout.slice(0, 200)}`,
-    )
-  }
-  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
-    throw new Error(
-      `async task bad output: ${parsed.result || stdout.slice(0, 200)}`,
-    )
-  }
-  const output = parsed.result.trim()
-  void logPrompt({
-    ts: Math.floor(startedAt / 1000),
-    caller: 'async-task',
-    args,
-    input: prompt,
-    output,
-    durationMs,
-    stderr,
-    eventTypes: parsed.eventTypes,
-  })
-  return output
-}
-
-async function runTask(task: AsyncTask): Promise<void> {
+async function executeAsyncTask(task: AsyncTask): Promise<void> {
   const prompt = buildPrompt(task)
   const elapsedLog = () =>
     `${Math.round((Date.now() - task.startedAt * 1000) / 1000)}s`
   let output: string
   try {
-    output = await spawnClaudeForTask(task, prompt)
+    const { reply } = await getProvider().runTask({
+      input: prompt,
+      caller: 'async-task',
+      mode: 'auto',
+      lane: 'async',
+      includeSystemPrompt: true,
+      addDirs: asyncTaskAddDirs(),
+      allowedTools: task.allowedTools,
+    })
+    output = reply
   } catch (err) {
     logger.error(
       { err, id: task.id, jid: task.jid, elapsed: elapsedLog() },
@@ -508,68 +423,40 @@ function buildBrowserPrompt(task: AsyncTask, isResume: boolean): string {
   return lines.join('\n')
 }
 
-function buildBrowserArgs(task: AsyncTask, sessionId: string | null): string[] {
-  const args: string[] = [
-    '-p',
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--model',
-    config.claude.model,
-    '--permission-mode',
-    'acceptEdits',
+function browserAddDirs(): string[] {
+  return [
+    ...config.claude.addDirs,
+    config.memory.dir,
+    config.storage.mediaDir,
   ]
-  if (sessionId) {
-    // Resume — system prompt and memory-dirs are already baked into session
-    args.push('--resume', sessionId)
-  } else {
-    // First call — bootstrap the persistent session
-    args.push('--append-system-prompt', systemPrompt())
-    for (const dir of config.claude.addDirs) {
-      args.push('--add-dir', resolve(process.cwd(), dir))
-    }
-  }
-  // Memory + media dirs re-added each call (harmless if already baked; needed
-  // on fresh bootstrap; lets the browser worker Read updated memory files
-  // between turns).
-  args.push('--add-dir', resolve(process.cwd(), config.memory.dir))
-  args.push('--add-dir', resolve(process.cwd(), config.storage.mediaDir))
-  if (
-    task.allowedTools &&
-    task.allowedTools !== 'all' &&
-    task.allowedTools.length > 0
-  ) {
-    args.push('--allowedTools', task.allowedTools.join(','))
-  }
-  return args
 }
 
 async function runBrowserTask(task: AsyncTask): Promise<void> {
   const session = loadBrowserSession()
   const isResume = !!session.sessionId
   const prompt = buildBrowserPrompt(task, isResume)
-  const args = buildBrowserArgs(task, session.sessionId)
-  const startedAtMs = Date.now()
   const elapsedLog = () =>
     `${Math.round((Date.now() - task.startedAt * 1000) / 1000)}s`
 
-  let stdout: string
-  let stderr: string
-  let durationMs: number
+  let reply: string
+  let returnedSessionId: string | undefined
   try {
-    const result = await runClaude({
-      args,
+    const result = await getProvider().runTask({
       input: prompt,
-      timeoutMs: TIMEOUT_MS.async,
       caller: 'browser-task',
+      mode: 'auto',
+      lane: 'async',
+      includeSystemPrompt: !isResume,
+      addDirs: browserAddDirs(),
+      allowedTools: task.allowedTools,
+      sessionId: session.sessionId ?? undefined,
     })
-    stdout = result.stdout
-    stderr = result.stderr
-    durationMs = result.durationMs
+    reply = result.reply
+    returnedSessionId = result.sessionId
   } catch (err) {
     logger.error(
       { err, id: task.id, jid: task.jid, elapsed: elapsedLog() },
-      'browser task claude call failed',
+      'browser task provider call failed',
     )
     await initiate({
       jid: task.jid,
@@ -581,39 +468,8 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
     return
   }
 
-  const parsed = parseStreamJson(stdout)
-  if (!parsed) {
-    logger.error(
-      { id: task.id },
-      'browser task stream-json produced no result event',
-    )
-    await initiate({
-      jid: task.jid,
-      text: `Heads up: the browser task "${truncate(
-        task.description,
-        80,
-      )}" returned an unparseable response.`,
-    })
-    return
-  }
-  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
-    logger.error(
-      { id: task.id, subtype: parsed.subtype, isError: parsed.isError },
-      'browser task bad output',
-    )
-    await initiate({
-      jid: task.jid,
-      text: `Heads up: the browser task "${truncate(
-        task.description,
-        80,
-      )}" returned an error.`,
-    })
-    return
-  }
-
-  // Persist the session id. On first call Claude returns the new sessionId;
-  // on resume it may return the same or a rotated one.
-  const returnedSessionId = parsed.sessionId
+  // Persist the session id. On first call the provider returns the new
+  // sessionId; on resume it may return the same or a rotated one.
   if (returnedSessionId) {
     const now = Math.floor(Date.now() / 1000)
     saveBrowserSession({
@@ -624,23 +480,9 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
     })
   }
 
-  void logPrompt({
-    ts: Math.floor(startedAtMs / 1000),
-    caller: 'browser-task',
-    args,
-    input: prompt,
-    output: parsed.result,
-    sessionId: returnedSessionId ?? undefined,
-    durationMs,
-    stderr,
-    eventTypes: parsed.eventTypes,
-  })
-
   // Route markers the same way the general async lane does.
   const { extractFlags } = await import('../memory/digest-flag.js')
-  const { clean, digest, journals, journalCreates } = extractFlags(
-    parsed.result,
-  )
+  const { clean, digest, journals, journalCreates } = extractFlags(reply)
 
   const { appendEntry, createJournal, getJournal, isValidSlug } =
     await import('../memory/journals.js')

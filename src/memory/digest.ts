@@ -1,7 +1,6 @@
-import { parseStreamJson, runClaude, TIMEOUT_MS } from '../ai/spawn.js'
+import { getProvider } from '../ai/providers.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
-import { logPrompt } from '../promptlog.js'
 import { readLast, type StoredMessage } from '../store/messages.js'
 import { markCompressedDirty } from './compressed.js'
 import {
@@ -12,59 +11,16 @@ import {
   writeProfile,
 } from './store.js'
 
-type DigestClaudeOutput = {
-  type?: string
-  subtype?: string
-  result?: string
-  is_error?: boolean
-}
-
-/**
- * Run a stateless Claude call to consolidate memory.
- * Returns the new content Claude proposed.
- */
+// Stateless agent call to consolidate memory. Routed through the provider
+// abstraction so it runs on whichever CLI is configured.
 async function spawnDigester(prompt: string): Promise<string> {
-  const args = [
-    '-p',
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--model',
-    config.claude.model,
-    '--permission-mode',
-    'acceptEdits',
-  ]
-  const { stdout, stderr, durationMs } = await runClaude({
-    args,
+  const { reply } = await getProvider().runTask({
     input: prompt,
-    timeoutMs: TIMEOUT_MS.background,
     caller: 'digester',
+    mode: 'auto',
+    lane: 'background',
   })
-  const startedAt = Date.now() - durationMs
-
-  const parsed = parseStreamJson(stdout)
-  if (!parsed) {
-    throw new Error(
-      `digester stream-json produced no result event: ${stdout.slice(0, 200)}`,
-    )
-  }
-  if (parsed.isError || parsed.subtype !== 'success' || !parsed.result) {
-    throw new Error(
-      `digester bad output: ${parsed.result || stdout.slice(0, 200)}`,
-    )
-  }
-  const output = parsed.result.trim()
-  void logPrompt({
-    ts: Math.floor(startedAt / 1000),
-    caller: 'digester',
-    args,
-    input: prompt,
-    output,
-    durationMs,
-    stderr,
-    eventTypes: parsed.eventTypes,
-  })
-  return output
+  return reply
 }
 
 function formatMessagesForDigest(messages: StoredMessage[]): string {

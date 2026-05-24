@@ -1,4 +1,4 @@
-import { askClaude } from '../ai/claude.js'
+import { getProvider } from '../ai/providers.js'
 import { clearSession, setSession, setUsage } from '../ai/sessions.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
@@ -24,7 +24,7 @@ function isStaleSessionError(err: unknown): boolean {
 async function callClaude(job: Job): Promise<Result> {
   const startedAt = Date.now()
   const wasFresh = !job.sessionId
-  const { reply, sessionId, usage } = await askClaude({
+  const { reply, sessionId, usage } = await getProvider().ask({
     input: job.input,
     sessionId: job.sessionId,
     allowedTools: job.allowedTools,
