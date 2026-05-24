@@ -43,11 +43,11 @@ const ConfigSchema = z.object({
       // Optional model override. If unset, Codex uses its default. Passed
       // as `-m <model>` to `codex exec`.
       model: z.string().optional(),
-      // Field name kept catchy, but the actual flag emitted is the
-      // documented one: --dangerously-bypass-approvals-and-sandbox. Some
-      // newer Codex builds also accept --yolo as an alias; we use the
-      // canonical name for portability. Right default for a headless
-      // owner-bot. Set to false to honor runTask's mode-driven sandbox.
+      // Emits --yolo, which bundles no-approvals + full sandbox + skip-
+      // trust-check. The narrower verbose flag does not subsume the trust
+      // gate on all versions and hangs the process, so --yolo is the safe
+      // default. Right setting for a headless owner-bot. Set to false to
+      // honor runTask's mode-driven sandbox.
       yolo: z.boolean().default(true),
       // When yolo=false, still bypass the trust-directory prompt. Codex
       // refuses to run in an "untrusted" cwd otherwise.

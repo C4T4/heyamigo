@@ -12,11 +12,11 @@
 //
 // Configurable via config.codex:
 //   - model: optional `-m <model>` override. Default = Codex's default.
-//   - yolo (default true): emits --dangerously-bypass-approvals-and-sandbox
-//     (the documented canonical flag; --yolo is an alias in newer builds).
-//     Bundles no-approvals + full sandbox + skip-trust-check. Right
-//     default for a headless owner-bot; set false to honor runTask's
-//     mode-driven sandbox.
+//   - yolo (default true): emits --yolo, which bundles no-approvals +
+//     full sandbox + skip-trust-check. The narrower verbose flag
+//     (--dangerously-bypass-approvals-and-sandbox) does NOT skip the
+//     trust check on all versions and can hang the process — use --yolo.
+//     Set false to honor runTask's mode-driven sandbox.
 //   - skipGitRepoCheck (default true): adds --skip-git-repo-check when
 //     yolo is off. Codex refuses to run in untrusted cwds without it.
 //   - extraArgs: appended verbatim. Escape hatch for version drift.
@@ -102,11 +102,12 @@ function buildExecArgs(params: {
   }
 
   if (cfg.yolo) {
-    // Canonical "no approvals + full sandbox + no trust check" switch.
-    // Some newer Codex builds expose --yolo as an alias for the same
-    // behavior; we use the documented name to stay portable. mode is
-    // ignored on this path.
-    args.push('--dangerously-bypass-approvals-and-sandbox')
+    // --yolo bundles all three bypasses: no approvals, full sandbox,
+    // and skip-trust-check. Empirically the right switch — the more
+    // narrowly-scoped --dangerously-bypass-approvals-and-sandbox does
+    // NOT subsume the trust-directory gate on some Codex versions and
+    // causes the process to hang waiting for stdin.
+    args.push('--yolo')
   } else {
     if (cfg.skipGitRepoCheck) args.push('--skip-git-repo-check')
     args.push('--sandbox', sandboxFor(params.mode))
