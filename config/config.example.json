@@ -24,6 +24,10 @@
     "reload": ["reload"]
   },
 
+  "ai": {
+    "provider": "claude"
+  },
+
   "claude": {
     "model": "claude-opus-4-7",
     "personalityFile": "./config/personalities/sharp.md",
