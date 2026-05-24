@@ -38,6 +38,20 @@ const ConfigSchema = z.object({
     outputFormat: z.enum(['json', 'text', 'stream-json']),
     contextWindow: z.number(),
   }),
+  codex: z
+    .object({
+      // --yolo on the Codex CLI bundles "no approvals + full sandbox + no
+      // trust prompts". Right default for a headless owner-bot; flip to
+      // false if you want runTask's mode to drive the sandbox tier instead.
+      yolo: z.boolean().default(true),
+      // When yolo=false, still bypass the trust-directory prompt. Codex
+      // refuses to run in an "untrusted" cwd otherwise.
+      skipGitRepoCheck: z.boolean().default(true),
+      // Appended verbatim to every `codex exec` invocation. Escape hatch
+      // for version-specific flags we haven't first-classed.
+      extraArgs: z.array(z.string()).default([]),
+    })
+    .default({}),
   bootstrap: z.object({
     historyDepth: z.number(),
     includeHistory: z.boolean(),

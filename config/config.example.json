@@ -36,6 +36,12 @@
     "contextWindow": 200000
   },
 
+  "codex": {
+    "yolo": true,
+    "skipGitRepoCheck": true,
+    "extraArgs": []
+  },
+
   "bootstrap": {
     "historyDepth": 50,
     "includeHistory": true,

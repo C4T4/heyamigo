@@ -8,13 +8,19 @@
 //   - --add-dir for extra writable roots
 //   - --sandbox for tier (read-only / workspace-write / danger-full-access)
 //   - `resume <id>` subcommand for session continuation (not a flag)
-//   - prompt passed on stdin (matches the spawn plumbing that already
-//     pipes input to child.stdin)
+//   - prompt passed as positional arg
+//
+// Configurable via config.codex:
+//   - yolo (default true): adds --yolo, which bundles no-approvals +
+//     full sandbox + skip-trust-check. The right default for a headless
+//     owner-bot; set false to honor runTask's mode-driven sandbox.
+//   - skipGitRepoCheck (default true): adds --skip-git-repo-check when
+//     yolo is off. Codex refuses to run in untrusted cwds without it.
+//   - extraArgs: appended verbatim. Escape hatch for version drift.
 //
 // What's deliberately coarse:
 //   - allowedTools is ignored on this provider. Codex has no per-tool
-//     allowlist; the sandbox mode is the only knob. The mode argument
-//     covers the practical cases (read vs. write vs. full).
+//     allowlist; the sandbox mode is the only knob.
 
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
@@ -82,9 +88,19 @@ function buildExecArgs(params: {
   includeSystemPrompt?: boolean
   prompt: string
 }): string[] {
+  const cfg = config.codex
   const args: string[] = ['exec', '--json']
 
-  args.push('--sandbox', sandboxFor(params.mode))
+  if (cfg.yolo) {
+    // --yolo: no approvals, full sandbox, skip trust check. Single switch
+    // that covers the owner-bot case. mode is ignored on this path.
+    args.push('--yolo')
+  } else {
+    if (cfg.skipGitRepoCheck) args.push('--skip-git-repo-check')
+    args.push('--sandbox', sandboxFor(params.mode))
+  }
+
+  for (const extra of cfg.extraArgs) args.push(extra)
 
   if (params.sessionId) {
     // Resume is a subcommand of exec, not a flag: `codex exec [opts] resume
