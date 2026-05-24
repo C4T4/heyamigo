@@ -126,21 +126,61 @@ function buildExecArgs(params: {
   return args
 }
 
-// Codex's --json emits NDJSON events. The exact event shape is version-
-// dependent; this parser looks for the well-known event types and falls
-// back to extracting any final assistant message.
+// Codex's --json emits NDJSON events. The shapes we care about (confirmed
+// against the running CLI):
+//   {"type":"thread.started","thread_id":"<id>"}
+//   {"type":"turn.started"}
+//   {"type":"item.completed","item":{"type":"agent_message","text":"<reply>"}}
+//   {"type":"turn.completed","usage":{"input_tokens":N,"cached_input_tokens":N,
+//       "output_tokens":N,"reasoning_output_tokens":N}}
+// Older/newer Codex versions may rename things; fallbacks are tried after the
+// primary shape so the parser degrades to "best effort" rather than null.
 type CodexEvent = {
   type?: string
-  msg?: { type?: string; message?: string; content?: unknown }
+  thread_id?: string
+  // Older fallbacks
   session_id?: string
   conversation_id?: string
   response_id?: string
+  item?: {
+    type?: string
+    text?: string
+    message?: string
+  }
+  msg?: { type?: string; message?: string; content?: unknown }
+  message?: unknown
+  text?: unknown
   usage?: {
     input_tokens?: number
     output_tokens?: number
     cached_input_tokens?: number
+    reasoning_output_tokens?: number
   }
   [key: string]: unknown
+}
+
+function extractReply(ev: CodexEvent): string | null {
+  // Primary shape: item.completed with item.type === 'agent_message'
+  if (
+    ev.type === 'item.completed' &&
+    ev.item &&
+    ev.item.type === 'agent_message' &&
+    typeof ev.item.text === 'string'
+  ) {
+    return ev.item.text
+  }
+  // Older shape: msg.type === 'agent_message' with msg.message
+  if (
+    ev.msg &&
+    ev.msg.type === 'agent_message' &&
+    typeof ev.msg.message === 'string'
+  ) {
+    return ev.msg.message
+  }
+  // Last-ditch top-level fields
+  if (typeof ev.message === 'string') return ev.message
+  if (typeof ev.text === 'string') return ev.text
+  return null
 }
 
 function parseCodexOutput(stdout: string): RunTaskResult | null {
@@ -156,40 +196,30 @@ function parseCodexOutput(stdout: string): RunTaskResult | null {
   }
   if (events.length === 0) return null
 
-  // Find the final agent message. Codex labels it variously across
-  // versions — try the common shapes in order.
+  // Latest agent message wins (handles multi-turn output).
   let reply: string | null = null
   for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i]!
-    if (
-      ev.msg?.type === 'agent_message' &&
-      typeof ev.msg.message === 'string'
-    ) {
-      reply = ev.msg.message
-      break
-    }
-    if (typeof (ev as { message?: unknown }).message === 'string') {
-      reply = (ev as { message: string }).message
-      break
-    }
-    if (typeof (ev as { text?: unknown }).text === 'string') {
-      reply = (ev as { text: string }).text
+    const r = extractReply(events[i]!)
+    if (r !== null) {
+      reply = r
       break
     }
   }
   if (reply === null) return null
 
-  // Session id — Codex uses different field names across versions.
+  // Session id — `thread_id` on thread.started in current Codex; older
+  // builds used session_id / conversation_id / response_id.
   let sessionId: string | undefined
   for (const ev of events) {
-    const id = ev.session_id ?? ev.conversation_id ?? ev.response_id
+    const id = ev.thread_id ?? ev.session_id ?? ev.conversation_id ?? ev.response_id
     if (typeof id === 'string' && id) {
       sessionId = id
       break
     }
   }
 
-  // Usage — last event with a usage object wins (final turn totals).
+  // Usage — turn.completed carries final totals; fall back to any event
+  // with a usage object if the type marker is missing.
   let inputTokens = 0
   let outputTokens = 0
   let cacheReadTokens = 0
