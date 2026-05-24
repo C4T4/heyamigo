@@ -6,7 +6,7 @@
 // What's wired:
 //   - exec mode with --json (NDJSON event stream on stdout)
 //   - --add-dir for extra writable roots
-//   - --sandbox-mode for tier (read-only / workspace-write / danger-full-access)
+//   - --sandbox for tier (read-only / workspace-write / danger-full-access)
 //   - --resume <id> for session continuation
 //   - prompt passed on stdin (matches the spawn plumbing that already
 //     pipes input to child.stdin)
@@ -58,8 +58,8 @@ function reloadSystemPrompt(): void {
   cachedSystemPrompt = null
 }
 
-// Codex sandbox vocabulary. The CLI flag is --sandbox-mode (or --sandbox in
-// some builds); values are: read-only, workspace-write, danger-full-access.
+// Codex sandbox vocabulary. CLI flag is --sandbox; values are: read-only,
+// workspace-write, danger-full-access.
 function sandboxFor(mode: TaskMode): string {
   switch (mode) {
     case 'read-only':
@@ -84,7 +84,7 @@ function buildExecArgs(params: {
 }): string[] {
   const args: string[] = ['exec', '--json']
 
-  args.push('--sandbox-mode', sandboxFor(params.mode))
+  args.push('--sandbox', sandboxFor(params.mode))
 
   if (params.sessionId) {
     // Resume keeps the prior conversation; system prompt and add-dirs
