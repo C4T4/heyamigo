@@ -84,13 +84,16 @@ function laneTimeoutMs(lane: RunTaskParams['lane']): number {
   return TIMEOUT_MS[lane]
 }
 
+// Returns { args, prompt }. The prompt is the final text that should be
+// piped to stdin (system prompt prepended when applicable). args ends with
+// `-` so codex reads from stdin.
 function buildExecArgs(params: {
   mode: TaskMode
   addDirs?: string[]
   sessionId?: string
   includeSystemPrompt?: boolean
   prompt: string
-}): string[] {
+}): { args: string[]; prompt: string } {
   const cfg = config.codex
   const args: string[] = ['exec', '--json']
 
@@ -129,10 +132,12 @@ function buildExecArgs(params: {
     }
   }
 
-  // Prompt as positional arg. `codex exec` reads stdin only with `-`, and
-  // passing it positionally avoids ambiguity with the spawn pipe.
-  args.push(params.prompt)
-  return args
+  // Pass prompt via stdin (positional `-` is the documented way). Large
+  // prompts — system prompt + memory preamble + history — can blow past
+  // Linux's ARG_MAX when shoved into argv, causing the spawn to hang
+  // silently. stdin has no such cap.
+  args.push('-')
+  return { args, prompt: params.prompt }
 }
 
 // Codex's --json emits NDJSON events. The shapes we care about (confirmed
@@ -258,7 +263,7 @@ function parseCodexOutput(stdout: string): RunTaskResult | null {
 async function runCodexTask(
   params: RunTaskParams,
 ): Promise<RunTaskResult> {
-  const args = buildExecArgs({
+  const { args, prompt } = buildExecArgs({
     mode: params.mode,
     addDirs: params.addDirs,
     sessionId: params.sessionId,
@@ -266,16 +271,19 @@ async function runCodexTask(
     prompt: params.input,
   })
 
-  logger.debug(
-    { caller: params.caller, resume: !!params.sessionId },
+  logger.info(
+    {
+      caller: params.caller,
+      resume: !!params.sessionId,
+      argv: args,
+      promptChars: prompt.length,
+    },
     'spawning codex exec',
   )
 
-  // input is empty here — the prompt rides in argv (Codex exec semantics).
-  // Empty stdin end() is harmless.
   const { stdout, stderr, durationMs } = await runClaude({
     args,
-    input: '',
+    input: prompt,
     timeoutMs: laneTimeoutMs(params.lane),
     caller: params.caller as PromptLogEntry['caller'],
     bin: 'codex',
