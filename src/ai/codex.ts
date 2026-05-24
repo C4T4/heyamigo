@@ -11,9 +11,12 @@
 //   - prompt passed as positional arg
 //
 // Configurable via config.codex:
-//   - yolo (default true): adds --yolo, which bundles no-approvals +
-//     full sandbox + skip-trust-check. The right default for a headless
-//     owner-bot; set false to honor runTask's mode-driven sandbox.
+//   - model: optional `-m <model>` override. Default = Codex's default.
+//   - yolo (default true): emits --dangerously-bypass-approvals-and-sandbox
+//     (the documented canonical flag; --yolo is an alias in newer builds).
+//     Bundles no-approvals + full sandbox + skip-trust-check. Right
+//     default for a headless owner-bot; set false to honor runTask's
+//     mode-driven sandbox.
 //   - skipGitRepoCheck (default true): adds --skip-git-repo-check when
 //     yolo is off. Codex refuses to run in untrusted cwds without it.
 //   - extraArgs: appended verbatim. Escape hatch for version drift.
@@ -91,10 +94,16 @@ function buildExecArgs(params: {
   const cfg = config.codex
   const args: string[] = ['exec', '--json']
 
+  if (cfg.model) {
+    args.push('-m', cfg.model)
+  }
+
   if (cfg.yolo) {
-    // --yolo: no approvals, full sandbox, skip trust check. Single switch
-    // that covers the owner-bot case. mode is ignored on this path.
-    args.push('--yolo')
+    // Canonical "no approvals + full sandbox + no trust check" switch.
+    // Some newer Codex builds expose --yolo as an alias for the same
+    // behavior; we use the documented name to stay portable. mode is
+    // ignored on this path.
+    args.push('--dangerously-bypass-approvals-and-sandbox')
   } else {
     if (cfg.skipGitRepoCheck) args.push('--skip-git-repo-check')
     args.push('--sandbox', sandboxFor(params.mode))
