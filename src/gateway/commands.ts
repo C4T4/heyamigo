@@ -50,9 +50,12 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     if (info.usage) {
       const max = config.claude.contextWindow
       const used = info.usage.totalContextTokens
-      const leftPct = Math.max(0, 100 - (used / max) * 100).toFixed(1)
+      // Clamp leftPct to [0, 100] so stale or inconsistent data
+      // doesn't surface a negative or >100 percentage.
+      const leftRatio = Math.max(0, Math.min(1, 1 - used / max))
+      const leftPct = (leftRatio * 100).toFixed(1)
       lines.push(
-        `Context: ${used.toLocaleString()} / ${max.toLocaleString()} (${leftPct}% left)`,
+        `Context: ${used.toLocaleString()} / ${max.toLocaleString()} (${leftPct}% left, last turn)`,
       )
       lines.push(`Turns: ${info.usage.numTurns}`)
     }

@@ -215,13 +215,21 @@ export function formatStatsFooter(stats: ReplyStats): string {
       : ''
   parts.push(`${inStr}↑${cacheStr} ${outStr}↓`)
 
-  // Context % — only when worth calling out
+  // Context % — only when worth calling out. Skipped when pct is
+  // implausible (>120%) — usually means cumulative/per-turn token
+  // counts got crossed by a stale session. Better to show nothing
+  // than display "7018% ctx" and lose user trust.
   if (stats.contextWindow > 0) {
     const pct = Math.round(
       (stats.totalContextTokens / stats.contextWindow) * 100,
     )
-    if (pct >= 90) parts.push(`⚠ ${pct}% ctx`)
-    else if (pct >= 70) parts.push(`${pct}% ctx`)
+    if (pct > 120) {
+      // skip — data is stale or inconsistent
+    } else if (pct >= 90) {
+      parts.push(`⚠ ${pct}% ctx`)
+    } else if (pct >= 70) {
+      parts.push(`${pct}% ctx`)
+    }
   }
 
   if (stats.fresh) parts.push('fresh')

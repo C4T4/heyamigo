@@ -1,5 +1,10 @@
 import { getProvider } from '../ai/providers.js'
-import { clearSession, setSession, setUsage } from '../ai/sessions.js'
+import {
+  clearSession,
+  getSessionInfo,
+  setSession,
+  setUsage,
+} from '../ai/sessions.js'
 import { config } from '../config.js'
 import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
@@ -23,6 +28,9 @@ async function callClaude(job: Job): Promise<Result> {
   const startedAt = Date.now()
   const wasFresh = !job.sessionId
   const provider = getProvider()
+  // Capture prior session usage BEFORE the ask call so we can compute
+  // per-turn deltas regardless of the provider's reporting mode.
+  const priorUsage = getSessionInfo(job.jid, provider.name)?.usage
   const { reply, sessionId, usage } = await provider.ask({
     input: job.input,
     sessionId: job.sessionId,
@@ -34,14 +42,76 @@ async function callClaude(job: Job): Promise<Result> {
     setSession(job.jid, provider.name, sessionId)
   }
 
-  const totalContextTokens =
-    usage.inputTokens +
-    usage.cacheReadTokens +
-    usage.cacheCreationTokens +
-    usage.outputTokens
+  // Reconcile per-turn vs cumulative reporting. See AiProvider
+  // .usageReportingMode for context. For cumulative providers (Codex),
+  // the reported usage = whole-thread totals; we subtract the prior
+  // cumulative to get this turn's cost. For per-turn providers
+  // (Claude), the reported usage IS this turn's cost; we sum into
+  // the running cumulative.
+  //
+  // Fallback baseline: if cumulative* fields aren't stored yet
+  // (first turn after this fix deploys), use the prior plain field
+  // values. That treats the existing buggy-cumulative storage as the
+  // baseline so the next delta is accurate.
+  const baseCumInput =
+    priorUsage?.cumulativeInputTokens ?? priorUsage?.inputTokens ?? 0
+  const baseCumCacheRead =
+    priorUsage?.cumulativeCacheReadTokens ?? priorUsage?.cacheReadTokens ?? 0
+  const baseCumCacheCreate =
+    priorUsage?.cumulativeCacheCreationTokens ?? priorUsage?.cacheCreationTokens ?? 0
+  const baseCumOutput =
+    priorUsage?.cumulativeOutputTokens ?? priorUsage?.outputTokens ?? 0
+
+  let turnInput: number
+  let turnCacheRead: number
+  let turnCacheCreate: number
+  let turnOutput: number
+  let newCumInput: number
+  let newCumCacheRead: number
+  let newCumCacheCreate: number
+  let newCumOutput: number
+
+  if (provider.usageReportingMode === 'cumulative') {
+    // Reported usage IS the cumulative total. Delta = current - prev.
+    // Math.max(0, …) protects against the rare case where the CLI's
+    // counter resets (e.g. fresh session that we still tracked) —
+    // never display negative deltas.
+    newCumInput        = usage.inputTokens
+    newCumCacheRead    = usage.cacheReadTokens
+    newCumCacheCreate  = usage.cacheCreationTokens
+    newCumOutput       = usage.outputTokens
+    turnInput          = Math.max(0, newCumInput        - baseCumInput)
+    turnCacheRead      = Math.max(0, newCumCacheRead    - baseCumCacheRead)
+    turnCacheCreate    = Math.max(0, newCumCacheCreate  - baseCumCacheCreate)
+    turnOutput         = Math.max(0, newCumOutput       - baseCumOutput)
+  } else {
+    // Reported usage IS per-turn already. Accumulate into cumulative.
+    turnInput          = usage.inputTokens
+    turnCacheRead      = usage.cacheReadTokens
+    turnCacheCreate    = usage.cacheCreationTokens
+    turnOutput         = usage.outputTokens
+    newCumInput        = baseCumInput        + turnInput
+    newCumCacheRead    = baseCumCacheRead    + turnCacheRead
+    newCumCacheCreate  = baseCumCacheCreate  + turnCacheCreate
+    newCumOutput       = baseCumOutput       + turnOutput
+  }
+
+  // totalContextTokens is the PROMPT side (input + cache reads + cache
+  // creation). Output is response, not context. The old code included
+  // outputTokens here which was wrong.
+  const totalContextTokens = turnInput + turnCacheRead + turnCacheCreate
+
   setUsage(job.jid, provider.name, {
-    ...usage,
+    inputTokens:                 turnInput,
+    cacheReadTokens:             turnCacheRead,
+    cacheCreationTokens:         turnCacheCreate,
+    outputTokens:                turnOutput,
     totalContextTokens,
+    numTurns:                    usage.numTurns,
+    cumulativeInputTokens:       newCumInput,
+    cumulativeCacheReadTokens:   newCumCacheRead,
+    cumulativeCacheCreationTokens: newCumCacheCreate,
+    cumulativeOutputTokens:      newCumOutput,
     updatedAt: Math.floor(Date.now() / 1000),
   })
 
@@ -49,7 +119,7 @@ async function callClaude(job: Job): Promise<Result> {
   // incoming gate, but we still bill so /usage reflects reality if added.
   // Cache-read tokens are excluded — they don't cost real budget.
   if (job.senderNumber) {
-    addDailyTokens(job.senderNumber, usage.inputTokens + usage.outputTokens)
+    addDailyTokens(job.senderNumber, turnInput + turnOutput)
   }
 
   const rawFlags = extractFlags(reply)
@@ -218,9 +288,11 @@ async function callClaude(job: Job): Promise<Result> {
     reply: clean,
     stats: {
       durationMs,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      cacheReadTokens: usage.cacheReadTokens,
+      // All per-turn values now (delta-corrected for cumulative
+      // providers above). Footer shows these directly.
+      inputTokens: turnInput,
+      outputTokens: turnOutput,
+      cacheReadTokens: turnCacheRead,
       totalContextTokens,
       contextWindow: config.claude.contextWindow,
       fresh: wasFresh,

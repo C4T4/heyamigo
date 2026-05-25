@@ -998,3 +998,55 @@ Validated end-to-end on a fresh DB:
 Adding the next kind (browser:ig, voice-gen, …) = drop file alongside
 image-gen.ts + add one import line to estimates/index.ts. No other
 code changes.
+
+## 2026-05-25  Stats  Context % showed 7018% (cumulative-vs-per-turn bug)
+
+User saw a footer reading `15s · 14015k↑ (6566k cached) 22k↓ · ⚠ 7018% ctx`.
+14M tokens per turn is impossible against a 200k window.
+
+Root cause: the bot was designed assuming providers report per-turn
+usage (true for Claude CLI's `result.usage`). When we added Codex
+support, Codex's `turn.completed.usage` reports CUMULATIVE totals
+across the whole resume thread. After many turns the cumulative
+total dwarfed the window, producing nonsense percentages.
+
+Fix:
+
+1. **AiProvider gains `usageReportingMode: 'per-turn' | 'cumulative'`.**
+   Claude = per-turn, Codex = cumulative. Provider declares its own
+   semantics; worker dispatches off this.
+
+2. **SessionUsage gains `cumulative*` fields** (optional, back-compat).
+   Stores the running cumulative so the next turn can delta against
+   it.
+
+3. **Worker.ts callClaude does delta math.**
+   - If cumulative provider: turn = current - prev. Cumulative
+     stored = current (the CLI's running total).
+   - If per-turn provider: turn = current. Cumulative stored = prev +
+     current (we maintain the running sum ourselves for /status).
+   - Math.max(0, …) protects against the rare counter-reset case.
+   - First-turn-after-deploy fallback: if cumulative* not stored
+     yet, use the buggy plain `inputTokens` as the cumulative
+     baseline. Loses one turn of accuracy then recovers.
+
+4. **outputTokens NO LONGER in totalContextTokens.** Output is the
+   response, not the prompt. Context % should be prompt-only
+   (input + cache_read + cache_create). Old code summed output
+   too, which would have been wrong even on Claude.
+
+5. **Cosmetic clamp in footer.** If computed pct > 120%, skip the
+   ctx callout entirely. Catches:
+   - The one-time recovery turn after this fix deploys (stale
+     pre-fix data still in baseline → wrong delta).
+   - Any future provider that introduces a new semantic surprise.
+   Better to show nothing than `7018% ctx`.
+
+6. **`/status` reads the same per-turn `totalContextTokens`** so the
+   "X / 200k (Y% left, last turn)" line is now meaningful instead of
+   sum-of-all-turns-ever.
+
+Validated all four matrix cells (cumulative-fresh, cumulative-
+running, per-turn-fresh, per-turn-running) + the bug-recovery
+scenario. Bug-recovery turn shows 3290% (impossible, hidden by
+clamp); next turn would be accurate.

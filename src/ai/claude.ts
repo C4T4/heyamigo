@@ -265,6 +265,9 @@ export async function runClaudeTask(
 
 export const claudeProvider: AiProvider = {
   name: 'claude',
+  // Claude CLI's `result` event reports per-turn usage (just the
+  // tokens consumed by this single resume invocation).
+  usageReportingMode: 'per-turn',
   ask: askClaude,
   runTask: runClaudeTask,
   reloadSystemPrompt,

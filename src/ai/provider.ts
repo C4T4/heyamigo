@@ -78,8 +78,17 @@ export type RunTaskResult = {
   usage?: AskUsage
 }
 
+// How the provider's CLI reports usage counts in its result payload.
+//   'per-turn'   — counts represent this one API call (Claude CLI).
+//   'cumulative' — counts represent the entire resume thread to date
+//                  (Codex CLI).
+// Worker uses this to compute per-turn deltas for display so the
+// context % stays correct after many turns.
+export type UsageReportingMode = 'per-turn' | 'cumulative'
+
 export interface AiProvider {
   readonly name: ProviderName
+  readonly usageReportingMode: UsageReportingMode
   // Conversational chat turn — opinionated defaults (always system prompt,
   // memory + media dirs auto-included, session id tracked).
   ask(params: AskParams): Promise<AskResult>

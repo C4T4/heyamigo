@@ -345,6 +345,11 @@ async function askCodex(params: AskParams): Promise<AskResult> {
 
 export const codexProvider: AiProvider = {
   name: 'codex',
+  // Codex CLI's `turn.completed.usage` reports cumulative totals for
+  // the entire resume thread, not just this one turn. Worker uses
+  // this flag to delta-math each turn before display so the context
+  // % doesn't blow up to thousands after many resume turns.
+  usageReportingMode: 'cumulative',
   ask: askCodex,
   runTask: runCodexTask,
   reloadSystemPrompt,

@@ -5,6 +5,8 @@ import { logger } from '../logger.js'
 import type { ProviderName } from './provider.js'
 
 export type SessionUsage = {
+  // Per-turn (the delta of the last turn). What the /status footer
+  // shows; what totalContextTokens is computed from.
   inputTokens: number
   cacheReadTokens: number
   cacheCreationTokens: number
@@ -12,6 +14,16 @@ export type SessionUsage = {
   totalContextTokens: number
   numTurns: number
   updatedAt: number
+  // Cumulative running totals across the entire resume thread.
+  // Used by worker.ts as the baseline for the next turn's delta
+  // computation when the provider reports usage cumulatively (Codex).
+  // For per-turn providers (Claude), these accumulate the
+  // per-turn deltas and aren't load-bearing, but kept consistent so
+  // /status can report whole-thread stats too.
+  cumulativeInputTokens?: number
+  cumulativeCacheReadTokens?: number
+  cumulativeCacheCreationTokens?: number
+  cumulativeOutputTokens?: number
 }
 
 export type Session = {
