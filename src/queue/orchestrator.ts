@@ -18,6 +18,7 @@ import { getDb } from '../db/index.js'
 import { workers } from '../db/schema.js'
 import { logger } from '../logger.js'
 import { reclaimStuckInbound } from './inbound.js'
+import { reclaimStuckMemoryWrites } from './memory-writes.js'
 import { reclaimStuckOutbound } from './outbound.js'
 import { clearControl, readControl, requestControl } from './control.js'
 import { listDueCrons, markCronFired } from './crons.js'
@@ -121,6 +122,10 @@ async function tick(id: string): Promise<void> {
     const reclaimedInbound = reclaimStuckInbound()
     if (reclaimedInbound > 0) {
       logger.info({ reclaimed: reclaimedInbound }, 'reclaimed stuck inbound rows')
+    }
+    const reclaimedMemWr = reclaimStuckMemoryWrites()
+    if (reclaimedMemWr > 0) {
+      logger.info({ reclaimed: reclaimedMemWr }, 'reclaimed stuck memory_writes rows')
     }
 
     // Fire any due crons. Order: dispatch each in turn; if dispatch

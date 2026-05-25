@@ -11,6 +11,10 @@ import { logger } from './logger.js'
 import { startScheduler } from './memory/scheduler.js'
 import { startChatWorkers, stopChatWorkers } from './queue/chat-worker.js'
 import {
+  startMemoryWorker,
+  stopMemoryWorker,
+} from './queue/memory-worker.js'
+import {
   requestShutdown,
   startOrchestrator,
   stopOrchestrator,
@@ -42,15 +46,17 @@ export async function bootBot(): Promise<void> {
     onShutdownDrained: () => {
       stopChatWorkers()
       stopSenderWorker()
+      stopMemoryWorker()
       stopOrchestrator()
       closeDb()
     },
   })
 
-  // Workers next. Inbound table is the source of truth; anything left
+  // Workers next. Queue tables are the source of truth; anything left
   // from a previous crash gets claimed by the new pool automatically.
   // No separate replay step needed.
   startSenderWorker()
+  startMemoryWorker()
   startChatWorkers()
   startScheduler()
 

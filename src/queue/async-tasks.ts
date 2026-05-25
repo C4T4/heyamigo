@@ -179,60 +179,47 @@ async function executeAsyncTask(task: AsyncTask): Promise<void> {
     }
   }
 
-  // Journal creates run first so an entry flagged in the same output against
-  // a new slug lands correctly.
-  const { appendEntry, createJournal, getJournal, isValidSlug } =
-    await import('../memory/journals.js')
-  for (const op of journalCreates) {
+  // All memory mutations through memory_writes queue (Phase 5a).
+  const { enqueueMemoryWrite } = await import('./memory-writes.js')
+  const { isValidSlug } = await import('../memory/journals.js')
+  const memBase = `async-${task.id}`
+  for (let i = 0; i < journalCreates.length; i++) {
+    const op = journalCreates[i]!
     if (!isValidSlug(op.slug)) {
-      logger.warn(
-        { op, id: task.id },
-        'async JOURNAL-NEW: invalid slug, dropped',
-      )
+      logger.warn({ op, id: task.id }, 'async JOURNAL-NEW: invalid slug, dropped')
       continue
     }
-    if (getJournal(op.slug)) continue
-    try {
-      createJournal({
-        slug: op.slug,
-        name: titleCaseSlug(op.slug),
-        purpose: op.purpose,
-      })
-      logger.info(
-        { slug: op.slug, id: task.id },
-        'journal created via async marker',
-      )
-    } catch (err) {
-      logger.error(
-        { err, op, id: task.id },
-        'async JOURNAL-NEW failed',
-      )
-    }
-  }
-
-  let appendedCount = 0
-  for (const j of journals) {
-    const ok = appendEntry(j.slug, {
-      source: 'async',
-      jid: task.jid,
-      senderNumber: task.senderNumber,
-      note: j.note,
+    enqueueMemoryWrite({
+      op: 'create_journal',
+      payload: { slug: op.slug, name: titleCaseSlug(op.slug), purpose: op.purpose },
+      idempotencyKey: `${memBase}-create-${i}`,
     })
-    if (ok) appendedCount++
-    else {
-      logger.warn(
-        { slug: j.slug, id: task.id },
-        'async JOURNAL marker pointed at unknown slug, dropped',
-      )
-    }
   }
-
+  // Treat enqueued appends as "appended" for the reporting line below;
+  // the memory worker logs the actual append+slug-validity outcomes.
+  let appendedCount = 0
+  for (let i = 0; i < journals.length; i++) {
+    const j = journals[i]!
+    enqueueMemoryWrite({
+      op: 'append_journal',
+      payload: {
+        slug: j.slug,
+        entry: {
+          source: 'async',
+          jid: task.jid,
+          senderNumber: task.senderNumber,
+          note: j.note,
+        },
+      },
+      idempotencyKey: `${memBase}-append-${i}`,
+    })
+    appendedCount++
+  }
   if (digest) {
-    const { scheduleDigest } = await import('../memory/scheduler.js')
-    scheduleDigest({
-      jid: task.jid,
-      number: task.senderNumber,
-      reason: digest,
+    enqueueMemoryWrite({
+      op: 'trigger_digest',
+      payload: { jid: task.jid, number: task.senderNumber, reason: digest },
+      idempotencyKey: `${memBase}-digest`,
     })
   }
 
@@ -533,41 +520,41 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
     }
   }
 
-  const { appendEntry, createJournal, getJournal, isValidSlug } =
-    await import('../memory/journals.js')
-  for (const op of journalCreates) {
+  const { enqueueMemoryWrite } = await import('./memory-writes.js')
+  const { isValidSlug } = await import('../memory/journals.js')
+  const memBase = `browser-${task.id}`
+  for (let i = 0; i < journalCreates.length; i++) {
+    const op = journalCreates[i]!
     if (!isValidSlug(op.slug)) continue
-    if (getJournal(op.slug)) continue
-    try {
-      createJournal({
-        slug: op.slug,
-        name: titleCaseSlug(op.slug),
-        purpose: op.purpose,
-      })
-      logger.info(
-        { slug: op.slug, id: task.id },
-        'journal created via browser task marker',
-      )
-    } catch (err) {
-      logger.error({ err, op, id: task.id }, 'browser JOURNAL-NEW failed')
-    }
+    enqueueMemoryWrite({
+      op: 'create_journal',
+      payload: { slug: op.slug, name: titleCaseSlug(op.slug), purpose: op.purpose },
+      idempotencyKey: `${memBase}-create-${i}`,
+    })
   }
   let appendedCount = 0
-  for (const j of journals) {
-    const ok = appendEntry(j.slug, {
-      source: 'async',
-      jid: task.jid,
-      senderNumber: task.senderNumber,
-      note: j.note,
+  for (let i = 0; i < journals.length; i++) {
+    const j = journals[i]!
+    enqueueMemoryWrite({
+      op: 'append_journal',
+      payload: {
+        slug: j.slug,
+        entry: {
+          source: 'async',
+          jid: task.jid,
+          senderNumber: task.senderNumber,
+          note: j.note,
+        },
+      },
+      idempotencyKey: `${memBase}-append-${i}`,
     })
-    if (ok) appendedCount++
+    appendedCount++
   }
   if (digest) {
-    const { scheduleDigest } = await import('../memory/scheduler.js')
-    scheduleDigest({
-      jid: task.jid,
-      number: task.senderNumber,
-      reason: digest,
+    enqueueMemoryWrite({
+      op: 'trigger_digest',
+      payload: { jid: task.jid, number: task.senderNumber, reason: digest },
+      idempotencyKey: `${memBase}-digest`,
     })
   }
 

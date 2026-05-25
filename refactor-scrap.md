@@ -718,3 +718,47 @@ on first invocation, after the DB is definitely initialized.
 
 Pattern worth repeating for other DB-touching commands that get
 wired up later.
+
+## 2026-05-24  Phase 5a  Memory writes through single worker (no obs log yet)
+
+Phase 5 in refactor.md has two parts: (a) memory_writes queue with
+single-writer serialization, (b) observations log replacing the
+journal/profile/brief split. Shipped (a) only.
+
+The race window from Phase 4 was real: 5 parallel chat workers calling
+appendEntry/createJournal/scheduleDigest directly on the same files
+could lose data on full-file rewrites or fork journal-creation
+attempts. (a) closes that without changing the storage model.
+
+Implementation:
+- memory_writes table (op + payload JSON + idempotency_key + claim
+  cols). One queue, four ops today: append_journal, create_journal,
+  trigger_digest, mark_compressed_dirty.
+- Memory worker: single concurrency by design. Drains FIFO. Op
+  switch dispatches to existing handlers in src/memory/.
+- worker.ts + async-tasks.ts (general + browser lanes) all stopped
+  calling memory handlers directly. They enqueueMemoryWrite. Memory
+  worker drains serially.
+
+Idempotency keys: `chat-<jid>-<ts>-<kind>-<index>` / `async-<task-id>-...`
+/ `browser-<task-id>-...`. A retry of the producing call (e.g. chat
+worker retry on transient AI failure) re-enqueues with the same key
+→ memory writes don't double-apply.
+
+What part (b) — observations log — would do that (a) doesn't:
+- Replace per-feature memory files (profile.md, brief.md,
+  journals/*/entries.jsonl) with one observations table.
+- Profiles / journals become views (queries).
+- Cross-person observations become natural (subject vs speaker).
+- Compressed.md becomes generated rollup.
+
+That's a fundamentally different data model and a much bigger change
+(touches the agent tag set: [OBSERVE: person=X kind=fact ...]
+replaces [JOURNAL:] / part of [DIGEST:]; touches the digest pipeline;
+needs a backfill from existing markdown to observations rows). Worth
+doing as its own focused project later. The race-condition gap is
+closed; the rest is incremental.
+
+Validated end-to-end: enqueued create + append + duplicate-append +
+mark_dirty → all 3 unique rows reach 'done', journal file created on
+disk with exactly 1 entry (duplicate blocked by idempotency).

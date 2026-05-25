@@ -4,14 +4,9 @@ import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { addDailyTokens } from '../store/usage.js'
 import { extractFlags } from '../memory/digest-flag.js'
-import {
-  appendEntry,
-  createJournal,
-  getJournal,
-  isValidSlug,
-} from '../memory/journals.js'
-import { scheduleDigest } from '../memory/scheduler.js'
+import { isValidSlug } from '../memory/journals.js'
 import { enqueueAsyncTask, enqueueBrowserTask } from './async-tasks.js'
+import { enqueueMemoryWrite } from './memory-writes.js'
 import { enqueueOutbound } from './outbound.js'
 import type { Job, Result } from './types.js'
 
@@ -64,20 +59,28 @@ async function callClaude(job: Job): Promise<Result> {
     asyncBrowserTasks,
     sendTexts,
   } = extractFlags(reply)
+  // All memory mutations go through the memory_writes queue so the
+  // single memory worker serializes file writes — safe under parallel
+  // chat workers. Idempotency keys derived from job + index so a
+  // retry doesn't duplicate.
+  const memBase = `chat-${job.jid}-${Date.now()}`
   if (digest) {
     logger.info(
       { jid: job.jid, number: job.senderNumber, reason: digest },
       'DIGEST flag raised, scheduling',
     )
-    scheduleDigest({
-      jid: job.jid,
-      number: job.senderNumber,
-      reason: digest,
+    enqueueMemoryWrite({
+      op: 'trigger_digest',
+      payload: { jid: job.jid, number: job.senderNumber, reason: digest },
+      idempotencyKey: `${memBase}-digest`,
     })
   }
   // Creates run BEFORE entry appends so that a reply creating a new journal
-  // AND flagging its first entry in the same turn works correctly.
-  for (const op of journalCreates) {
+  // AND flagging its first entry in the same turn works correctly. The
+  // memory worker enforces this ordering because it drains serially in
+  // insert order.
+  for (let i = 0; i < journalCreates.length; i++) {
+    const op = journalCreates[i]!
     if (!isValidSlug(op.slug)) {
       logger.warn(
         { op, jid: job.jid },
@@ -85,43 +88,27 @@ async function callClaude(job: Job): Promise<Result> {
       )
       continue
     }
-    try {
-      if (getJournal(op.slug)) {
-        logger.info(
-          { slug: op.slug },
-          'JOURNAL-NEW for existing slug, ignored',
-        )
-        continue
-      }
-      createJournal({
-        slug: op.slug,
-        name: titleCase(op.slug),
-        purpose: op.purpose,
-      })
-      logger.info(
-        { slug: op.slug, jid: job.jid },
-        'journal created via bot marker',
-      )
-    } catch (err) {
-      logger.error(
-        { err, op, jid: job.jid },
-        'JOURNAL-NEW failed',
-      )
-    }
-  }
-  for (const j of journals) {
-    const ok = appendEntry(j.slug, {
-      source: 'reactive',
-      jid: job.jid,
-      senderNumber: job.senderNumber,
-      note: j.note,
+    enqueueMemoryWrite({
+      op: 'create_journal',
+      payload: { slug: op.slug, name: titleCase(op.slug), purpose: op.purpose },
+      idempotencyKey: `${memBase}-create-${i}`,
     })
-    if (!ok) {
-      logger.warn(
-        { slug: j.slug, jid: job.jid },
-        'JOURNAL flag pointed at unknown slug, dropped',
-      )
-    }
+  }
+  for (let i = 0; i < journals.length; i++) {
+    const j = journals[i]!
+    enqueueMemoryWrite({
+      op: 'append_journal',
+      payload: {
+        slug: j.slug,
+        entry: {
+          source: 'reactive',
+          jid: job.jid,
+          senderNumber: job.senderNumber,
+          note: j.note,
+        },
+      },
+      idempotencyKey: `${memBase}-append-${i}`,
+    })
   }
 
   // Async tasks: Claude delegated to background workers. Chat reply above

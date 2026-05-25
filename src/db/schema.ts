@@ -203,3 +203,36 @@ export const inbound = sqliteTable('inbound', {
                    .on(t.externalMsgId)
                    .where(sql`${t.externalMsgId} IS NOT NULL`),
 }))
+
+// ──────────────────────────────────────────────────────────────────
+// memory_writes queue (Phase 5a)
+// ──────────────────────────────────────────────────────────────────
+
+// All memory mutations (journal append, journal create, digest
+// trigger, compressed-view invalidation, future observe op) flow
+// through here. One memory worker drains, serializing writes so
+// parallel chat / async workers can't race on file edits.
+//
+// op + payload (JSON): operation-specific. The worker switches on op
+// and calls the matching handler. Adding a new op = adding a switch
+// arm + ensuring the handler is idempotent on re-delivery (since the
+// queue retries on transient failure).
+export const memoryWrites = sqliteTable('memory_writes', {
+  id:             integer('id').primaryKey({ autoIncrement: true }),
+  op:             text('op').notNull(),     // 'append_journal'|'create_journal'|'trigger_digest'|'mark_compressed_dirty'|...
+  payload:        text('payload').notNull(), // JSON
+  idempotencyKey: text('idempotency_key'),
+  status:         text('status').notNull(),  // 'pending'|'claimed'|'done'|'failed'|'dlq'
+  attempts:       integer('attempts').notNull().default(0),
+  nextAttemptAt:  integer('next_attempt_at'),
+  lastError:      text('last_error'),
+  claimedBy:      text('claimed_by'),
+  claimedAt:      integer('claimed_at'),
+  createdAt:      integer('created_at').notNull(),
+  updatedAt:      integer('updated_at').notNull(),
+}, t => ({
+  byStatusNext: index('memwr_by_status_next').on(t.status, t.nextAttemptAt),
+  uniqIdemp:    uniqueIndex('memwr_idemp_uq')
+                   .on(t.idempotencyKey)
+                   .where(sql`${t.idempotencyKey} IS NOT NULL`),
+}))
