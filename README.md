@@ -1,284 +1,71 @@
 # heyamigo
 
-> It remembers. It learns. It gets better while you sleep.
+A WhatsApp-resident assistant. Claude or Codex under the hood, durable SQLite queues, per-sender timezone scheduling, two-track architecture so browser work never blocks the chat.
 
-heyamigo lives in your WhatsApp. It meets people and builds a mental model of each one. It picks up on what matters and forgets what doesn't. It organizes what it knows the way you would, by person, by project, by topic. It browses the web, reads what you send it, sees images, and connects the dots across conversations you had weeks apart.
-
-Between chats, it processes. Background workers compress raw experience into understanding. Short-term becomes long-term. Noise becomes signal. The next time you talk, it's not starting from scratch. It's starting from everything it's learned.
-
-It runs on your Claude subscription. No API keys, no third-party services. One command to set up.
-
----
-
-## Why this exists
-
-Most AI tools try to be everything. heyamigo tries to be one thing well: **the AI you actually want in your group chat.**
-
-Something simple you can talk to, ask things, share stuff with, and that gets better the more you use it.
-
-Anthropic changed how third-party apps consume your Claude usage. Third-party tools now draw from extra usage, not your plan limits. heyamigo is **first-party**: it runs through Claude CLI, your direct Claude subscription. No middlemen, no extra costs.
-
----
+```
+WhatsApp ─► inbound ─► chat workers ─► outbound ─► WhatsApp
+                          │                ▲
+                          ├──────► async / browser ─┤
+                          └──────► memory_writes ───┘
+```
 
 ## What it does
 
-### Talks on WhatsApp
-Groups and DMs. Mention its name to get a reply: "amigo what do you think?" or "claude check this". Stays quiet when not mentioned. Replying to one of its messages also triggers a response. Handles text, images, videos, documents, voice messages.
+- **Long-term memory per person, per chat, per topic.** Files on disk. The agent decides what's worth keeping; background workers consolidate while you're not chatting.
+- **A relevance watchlist.** Open loops the agent tracks on your behalf — questions you'd forget, things you're waiting on — surfaced naturally when the moment matches. Built like external working memory for the user.
+- **Scheduling in the sender's timezone.** Natural language → `[REMIND: 2026-05-26 09:00 — ...]` or `[CRON: 0 9 * * 1 PROMPT — ...]`. Fires at the user's wall-clock 9am, not the server's. Cron variants: deliver text, run AI, kick off async work, or drive a browser.
+- **A real Chrome.** Browser delegation via `[ASYNC-BROWSER: ...]` to a parallel Claude session on a shared logged-in Chrome over CDP. TikTok, Instagram, anywhere the owner is logged in. SSH-tunneled noVNC for setup.
+- **Per-reply footer with confirmation tags.** Every side effect from the turn is visible: `_9.9s · 465k↑ 169↓ · +remind · +thread-new · +digest_`. No guessing whether a schedule actually got created.
+- **Default-deny proactive messaging.** Groups stay silent unless explicitly opted in. Per-role token quotas, file-size caps, tool restrictions.
 
-### Builds a profile for every person it talks to
-Not a chat log. A structured profile.
-
-After 20 conversations it knows your partner prefers short replies, your coworker only responds to direct questions, and your friend is lactose intolerant. Facts, preferences, patterns, accumulated over time. Each person's profile grows independently, whether they talk in a group or a DM.
-
-### Organizes what it knows into buckets
-People, projects, topics, each in their own folder with an index.
-
-Ask about a project and it pulls that project's brief. Ask about a person and it pulls their profile. It doesn't shove everything into one giant prompt. Only the relevant buckets load per message. The rest stays on disk, accessible when needed.
-
-### Amigo decides what's worth remembering
-Most bots store everything or nothing.
-
-This one lets the AI flag moments during conversation. You mention you're moving to Berlin next month, it flags it. Your profile gets updated. You send "lol", nothing happens. The signal-to-noise ratio improves over time because the AI itself is curating what matters.
-
-### Processes what happened while you're not chatting
-Raw conversations sit in short-term memory. Between chats, background workers compress them into long-term profiles and topic summaries.
-
-Like how your brain consolidates memories during sleep. The bot processes while idle, so the next conversation starts with better context than the last one ended with.
-
-### Imports what you already have
-Got a messy folder of notes, project docs, or an existing AI workspace? Point amigo at it. It reads through everything, distills the useful stuff, and organizes it into structured buckets (people, projects, topics). Your unstructured knowledge becomes searchable context that amigo references in every conversation. One command: `heyamigo import ~/my-notes`
-
-### Browses the web
-Controls a real Chrome browser. Navigates pages, takes screenshots, sends them back to WhatsApp. You can watch it browse via SSH tunnel.
-
----
+For the why behind these — claim primitives, tag-as-side-effect channel, per-category learning, provider abstraction, the trade-offs that didn't survive the first revision — see [`docs/architecture.md`](docs/architecture.md).
 
 ## Quick start
 
-### 1. Install Claude CLI and log in
-
 ```bash
 npm install -g @anthropic-ai/claude-code
-claude
+claude                                  # log in once, then exit
+
+npx @c4t4/heyamigo setup                # wizard: pair WhatsApp, pick personality
+npx @c4t4/heyamigo start                # background, auto-restart
+npx @c4t4/heyamigo logs                 # tail
 ```
 
-Run `claude` and follow the login instructions. You need an [Anthropic account](https://console.anthropic.com). After logging in, exit claude.
+Codex instead of Claude: install `@openai/codex` and set `ai.provider: "codex"` in `config/config.json`.
 
-### 2. Run the setup wizard
-
-```bash
-npx @c4t4/heyamigo setup
-```
-
-That's it. The wizard handles everything:
-- WhatsApp pairing (QR code + pairing code)
-- Browser setup (optional)
-- Personality selection
-
-### 3. Start the bot
-
-```bash
-npx @c4t4/heyamigo start
-```
-
-Runs in the background, auto-restarts on crash, survives SSH disconnect.
-
----
-
-## Commands
-
-```
-npx @c4t4/heyamigo setup           # setup wizard
-npx @c4t4/heyamigo start           # start (background, auto-restart)
-npx @c4t4/heyamigo stop            # stop
-npx @c4t4/heyamigo restart         # restart
-npx @c4t4/heyamigo logs            # tail live logs
-npx @c4t4/heyamigo status          # check if running
-npx @c4t4/heyamigo update          # update to latest version
-npx @c4t4/heyamigo import <path>   # import knowledge folder
-npx @c4t4/heyamigo dev             # foreground (development)
-```
-
-### In-chat commands
+## In-chat commands
 
 | Command | What it does |
-|---------|-------------|
-| `/reset` | Fresh Claude session |
-| `/status` | Session info + context usage % |
-| `/reload` | Re-read personality |
-| `/digest` | Force memory update |
-
----
-
-## Memory
-
-Three layers, inspired by how brains work:
-
-```
-Short-term      raw messages (JSONL per chat)
-Working memory  Claude session (--resume)
-Long-term       profiles, topics, project briefs
-```
-
-```
-storage/memory/
-  buckets/       projects, topics (imported or auto-created)
-  persons/       per-person profiles (grow over time)
-  chats/         per-chat briefs
-```
-
-### How memory updates
-
-The bot updates memory in two ways:
-
-**Real-time (DIGEST flag):** During a conversation, Claude decides if something is worth remembering (a preference, fact, life event). It appends a hidden `[DIGEST: reason]` tag to its reply, which gets stripped before sending. This triggers a background digest within 2 minutes that updates the person's profile and the chat brief.
-
-**Background sweep:** Every 3 hours, the bot checks all active chats for new messages that weren't flagged. This catches anything Claude missed. You can also force an immediate update with the `/digest` command in chat.
-
-Memory is stored as plain markdown files. You can read, edit, or delete them directly.
-
----
+|---|---|
+| `/reset` | Fresh AI session for this chat |
+| `/status` | Session info, context utilization |
+| `/queues` | Live queue depths |
+| `/crons` · `/reminders` | List recurring schedules + one-shots (token cost included) |
+| `/threads` | List the relevance watchlist; resolve / drop / pause / weight |
+| `/digest` | Force a memory consolidation now |
 
 ## Roles
 
-Defined in `config/access.json`.
+`config/access.json`. Three default roles, easily extended.
 
-| Role | Memory | Tools | Boundary |
-|------|--------|-------|----------|
-| **admin** | everything | all | unrestricted |
-| **user** | own profile | web search | can't see other users or internals |
-| **guest** | own profile | none | locked down, prompt-injection resistant |
-
----
-
-## Browser
-
-Optional. Chrome via CDP. You watch via noVNC over SSH tunnel. Setup wizard handles install.
-
-```
-You (SSH tunnel)  ->  noVNC  ->  Chrome  <-  Claude (CDP)
-```
-
-All localhost. Nothing public.
-
----
+| Role | Memory | Tools | Notes |
+|---|---|---|---|
+| admin | everything | all | unrestricted |
+| user | own profile | web search | can't see other users or internals |
+| guest | none | none | prompt-injection resistant |
 
 ## Personalities
 
-Three built-in:
-
-[**Sharp**](config/personalities/sharp.md) (default)
-Talks like a smart friend at dinner. Specific, confident, never vague. Won't hedge, won't lecture, won't sound like a brochure. Calls things out when they're obvious, meets people where they actually are. Checks every reply against: would I be embarrassed saying this out loud?
-
-[**Casual**](config/personalities/casual.md)
-Warm, relaxed, friend-over-coffee energy. Short messages, matches your vibe.
-
-[**Professional**](config/personalities/professional.md)
-Clear, efficient, business-appropriate. Gets to the answer fast.
-
-Create your own: add a `.md` file to `config/personalities/`, point `config.json` at it.
-
----
-
-## Configuration
-
-### config/config.json
-
-Core settings. The wizard sets these up, but you can edit anytime.
-
-```json
-{
-  "owner": { "number": "17861234567" },
-  "triggers": { "aliases": ["heyamigo", "amigo", "claude"], "groupMode": "mention" },
-  "claude": { "model": "claude-opus-4-7", "timeoutMs": 60000 },
-  "reply": { "quoteInGroups": true, "typingIndicator": true }
-}
-```
-
-### config/access.json
-
-Who can use the bot and what they can do. See `access.example.json` for all options.
-
-```json
-{
-  "users": {
-    "17861234567": { "role": "admin", "name": "Alice" },
-    "491701234567": { "role": "user", "name": "Carlos" }
-  },
-  "groups": [
-    { "jid": "120363xxx@g.us", "name": "Family", "mode": "active", "allowedSenders": "*" },
-    { "jid": "120363yyy@g.us", "name": "Work", "mode": "active", "allowedSenders": ["17861234567"] }
-  ],
-  "dms": {
-    "defaultMode": "off",
-    "allowed": [{ "number": "491701234567", "mode": "active" }]
-  }
-}
-```
-
-Groups auto-discover with `mode: "off"` when the bot first sees a message. Flip to `"active"` to enable.
-
-### Other files
-
-| File | Purpose |
-|------|---------|
-| `config/personalities/*.md` | System prompts (sharp, casual, professional) |
-| `.claude/settings.json` | Tool permissions for Claude CLI |
-
----
+`config/personalities/*.md` — system-prompt fragments that define the bot's voice. The default (`sharp.md`) is opinionated about not people-pleasing. Swap or write your own.
 
 ## Where to run it
 
-Needs a persistent filesystem and a long-running process.
-
-| Option | Cost | Notes |
-|--------|------|-------|
-| **VPS** (Hetzner, DigitalOcean) | ~$5/mo | Recommended. Setup wizard just works. |
-| **Home server / Raspberry Pi** | One-time | Always-on device at home. |
-| **Your laptop** | Free | For testing. Bot stops when laptop sleeps. |
-| **Cloud** (Railway, Fly) | Varies | Needs persistent volumes. No interactive setup. |
-
-Not compatible with serverless (Lambda, Vercel). Needs a persistent WebSocket connection.
-
----
-
-## Requirements
-
-- Node.js 18+
-- [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) + Anthropic account
-- A WhatsApp account
-- **macOS or Linux** (Windows: use WSL)
-
----
+A VPS (Hetzner, DO) at ~$5/mo is the path of least resistance. Home server or Raspberry Pi also fine. Needs Node 18+, a persistent filesystem, and one outbound WebSocket to WhatsApp. Not serverless-compatible.
 
 ## Tracking memory with git
 
-The bot updates files in `storage/memory/` over time as it learns. We recommend tracking your project with git so you can see what changed and roll back if needed.
-
-```bash
-cd ~/heyamigo
-git init
-echo "storage/auth/" >> .gitignore
-echo "storage/logs/" >> .gitignore
-git add -A && git commit -m "initial setup"
-```
-
-Never commit `storage/auth/` — it contains your WhatsApp session keys.
-
----
-
-## Security
-
-- `storage/auth/` contains your WhatsApp session keys. Guard them.
-- All ports bind to localhost. Nothing exposed publicly.
-- Baileys is an unofficial WhatsApp protocol. Use at your own risk.
-- Role restrictions are prompt-enforced. Strong but not bulletproof.
-- Outgoing media auto-deleted after sending.
-
----
+The bot writes markdown files under `storage/memory/` as it learns. `git init` in your project root and commit periodically gives you a readable diff of what the assistant has come to believe about people and topics. Skip `storage/auth/` (WhatsApp keys) and `storage/logs/`.
 
 ## License
 
-MIT - Built by [Catalin Waack](https://github.com/C4T4) · [LinkedIn](https://www.linkedin.com/in/catalinwaack/)
-
-If you use heyamigo in your project or build something on top of it, a mention or link back is appreciated.
+MIT. Built by [Catalin Waack](https://github.com/C4T4) · [LinkedIn](https://www.linkedin.com/in/catalinwaack/).
