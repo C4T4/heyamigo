@@ -97,5 +97,28 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     return true
   }
 
+  if (cmd === 'reminders' || cmd === 'crons') {
+    const { listChatSchedules, formatScheduleList } = await import(
+      '../queue/schedule-list.js'
+    )
+    const { formatAddress, jidToAddress } = await import(
+      '../db/address.js'
+    )
+    const { getTimezoneForSenderNumber } = await import(
+      '../db/identity-sync.js'
+    )
+    const chatAddress = formatAddress(jidToAddress(ctx.jid))
+    const tz = getTimezoneForSenderNumber(ctx.senderNumber)
+    const onlyKind = cmd === 'reminders' ? 'one-shot' : 'recurring'
+    const items = listChatSchedules(chatAddress, onlyKind)
+    await sendText(
+      ctx.sock,
+      ctx.jid,
+      formatScheduleList(items, tz, onlyKind),
+      ctx.quoted,
+    )
+    return true
+  }
+
   return false
 }

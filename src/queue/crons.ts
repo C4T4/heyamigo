@@ -34,6 +34,11 @@ export type EnqueueCronInput = {
   // If omitted, computed from recurrence (must be set for one-shots).
   firstRunAt?: number
   enabled?: boolean              // default true
+  // IANA timezone for resolving @daily HH:MM / @weekly DOW HH:MM.
+  // Defaults to config.owner.timezone if omitted. Per-user crons
+  // should pass the sender's tz so "9am" means user's 9am, not the
+  // server's.
+  timezone?: string
 }
 
 export type CronRow = typeof crons.$inferSelect
@@ -45,6 +50,7 @@ export function enqueueCron(input: EnqueueCronInput): CronRow {
   const db = getDb()
   const now = Math.floor(Date.now() / 1000)
   const enabled = (input.enabled ?? true) ? 1 : 0
+  const tz = input.timezone ?? config.owner.timezone
 
   if (input.recurrence) {
     const existing = db
@@ -59,6 +65,7 @@ export function enqueueCron(input: EnqueueCronInput): CronRow {
           enqueueInto: input.enqueueInto,
           payload:     JSON.stringify(input.payload),
           recurrence:  input.recurrence,
+          timezone:    tz,
           enabled,
         })
         .where(eq(crons.name, input.name))
@@ -68,7 +75,7 @@ export function enqueueCron(input: EnqueueCronInput): CronRow {
     }
   }
 
-  const firstRunAt = input.firstRunAt ?? computeNextRun(input.recurrence, now)
+  const firstRunAt = input.firstRunAt ?? computeNextRun(input.recurrence, now, tz)
   if (firstRunAt === null) {
     throw new Error(
       `enqueueCron(${input.name}): one-shot requires firstRunAt`,
@@ -81,6 +88,7 @@ export function enqueueCron(input: EnqueueCronInput): CronRow {
       enqueueInto: input.enqueueInto,
       payload:     JSON.stringify(input.payload),
       recurrence:  input.recurrence,
+      timezone:    tz,
       nextRunAt:   firstRunAt,
       lastRunAt:   null,
       enabled,
@@ -102,7 +110,8 @@ export function listDueCrons(asOf: number = Math.floor(Date.now() / 1000)): Cron
 
 // Called by orchestrator after the cron's payload has been enqueued
 // into its target queue. Recurring crons get nextRunAt advanced;
-// one-shots get deleted.
+// one-shots get deleted. Uses the row's stored timezone for @daily /
+// @weekly resolution; falls back to owner tz for legacy rows.
 export function markCronFired(row: CronRow): void {
   const db = getDb()
   const now = Math.floor(Date.now() / 1000)
@@ -110,7 +119,8 @@ export function markCronFired(row: CronRow): void {
     db.delete(crons).where(eq(crons.id, row.id)).run()
     return
   }
-  const next = computeNextRun(row.recurrence, now)
+  const tz = row.timezone ?? config.owner.timezone
+  const next = computeNextRun(row.recurrence, now, tz)
   if (next === null) {
     logger.error(
       { id: row.id, name: row.name, recurrence: row.recurrence },
@@ -166,10 +176,13 @@ const DOW_INDEX: Record<string, number> = {
 }
 
 // Returns the next-run timestamp (unix seconds) for a recurrence, or
-// null for an unparseable format.
+// null for an unparseable format. tz defaults to owner timezone but
+// per-user crons should pass the sender's local tz so @daily HH:MM
+// fires in the user's wall-clock time, not the server's.
 export function computeNextRun(
   recurrence: string | null,
   nowSec: number,
+  tz: string = config.owner.timezone,
 ): number | null {
   if (!recurrence) return null
 
@@ -188,6 +201,7 @@ export function computeNextRun(
       parseInt(dailyMatch[1]!, 10),
       parseInt(dailyMatch[2]!, 10),
       null,
+      tz,
     )
   }
 
@@ -199,13 +213,14 @@ export function computeNextRun(
       parseInt(weeklyMatch[2]!, 10),
       parseInt(weeklyMatch[3]!, 10),
       dow,
+      tz,
     )
   }
 
   return null
 }
 
-// Compute the next unix-seconds at HH:MM in the owner timezone,
+// Compute the next unix-seconds at HH:MM in the given timezone,
 // optionally constrained to a day-of-week. Always returns a moment
 // strictly in the future (> nowSec).
 function nextLocalHourMinute(
@@ -213,8 +228,8 @@ function nextLocalHourMinute(
   hour: number,
   minute: number,
   dayOfWeek: number | null,
+  tz: string,
 ): number {
-  const tz = config.owner.timezone
   const fmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
     year: 'numeric', month: '2-digit', day: '2-digit',

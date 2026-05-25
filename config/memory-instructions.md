@@ -227,3 +227,64 @@ A shared Chrome runs on the server at `localhost:9222` with the owner's real ses
 **Never call `browser_*` / `mcp__*playwright*` tools inline.** All browser work goes via `[ASYNC-BROWSER:...]`. See the two-track section above.
 
 To send a screenshot back: the browser worker takes it (saving to `storage/outbox/`), then includes `[IMAGE: /absolute/path.png]` in its result message.
+
+## Scheduling: reminders and recurring crons
+
+The bot has a built-in scheduler. When the user asks for any future or recurring action, you MUST emit a marker at the END of your reply — saying "I'll remind you" without a marker creates no schedule and the user gets nothing.
+
+The current local time is shown at the top of every chat preamble in the SENDER's timezone. Use it when interpreting "at 10:30am" / "tomorrow morning" / etc.
+
+### One-shot reminders — `[REMIND: <time> — <text>]`
+
+Time forms (case-insensitive):
+
+| Form | Example | Meaning |
+|---|---|---|
+| `in N<unit>` | `in 30m` / `in 2h` / `in 3d` | Units: `s`, `m`, `h`, `d`. Also accepts the word forms: `in 30 minutes`. |
+| `at HH(:MM)?[am\|pm]` | `at 10:30am` / `at 14:00` | TODAY at the user's local time. If already past, rolls to tomorrow. |
+| `tomorrow at HH:MM` | `tomorrow at 9am` | Tomorrow at the user's local time. |
+| `<weekday> at HH:MM` | `mon at 9am` / `friday at 18:00` | Next occurrence of that weekday. |
+| `YYYY-MM-DD HH:MM` | `2026-12-25 09:00` | Specific date, user's local time. |
+
+The `<text>` is what the user will receive at fire time.
+
+Examples:
+```
+[REMIND: in 30m — take the chicken out of the oven]
+[REMIND: at 10:30am — call mom]
+[REMIND: tomorrow at 9am — gym]
+[REMIND: mon at 9am — weekly planning]
+```
+
+### Recurring crons — `[CRON: <recurrence> — <text>]`
+
+Recurrence forms:
+
+| Form | Example | Meaning |
+|---|---|---|
+| `@every N<unit>` | `@every 1h` / `@every 5m` | Fires repeatedly at that interval. |
+| `@daily HH:MM` | `@daily 09:00` | Every day at that user-local time (24h format). |
+| `@weekly <DOW> HH:MM` | `@weekly mon 09:00` | Every week on that weekday at that time. |
+
+Examples:
+```
+[CRON: @daily 09:00 — morning check-in: what's the focus today?]
+[CRON: @weekly sun 18:00 — weekly review: what worked, what didn't]
+[CRON: @every 2h — hydration reminder]
+```
+
+### Cross-chat send — `[SEND-TEXT: ...]`
+
+Send a text to a DIFFERENT chat than the one you're responding in. Rare; usually owner-only.
+
+```
+[SEND-TEXT: address=wa:dm:5491234567890@s.whatsapp.net body="heads up: just posted"]
+```
+
+### Rules
+
+- Acknowledge the schedule in your CHAT REPLY ("got it, reminding you at 10:30") so the user has immediate feedback. The marker is the side effect; the text is what they see right now.
+- ONE marker per scheduled item. Multiple markers in one reply OK.
+- Times are always in the **sender's timezone**, never the server's. The preamble shows the current local time so you can compute deltas if needed.
+- If parsing fails (malformed marker), the bot logs a warning and the schedule is dropped silently. Stick to the grammars above.
+- To cancel a scheduled item, the user types `/reminders` or `/crons` to see what's pending, then deletes via chat command.

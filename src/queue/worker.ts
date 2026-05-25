@@ -9,6 +9,7 @@ import { config } from '../config.js'
 import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
 import { addDailyTokens } from '../store/usage.js'
+import { getTimezoneForSenderNumber } from '../db/identity-sync.js'
 import { estimate as estimateJob } from '../estimates/index.js'
 import { extractFlags, filterFlagsByRole } from '../memory/digest-flag.js'
 import { isValidSlug } from '../memory/journals.js'
@@ -16,6 +17,7 @@ import { enqueueAsyncTask, enqueueBrowserTask } from './async-tasks.js'
 import { enqueueCron } from './crons.js'
 import { enqueueMemoryWrite } from './memory-writes.js'
 import { enqueueOutbound } from './outbound.js'
+import { formatLocalTime, resolveTimeExpression } from './time-expr.js'
 import type { Job, JobCard, Result } from './types.js'
 
 function isStaleSessionError(err: unknown): boolean {
@@ -275,8 +277,12 @@ async function callClaude(job: Job): Promise<Result> {
 
   // [CRON: @every X — body] and [REMIND: in Nu — body] create cron
   // rows that fire into outbound at their scheduled time. The
-  // originating chat (job.jid) is the destination for both.
+  // originating chat (job.jid) is the destination for both. Sender's
+  // timezone drives "9am" / "today at..." resolution so the schedule
+  // lands in their wall-clock time, not the server's.
   const chatAddress = formatAddress(jidToAddress(job.jid))
+  const senderTz = getTimezoneForSenderNumber(job.senderNumber)
+  const nowSec = Math.floor(Date.now() / 1000)
   const cronBase = `chat-cron-${job.jid}-${Date.now()}`
   for (let i = 0; i < crons.length; i++) {
     const c = crons[i]!
@@ -286,9 +292,17 @@ async function callClaude(job: Job): Promise<Result> {
         enqueueInto: 'outbound',
         payload:     { address: chatAddress, kind: 'text', text: c.body },
         recurrence:  c.recurrence,
+        // Sender's local timezone so @daily HH:MM fires in their
+        // wall-clock time, not the server's.
+        timezone:    senderTz,
       })
       logger.info(
-        { jid: job.jid, recurrence: c.recurrence, chars: c.body.length },
+        {
+          jid: job.jid,
+          recurrence: c.recurrence,
+          tz: senderTz,
+          chars: c.body.length,
+        },
         'CRON tag scheduled',
       )
     } catch (err) {
@@ -298,18 +312,41 @@ async function callClaude(job: Job): Promise<Result> {
       )
     }
   }
+  // REMIND resolution uses the same senderTz computed above.
   const remindBase = `chat-remind-${job.jid}-${Date.now()}`
   for (let i = 0; i < reminds.length; i++) {
     const r = reminds[i]!
+    let firstRunAt: number
+    try {
+      firstRunAt = resolveTimeExpression(r.when, senderTz, nowSec)
+    } catch (err) {
+      logger.warn(
+        { err, jid: job.jid, when: r.when },
+        'REMIND time resolution failed',
+      )
+      continue
+    }
+    if (firstRunAt <= nowSec) {
+      logger.warn(
+        { jid: job.jid, when: r.when, firstRunAt },
+        'REMIND resolved to past — skipped',
+      )
+      continue
+    }
     enqueueCron({
       name:        `${remindBase}-${i}`,
       enqueueInto: 'outbound',
       payload:     { address: chatAddress, kind: 'text', text: r.body },
       recurrence:  null,
-      firstRunAt:  Math.floor(Date.now() / 1000) + r.whenSecondsFromNow,
+      firstRunAt,
     })
     logger.info(
-      { jid: job.jid, inSeconds: r.whenSecondsFromNow, chars: r.body.length },
+      {
+        jid: job.jid,
+        fires: formatLocalTime(firstRunAt, senderTz),
+        tz: senderTz,
+        chars: r.body.length,
+      },
       'REMIND tag scheduled',
     )
   }

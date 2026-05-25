@@ -57,6 +57,13 @@
       "when": 1779681183906,
       "tag": "0007_estimates_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1779718733955,
+      "tag": "0008_crons_timezone",
+      "breakpoints": true
     }
   ]
 }

@@ -9,6 +9,9 @@
 // replies today (DIGEST ~morning, ASYNC later). This parser closes that
 // whole class of failure.
 
+import { logger } from '../logger.js'
+import { parseTimeExpression } from '../queue/time-expr.js'
+
 const KINDS = [
   'DIGEST',
   'JOURNAL',
@@ -35,9 +38,11 @@ export type SendTextFlag = { address: string; body: string }
 // text to send back to the originating chat at each firing.
 export type CronFlag = { recurrence: string; body: string }
 
-// One-shot future send. whenSecondsFromNow is parsed by the
-// `in Nu` shorthand. Body is the reminder text.
-export type RemindFlag = { whenSecondsFromNow: number; body: string }
+// One-shot future send. Carries a structured TimeExpression (relative,
+// today, tomorrow, weekday, ISO) and resolution to absolute time
+// happens at worker level in the SENDER's timezone — not at parse
+// time, because the parser doesn't know whose tz to use.
+export type RemindFlag = { when: import('../queue/time-expr.js').TimeExpression; body: string }
 
 export type FlagResult = {
   clean: string
@@ -149,12 +154,15 @@ export function extractFlags(reply: string): FlagResult {
     } else if (kind === 'SEND-TEXT') {
       const parsed = parseSendTextPayload(payload)
       if (parsed) sendTexts.unshift(parsed)
+      else logger.warn({ payload }, 'SEND-TEXT tag dropped: unparseable payload')
     } else if (kind === 'CRON') {
       const parsed = parseCronPayload(payload)
       if (parsed) crons.unshift(parsed)
+      else logger.warn({ payload }, 'CRON tag dropped: unparseable payload')
     } else if (kind === 'REMIND') {
       const parsed = parseRemindPayload(payload)
       if (parsed) reminds.unshift(parsed)
+      else logger.warn({ payload }, 'REMIND tag dropped: unparseable payload')
     }
   }
 
@@ -213,20 +221,19 @@ function parseCronPayload(payload: string): CronFlag | null {
   return { recurrence, body }
 }
 
-// Parse `in <n><unit> — <body>` payload. Supported units: s,m,h,d.
+// Parse `<time-spec> — <body>` payload. Time spec is anything the
+// TimeExpression parser accepts: `in 30m`, `at 10:30am`, `tomorrow
+// at 9am`, `mon at 9am`, `YYYY-MM-DD HH:MM`. Resolution happens
+// later in the worker using the sender's timezone.
 function parseRemindPayload(payload: string): RemindFlag | null {
   const sepMatch = payload.match(/\s+[—–-]\s+/)
   if (!sepMatch || sepMatch.index === undefined) return null
   const timeSpec = payload.slice(0, sepMatch.index).trim()
   const body = payload.slice(sepMatch.index + sepMatch[0].length).trim()
   if (!timeSpec || !body) return null
-  const m = timeSpec.match(/^in\s+(\d+)\s*([smhd])$/i)
-  if (!m) return null
-  const n = parseInt(m[1]!, 10)
-  const unit = m[2]!.toLowerCase()
-  const mult = unit === 's' ? 1 : unit === 'm' ? 60 : unit === 'h' ? 3600 : 86400
-  if (n <= 0) return null
-  return { whenSecondsFromNow: n * mult, body }
+  const when = parseTimeExpression(timeSpec)
+  if (!when) return null
+  return { when, body }
 }
 
 // Parse `address=<addr> body="..."` style key=value payload.

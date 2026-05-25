@@ -1153,3 +1153,78 @@ Next step if more polish needed: live status updates via Baileys
 message edits. Card row stores msg_id; periodic cron fires "still
 working, ~Xmin elapsed of ~Ymin" updates. Half-day of work, channel-
 specific complexity. Defer until felt need.
+
+## 2026-05-25  Reminders/Crons  Per-user-tz, permissive grammar, agent doc
+
+Reported bug: reminders + crons weren't firing. Diagnosis: the agent
+was never told the tags existed, parser was too rigid ("at 10:30am"
+not supported), and all time math used config.owner.timezone instead
+of the requesting user's tz.
+
+Six co-changes for the fix:
+
+### 1. src/queue/time-expr.ts — TimeExpression parse + resolve
+
+Structured intermediate so the parser is timezone-agnostic; resolution
+happens at worker level with the right tz. Supports:
+  in N(s|m|h|d) | in N seconds|minutes|hours|days
+  at HH:MM[am|pm]            (today, rolls to tomorrow if past)
+  tomorrow at HH:MM[am|pm]
+  <weekday> at HH:MM         (next occurrence including today)
+  YYYY-MM-DD HH:MM
+makeDateInTz / localCalendarDate use Intl.DateTimeFormat — handles
+DST transitions for free.
+
+### 2. src/db/identity-sync.ts — per-person tz helpers
+
+getTimezoneForPerson(personId), getTimezoneForAddress(address),
+getTimezoneForSenderNumber(num). Reads persons.timezone, falls back
+to config.owner.timezone when unknown.
+
+### 3. src/memory/digest-flag.ts — permissive REMIND parser + log on drop
+
+parseRemindPayload now delegates to parseTimeExpression. Returns
+RemindFlag carrying a TimeExpression instead of a precomputed
+secondsFromNow. Bonus: SEND-TEXT/CRON/REMIND that fail to parse now
+emit a logger.warn instead of silently dropping — critical for
+diagnosing this kind of bug next time.
+
+### 4. crons schema gains timezone column + cron functions take tz
+
+Migration 0008. computeNextRun(recurrence, now, tz) replaces the
+old hardcoded owner-tz. markCronFired uses row.timezone. enqueueCron
+accepts input.timezone (default owner). nextLocalHourMinute takes tz
+as a parameter.
+
+### 5. src/queue/worker.ts — resolve at sender's tz
+
+REMIND handler: resolveTimeExpression(r.when, senderTz, now).
+Past-time rejection (logs warn, skips enqueue) protects against
+agent emitting bad times. CRON handler: enqueueCron({..., timezone:
+senderTz}). Both blocks share one senderTz computation up front.
+
+### 6. src/memory/preamble.ts — agent gets current local time + grammar
+
+New buildSchedulingReminder(nowLocal, tz) constant injected into
+every chat-track preamble. Tells the agent:
+- The current local time IN THE SENDER'S timezone
+- The exact grammar for REMIND / CRON / SEND-TEXT
+- That saying "I'll remind you" is NOT enough — MUST emit a tag
+
+memory-instructions.md also gets a long-form Scheduling section with
+example markers.
+
+### 7. /reminders + /crons chat commands
+
+src/queue/schedule-list.ts: listChatSchedules(address, kind) +
+formatScheduleList(items, tz, kind). gateway/commands.ts wires
+/reminders (one-shots) and /crons (recurring), both display times
+in the requester's tz.
+
+Validated end-to-end:
+- All 13 grammar forms parse + resolve correctly in BA tz
+- Today rolls to tomorrow when 10:30am is past 11:25am
+- "mon at 9am" finds next Monday including today if future
+- "10:30am" in BA vs Sydney → unix times 13h apart (correct TZ delta)
+- Bad inputs ("sometime later", "at 25:00", "in -1h") all rejected
+- Bad markers now log a clear warning instead of silently dropping

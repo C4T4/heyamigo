@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { config } from '../config.js'
+import { getTimezoneForSenderNumber } from '../db/identity-sync.js'
 import { listAsyncTasks } from '../queue/async-tasks.js'
 import { readCompressed } from './compressed.js'
 import {
@@ -17,6 +18,37 @@ const DIGEST_REMINDER = `When something worth remembering happens (new preferenc
 const JOURNAL_REMINDER = `When a message contains info for one of the journals above, append [JOURNAL:<slug> — <one-line note>] to the END of your reply. Multiple tags OK. Only use slugs listed; never invent. Full rules are in your memory instructions.`
 
 const ASYNC_REMINDER = `TWO TRACKS run in parallel: you are the chat track, a separate browser track runs a persistent Claude session dedicated to the shared Chrome at localhost:9222. Never call browser tools (browser_*, mcp__*playwright*) yourself — delegate via [ASYNC-BROWSER: <self-sufficient task description>] at the END of your reply, plus a short ack ("On it, will report back."). For non-browser long work (>30s, multi-step reasoning) use [ASYNC: ...]. Irreversible actions (DM send, post, purchase) split into gather→confirm→act phases — never send on your own judgment.`
+
+// Buildable per-turn so the agent always sees the SENDER's current
+// time and timezone — not the server's. Critical for resolving
+// "today at 10:30am" / "tomorrow morning" relative to the user.
+function buildSchedulingReminder(nowLocal: string, tz: string): string {
+  return [
+    `SCHEDULING (reminders and recurring schedules):`,
+    `Current local time for THIS sender: ${nowLocal} (${tz}).`,
+    `Saying "I'll remind you" is NOT enough — you must emit a tag.`,
+    `Without the tag, NO schedule is created and the user gets nothing.`,
+    ``,
+    `One-shot reminder — append at END of your reply, ONE PER LINE:`,
+    `  [REMIND: in 30m — <text the user will receive>]`,
+    `  [REMIND: in 2h — <text>]`,
+    `  [REMIND: at 10:30am — <text>]`,
+    `  [REMIND: tomorrow at 9am — <text>]`,
+    `  [REMIND: mon at 9am — <text>]   (next occurrence of Monday)`,
+    `  [REMIND: 2026-12-25 09:00 — <text>]`,
+    `Units for "in N": s | m | h | d. Times are in the sender's tz.`,
+    ``,
+    `Recurring schedule:`,
+    `  [CRON: @daily 09:00 — <text>]`,
+    `  [CRON: @every 3h — <text>]`,
+    `  [CRON: @weekly mon 09:00 — <text>]`,
+    ``,
+    `Cross-chat send (rare):`,
+    `  [SEND-TEXT: address=wa:dm:1234567890@s.whatsapp.net body="..."]`,
+    ``,
+    `Acknowledge the schedule in your chat reply ("got it, reminding you at 10:30") and emit the tag at the END. Reply text is what the user sees right now; the tag is the side effect.`,
+  ].join('\n')
+}
 
 function buildCriticalSection(params: {
   senderNumber: string
@@ -182,6 +214,23 @@ export function buildMemoryPreamble(params: {
     sections.push(`[Journals: active]\n${journalsBlock}`)
     instructions.push(JOURNAL_REMINDER)
   }
+  // Scheduling reminder — tells the agent the current local time in
+  // the SENDER's timezone + lists the REMIND/CRON/SEND-TEXT grammar.
+  // Without this the agent never emits the tag and reminders silently
+  // never fire (was the root-cause of the May 2026 reminders-not-
+  // working bug).
+  const senderTz = getTimezoneForSenderNumber(params.senderNumber)
+  const nowLocal = new Intl.DateTimeFormat('en-GB', {
+    timeZone: senderTz,
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date())
+  instructions.push(buildSchedulingReminder(nowLocal, senderTz))
 
   // Async tasks in progress for this chat — so Claude doesn't re-promise or
   // contradict work already running in the background.

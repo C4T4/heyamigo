@@ -129,6 +129,10 @@ export const crons = sqliteTable('crons', {
   enqueueInto: text('enqueue_into').notNull(), // 'inbound'|'async'|'outbound'|'memory_writes'
   payload:     text('payload').notNull(),      // JSON passed to the target queue
   recurrence:  text('recurrence'),             // null = one-shot
+  // IANA timezone for resolving @daily HH:MM / @weekly DOW HH:MM
+  // recurrences. Set to the sender's local tz when an agent emits a
+  // [CRON:] tag; nullable for system crons that prefer owner tz.
+  timezone:    text('timezone'),
   nextRunAt:   integer('next_run_at').notNull(),
   lastRunAt:   integer('last_run_at'),
   enabled:     integer('enabled').notNull().default(1), // SQLite bool = int

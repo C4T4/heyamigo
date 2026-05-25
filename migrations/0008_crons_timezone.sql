@@ -1,0 +1,1 @@
+ALTER TABLE `crons` ADD `timezone` text;

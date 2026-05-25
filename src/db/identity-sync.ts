@@ -158,7 +158,7 @@ export function syncIdentitiesFromAccess(): {
   return { personsUpserted, identitiesUpserted }
 }
 
-// Lookup helper used by the inbound resolution step (in later phases).
+// Lookup helper used by the inbound resolution step.
 // Returns null if the address has no matching person — caller decides
 // whether to auto-create or treat as stranger.
 export function personIdForAddress(address: string): string | null {
@@ -169,4 +169,36 @@ export function personIdForAddress(address: string): string | null {
     .where(eq(identities.address, address))
     .get()
   return row?.personId ?? null
+}
+
+// Timezone for a person, falling back to owner timezone when unknown.
+// Used by scheduling code (REMIND/CRON) so absolute times like "at
+// 10:30am" land in the SENDER's local time, not the server's.
+export function getTimezoneForPerson(personId: string | null | undefined): string {
+  if (!personId) return config.owner.timezone
+  const db = getDb()
+  const row = db
+    .select({ tz: persons.timezone })
+    .from(persons)
+    .where(eq(persons.id, personId))
+    .get()
+  return row?.tz ?? config.owner.timezone
+}
+
+// Convenience: resolve sender's address → person → timezone.
+// Address can be a WA jid or a wa:dm:... formatted address.
+export function getTimezoneForAddress(address: string): string {
+  const pid = personIdForAddress(address)
+  return getTimezoneForPerson(pid)
+}
+
+// Sender-number → tz (handles the senderNumber field on Job/inbound
+// rows). Builds the wa:dm: address shape internally so we don't have
+// to duplicate the format-from-number logic at every call site.
+export function getTimezoneForSenderNumber(senderNumber: string | undefined): string {
+  if (!senderNumber) return config.owner.timezone
+  const sanitized = senderNumber.replace(/\D/g, '')
+  if (!sanitized) return config.owner.timezone
+  const address = formatAddress(jidToAddress(`${sanitized}@s.whatsapp.net`))
+  return getTimezoneForAddress(address)
 }
