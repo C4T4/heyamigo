@@ -24,9 +24,17 @@ export type ReplyStats = {
   totalContextTokens: number
   contextWindow: number
   fresh: boolean
+  // Per-tag fire counts so the footer can confirm every side effect
+  // the agent emitted. asyncCount is non-browser ASYNC only; browser
+  // delegations are tracked separately in asyncBrowserCount.
   hasDigest: boolean
   journalSlugs: string[]
+  journalCreateCount: number
   asyncCount: number
+  asyncBrowserCount: number
+  remindCount: number
+  cronCount: number
+  sendTextCount: number
 }
 
 // A user-facing "this is in flight" message the chat track adds to

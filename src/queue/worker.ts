@@ -409,7 +409,12 @@ async function callClaude(job: Job): Promise<Result> {
       fresh: wasFresh,
       hasDigest: digest !== null,
       journalSlugs: journals.map((j) => j.slug),
-      asyncCount: asyncTasks.length + asyncBrowserTasks.length,
+      journalCreateCount: journalCreates.length,
+      asyncCount: asyncTasks.length,
+      asyncBrowserCount: asyncBrowserTasks.length,
+      remindCount: reminds.length,
+      cronCount: crons.length,
+      sendTextCount: sendTexts.length,
     },
     jobCards: jobCards.length > 0 ? jobCards : undefined,
   }

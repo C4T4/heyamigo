@@ -76,9 +76,12 @@ export async function handleReply(
 
   const address = formatAddress(jidToAddress(job.jid))
 
+  // Surface media tags in the footer too. Files already parsed above
+  // — just map each to its kind so the footer reads e.g. "+2 image".
+  const mediaKinds = files.map(kindForFile)
   const footer =
     result.stats && config.reply.showStats
-      ? formatStatsFooter(result.stats)
+      ? formatStatsFooter(result.stats, { mediaKinds })
       : ''
 
   let pieceIdx = 0
@@ -218,7 +221,13 @@ export async function initiate(params: {
 
 // Append-only-at-send footer. Never stored, never in Claude's recent-context
 // feedback loop. Adaptive: shows only what's interesting for this reply.
-export function formatStatsFooter(stats: ReplyStats): string {
+// `mediaKinds` is the array of [IMAGE/VIDEO/AUDIO/DOCUMENT] tags the agent
+// emitted in this reply — they're parsed out of the text in handleReply so
+// we forward them here for footer rendering.
+export function formatStatsFooter(
+  stats: ReplyStats,
+  extras?: { mediaKinds?: readonly string[] },
+): string {
   const parts: string[] = []
 
   // Duration — always
@@ -252,10 +261,31 @@ export function formatStatsFooter(stats: ReplyStats): string {
   }
 
   if (stats.fresh) parts.push('fresh')
+
+  // Side-effect tags. Order: scheduling first (most "did it work?"
+  // value for the user), then delegations, then content side effects.
+  const plus = (label: string, n: number) =>
+    n === 1 ? `+${label}` : `+${n} ${label}`
+
+  if (stats.remindCount > 0)       parts.push(plus('remind', stats.remindCount))
+  if (stats.cronCount > 0)         parts.push(plus('cron', stats.cronCount))
+  if (stats.asyncBrowserCount > 0) parts.push(plus('browser', stats.asyncBrowserCount))
+  if (stats.asyncCount > 0)        parts.push(plus('async', stats.asyncCount))
   for (const slug of stats.journalSlugs) parts.push(`+journal:${slug}`)
+  if (stats.journalCreateCount > 0) parts.push(plus('journal-new', stats.journalCreateCount))
   if (stats.hasDigest) parts.push('+digest')
-  if (stats.asyncCount > 0) {
-    parts.push(stats.asyncCount === 1 ? '+async' : `+${stats.asyncCount} async`)
+  if (stats.sendTextCount > 0)     parts.push(plus('send-text', stats.sendTextCount))
+
+  // Media — counted per-kind from the file list. e.g. +2 image, +video.
+  // 'document' shortened to 'doc' to keep the footer tight.
+  const mediaKinds = extras?.mediaKinds ?? []
+  if (mediaKinds.length > 0) {
+    const byKind = new Map<string, number>()
+    for (const k of mediaKinds) {
+      const short = k === 'document' ? 'doc' : k
+      byKind.set(short, (byKind.get(short) ?? 0) + 1)
+    }
+    for (const [kind, n] of byKind) parts.push(plus(kind, n))
   }
 
   return `_${parts.join(' · ')}_`
