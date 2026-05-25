@@ -529,3 +529,84 @@ For "actually disable nudges" the user-facing knob is
 `deleteNudgeCron()` (exported). Neither is reachable by users yet —
 add a `/nudge off` / `/nudge on` chat command in Phase 7's
 observability work.
+
+## 2026-05-24  Phase 3  Deferred
+
+refactor.md Phase 3 is "always-async on images" — route media-bearing
+inbound to the async lane + ack inline. As written, this assumes the
+chat lane is the bottleneck being unblocked. With single-concurrency
+fastq, that's true today.
+
+But the actual fix is "parallel chat workers" (Phase 4). Once chat
+has N pooled workers serialized per-address, the bottleneck disappears
+naturally — a heavy image task on chat A doesn't block chat B.
+
+If I shipped Phase 3 against the existing async-task lane, the image
+handling would use a different agent framing (background-worker
+prompt) than the chat track. That's a regression in UX — the agent's
+voice would change between text and image messages.
+
+Decision: defer Phase 3 until after Phase 4. Once chat is parallelized,
+either Phase 3 becomes unnecessary (problem solved) OR the
+implementation is much cleaner (route through chat lane as normal, the
+pool handles concurrency).
+
+## 2026-05-24  Phase 4  Per-address serialization in claim filter
+
+The defining feature of the inbound queue. `claimNextInbound` does:
+
+```sql
+WHERE status='pending'
+  AND address NOT IN (SELECT address FROM inbound WHERE status='claimed')
+```
+
+Two workers claim simultaneously → they MUST get different addresses
+(if there are messages for both available). Same address → strict
+order, only one worker at a time per chat.
+
+Validated end-to-end with 4 messages (2 per address, 2 addresses):
+- worker-1 + worker-2 each claim a distinct address
+- worker-3 claims null (both addresses busy)
+- worker-1 finishes → worker-3 picks up the next msg on the freed
+  address
+
+This is the single most important correctness invariant of the whole
+refactor. Get this wrong and replies arrive out of order in chat,
+which breaks conversational coherence. Get it right and the bot
+scales linearly with concurrent active chats.
+
+Implementation note: did the busy-addresses lookup as a `notInArray`
+in TS rather than a subquery, because drizzle's subquery API is
+awkward and the busy set is tiny in practice (≤ N where N = chat
+worker pool size, ≤5 for our use case). If it ever scales past
+hundreds of busy addresses simultaneously, swap to a SQL subquery.
+
+## 2026-05-24  Phase 4  Inbound backoff slower than outbound
+
+Outbound: 1s/5s/30s/2min.
+Inbound: 5s/30s/2min/5min.
+
+Reason: a transient inbound failure usually means the AI provider
+timed out or the model rate-limited us. Retrying in 1s would just hit
+the same wall + burn tokens. The 5min cap means a really wedged
+provider gives us a 5min cooldown before DLQ, which is closer to
+what the rate-limit headers typically request.
+
+If we ever see ops where the inbound failure mode is something fast
+to recover (e.g. local resource contention), tune the schedule.
+
+## 2026-05-24  Phase 4  externalMsgId as inbound idempotency
+
+Outbound uses `idempotency_key` (an arbitrary string set by the
+producer). Inbound uses `external_msg_id` (the channel-native message
+id). Different fields, same role.
+
+Why split: outbound idempotency is producer-driven ("don't double-
+send if I crash + retry"). Inbound idempotency is platform-driven
+("don't double-process if WA delivers the same message twice on
+reconnect"). The channel-native id is the natural key for the second
+case; we never make it up.
+
+Sparse unique index — enforced only when externalMsgId is set. Lets
+us insert internal messages (cron-fired self-prompts in later phases)
+without conjuring fake message ids.

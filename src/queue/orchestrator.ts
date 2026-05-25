@@ -17,6 +17,7 @@ import { and, eq, lt, ne } from 'drizzle-orm'
 import { getDb } from '../db/index.js'
 import { workers } from '../db/schema.js'
 import { logger } from '../logger.js'
+import { reclaimStuckInbound } from './inbound.js'
 import { reclaimStuckOutbound } from './outbound.js'
 import { clearControl, readControl, requestControl } from './control.js'
 import { listDueCrons, markCronFired } from './crons.js'
@@ -113,9 +114,13 @@ async function tick(id: string): Promise<void> {
     }
 
     // Cross-queue housekeeping. More queues land in later phases.
-    const reclaimed = reclaimStuckOutbound()
-    if (reclaimed > 0) {
-      logger.info({ reclaimed }, 'reclaimed stuck outbound rows')
+    const reclaimedOutbound = reclaimStuckOutbound()
+    if (reclaimedOutbound > 0) {
+      logger.info({ reclaimed: reclaimedOutbound }, 'reclaimed stuck outbound rows')
+    }
+    const reclaimedInbound = reclaimStuckInbound()
+    if (reclaimedInbound > 0) {
+      logger.info({ reclaimed: reclaimedInbound }, 'reclaimed stuck inbound rows')
     }
 
     // Fire any due crons. Order: dispatch each in turn; if dispatch
