@@ -181,6 +181,15 @@ async function sendOne(
 
 export const baileysAdapter: ChannelAdapter = {
   channel: 'wa',
+  async sendTyping(externalId, state) {
+    const sock = activeSocket
+    if (!sock) return  // silently no-op if disconnected
+    try {
+      await sock.sendPresenceUpdate(state, externalId)
+    } catch {
+      // typing is a UX hint; swallow errors
+    }
+  },
   async send(externalId, msg) {
     const sock = requireSocket()
     let sent: WAMessage | undefined

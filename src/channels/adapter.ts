@@ -18,9 +18,16 @@ export type SendResult = {
   msgId: string                // channel-native id of the sent message
 }
 
+export type TypingState = 'composing' | 'paused'
+
 export interface ChannelAdapter {
   readonly channel: Channel
   send(externalId: string, msg: OutboundMessage): Promise<SendResult>
+  // Optional: surface a typing indicator. Channels that don't support
+  // it (or for channels we haven't wired yet) can leave this
+  // undefined and the chat worker silently skips. Should NOT throw —
+  // typing is a UX nicety, never block real send work on it.
+  sendTyping?(externalId: string, state: TypingState): Promise<void>
 }
 
 // Distinguishes between "the channel said no, try again later" and

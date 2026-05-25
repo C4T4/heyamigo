@@ -16,8 +16,10 @@
 
 import { hostname } from 'os'
 import { eq } from 'drizzle-orm'
+import { getChannelAdapter } from '../channels/index.js'
 import { config } from '../config.js'
 import { getDb } from '../db/index.js'
+import { parseAddress } from '../db/address.js'
 import { workers } from '../db/schema.js'
 import { handleReply } from '../gateway/outgoing.js'
 import { logger } from '../logger.js'
@@ -105,12 +107,36 @@ function jobFromRow(row: InboundRow): Job | null {
   }
 }
 
+// Typing indicator. Fire-and-forget; UX nicety, never block real
+// work. WA's presence-update expires ~15s, so we refresh every 10s
+// for the duration of the job.
+function startTyping(address: string): () => void {
+  let parsed
+  try { parsed = parseAddress(address) } catch { return () => undefined }
+  if (parsed.channel === 'system') return () => undefined
+  let adapter
+  try { adapter = getChannelAdapter(parsed.channel) } catch { return () => undefined }
+  if (!adapter.sendTyping) return () => undefined
+  const externalId = parsed.externalId
+  const fire = () => {
+    void adapter.sendTyping?.(externalId, 'composing').catch(() => undefined)
+  }
+  fire()
+  const interval = setInterval(fire, 10_000)
+  return () => {
+    clearInterval(interval)
+    void adapter.sendTyping?.(externalId, 'paused').catch(() => undefined)
+  }
+}
+
 async function processOne(workerId: string, row: InboundRow): Promise<void> {
   setWorkerStatus(workerId, 'busy', `inbound:${row.id}`)
+  const stopTyping = startTyping(row.address)
 
   const job = jobFromRow(row)
   if (!job) {
     markInboundFailed(row.id, workerId, 'invalid payload')
+    stopTyping()
     setWorkerStatus(workerId, 'idle')
     return
   }
@@ -163,6 +189,7 @@ async function processOne(workerId: string, row: InboundRow): Promise<void> {
       )
     }
   } finally {
+    stopTyping()
     setWorkerStatus(workerId, 'idle')
   }
 }

@@ -111,12 +111,12 @@ async function sweep(): Promise<void> {
   }
 }
 
-let sweepTimer: NodeJS.Timeout | null = null
-
 const NUDGE_TICK_MS = 5 * 60 * 1000 // 5 minutes
+let started = false
 
 export function startScheduler(): void {
-  if (sweepTimer) return
+  if (started) return
+  started = true
   ensureScaffold()
   void prunePrompts() // run once on boot
 
@@ -131,11 +131,22 @@ export function startScheduler(): void {
     }
   })()
 
-  sweepTimer = setInterval(() => {
-    void sweep().catch((err) =>
-      logger.error({ err }, 'sweep failed'),
-    )
-  }, config.memory.sweepIntervalMs)
+  // Memory sweep: migrated from setInterval to a cron entry. Same
+  // cadence (config.memory.sweepIntervalMs); body runs as an internal
+  // cron handler so the orchestrator drives the schedule.
+  registerInternalCronHandler('memory-sweep', async () => {
+    try {
+      await sweep()
+    } catch (err) {
+      logger.error({ err }, 'sweep failed')
+    }
+  })
+  enqueueCron({
+    name:        'memory-sweep',
+    enqueueInto: 'internal',
+    payload:     { handler: 'memory-sweep' },
+    recurrence:  `@every ${Math.floor(config.memory.sweepIntervalMs / 1000)}s`,
+  })
 
   // Proactive journal nudges (check-ins, silent-nudges). Migrated from
   // setInterval to a cron row → orchestrator. Same cadence, same body;
@@ -168,16 +179,12 @@ async function runNudgeTickSafe(): Promise<void> {
 }
 
 export function stopScheduler(): void {
-  if (sweepTimer) {
-    clearInterval(sweepTimer)
-    sweepTimer = null
-  }
-  // Nudge cron is owned by the crons table; orchestrator stops on its
-  // own. Deleting the cron row here would re-arm itself on next boot,
-  // so leave it alone — disabling via the `enabled` column is the
-  // user-facing knob.
+  // All recurring work is now in the crons table; orchestrator handles
+  // its own shutdown. Just clear the in-process debounce timers (for
+  // scheduleDigest's per-jid coalescing).
   for (const t of pendingTimers.values()) clearTimeout(t)
   pendingTimers.clear()
+  started = false
 }
 
 // Exported for callers (CLI, /nudge command) that want to surgically

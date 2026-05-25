@@ -866,4 +866,32 @@ of the same incoming message doesn't double-ack.
 
 Long-term: ChannelAdapter.sendTyping() would let us bring back the
 genuine typing indicator across channels (Telegram has its own
-typing API). That's a separate small commit.
+typing API). That's a separate small commit — next entry.
+
+## 2026-05-24  Phase 2  Last setInterval migrated to cron
+
+memory/scheduler.ts's sweepTimer → enqueueCron('memory-sweep',
+'@every <sweepIntervalMs>s', internal handler). Same cadence, same
+body; orchestrator drives it. stopScheduler no longer clears the
+interval (cron row is durable, orchestrator handles shutdown).
+
+Remaining setIntervals in the codebase are worker heartbeats (sender,
+memory, chat, orchestrator) — those correctly stay as setInterval
+because heartbeats must fire even when the orchestrator tick loop is
+delayed.
+
+## 2026-05-24  Phase 4  Typing indicator regression closed
+
+ChannelAdapter gained optional sendTyping(externalId, state).
+BaileysAdapter implements via sock.sendPresenceUpdate.
+
+Chat worker's startTyping() fires 'composing' every 10s (WA presence
+expires ~15s) for the duration of a claimed job. stopTyping clears
+the interval and sends 'paused' on completion.
+
+Optional on the interface → channels without typing support silently
+skip. Errors swallowed in the adapter (typing is UX nicety, never
+block real send work).
+
+Closes the regression from Phase 4's swap. Typing indicator is back
+to roughly pre-refactor behavior.
