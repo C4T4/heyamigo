@@ -895,3 +895,56 @@ block real send work).
 
 Closes the regression from Phase 4's swap. Typing indicator is back
 to roughly pre-refactor behavior.
+
+## 2026-05-24  Phase 4  Durable browser ticket queue
+
+In-memory fastq → SQLite-backed browser_tasks table. Tasks now
+survive process crashes; orchestrator reclaims stuck rows via TTL.
+
+Schema mostly mirrors inbound (id, address, status, attempts,
+nextAttemptAt, lastError, claimedBy, claimedAt, createdAt, updatedAt)
+plus browser-specific fields: description, originatingMessage,
+senderNumber, senderName, allowedTools (JSON string).
+
+NO per-address serialization (unlike inbound). Multiple browser
+tasks for the same chat CAN run concurrently — each opens its own
+tab on the shared Chrome, replies go via outbound which preserves
+per-chat ordering naturally.
+
+TTL chosen at 20 min — generous because browser tasks routinely run
+5-15 min (Playwright sessions are slow).
+
+Backoff: 30s / 5min / DLQ. Sparser than other queues because most
+browser failures are deterministic (login wall, bot detection) and
+won't benefit from rapid retries.
+
+Architecture:
+- src/queue/browser-queue.ts: enqueueBrowserJob + claim/done/retry
+  helpers + reclaimStuckBrowserTasks for orchestrator.
+- src/queue/browser-worker.ts: pool of N workers (config.browser
+  .maxWorkers, default 3). Each claims a row, converts to the
+  existing AsyncTask shape, calls runBrowserTask (existing body,
+  just exported now).
+- async-tasks.ts enqueueBrowserTask refactored: builds AsyncTask
+  for return-value compat (callers in worker.ts don't change), but
+  inserts into browser_tasks instead of pushing to fastq.
+
+Worker pool registers in workers table on start, heartbeats every
+5s, dies on stopBrowserWorkers.
+
+DLQ ack: when a browser task hits max retries, the worker sends a
+user-facing 'failed, ask me again' message to the originating chat.
+Mirrors what the old in-memory path did on failure.
+
+Validated end-to-end:
+- 2 tasks inserted, 2 workers claimed in parallel (different ids).
+- Third claim returns null (no more pending).
+- markDone with wrong worker fails (claimed_by check).
+- Boot path starts all workers: orchestrator, sender, memory,
+  browser pool (3), chat pool (5), scheduler.
+- All 10 expected tables exist on a fresh DB.
+
+Last bit of in-memory fastq is the GENERAL async lane (the non-
+browser [ASYNC:] tasks). Could migrate to its own SQLite-backed
+queue with the same pattern, but that's a small additional win and
+deferred.

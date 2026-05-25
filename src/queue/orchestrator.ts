@@ -17,6 +17,7 @@ import { and, eq, lt, ne } from 'drizzle-orm'
 import { getDb } from '../db/index.js'
 import { workers } from '../db/schema.js'
 import { logger } from '../logger.js'
+import { reclaimStuckBrowserTasks } from './browser-queue.js'
 import { reclaimStuckInbound } from './inbound.js'
 import { reclaimStuckMemoryWrites } from './memory-writes.js'
 import { reclaimStuckOutbound } from './outbound.js'
@@ -126,6 +127,10 @@ async function tick(id: string): Promise<void> {
     const reclaimedMemWr = reclaimStuckMemoryWrites()
     if (reclaimedMemWr > 0) {
       logger.info({ reclaimed: reclaimedMemWr }, 'reclaimed stuck memory_writes rows')
+    }
+    const reclaimedBrowser = reclaimStuckBrowserTasks()
+    if (reclaimedBrowser > 0) {
+      logger.info({ reclaimed: reclaimedBrowser }, 'reclaimed stuck browser_tasks rows')
     }
 
     // Fire any due crons. Order: dispatch each in turn; if dispatch

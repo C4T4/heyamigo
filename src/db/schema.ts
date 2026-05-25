@@ -236,3 +236,37 @@ export const memoryWrites = sqliteTable('memory_writes', {
                    .on(t.idempotencyKey)
                    .where(sql`${t.idempotencyKey} IS NOT NULL`),
 }))
+
+// ──────────────────────────────────────────────────────────────────
+// Browser tasks (Phase 4, durable)
+// ──────────────────────────────────────────────────────────────────
+
+// Browser-driven background tasks ([ASYNC-BROWSER:] markers). Replaces
+// the in-memory fastq queue with SQLite-backed durable storage: tasks
+// survive process crashes and reclaim via TTL.
+//
+// Browser worker pool (config.browser.maxWorkers) drains; each task
+// runs as a fresh agent (no persistent session — Phase 4) and opens
+// its own tab on the shared Chrome.
+export const browserTasks = sqliteTable('browser_tasks', {
+  id:                  integer('id').primaryKey({ autoIncrement: true }),
+  address:             text('address').notNull(),
+  actorPersonId:       text('actor_person_id'),
+  description:         text('description').notNull(),
+  originatingMessage:  text('originating_message').notNull(),
+  senderNumber:        text('sender_number').notNull(),
+  senderName:          text('sender_name'),
+  allowedTools:        text('allowed_tools'),          // JSON: 'all' | string[]
+
+  status:              text('status').notNull(),
+  attempts:            integer('attempts').notNull().default(0),
+  nextAttemptAt:       integer('next_attempt_at'),
+  lastError:           text('last_error'),
+  claimedBy:           text('claimed_by'),
+  claimedAt:           integer('claimed_at'),
+
+  createdAt:           integer('created_at').notNull(),
+  updatedAt:           integer('updated_at').notNull(),
+}, t => ({
+  byStatusNext: index('btasks_by_status_next').on(t.status, t.nextAttemptAt),
+}))

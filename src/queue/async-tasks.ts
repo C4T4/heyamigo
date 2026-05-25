@@ -1,10 +1,12 @@
 import { resolve } from 'path'
 import { getProvider } from '../ai/providers.js'
+import { formatAddress, jidToAddress } from '../db/address.js'
 import { config } from '../config.js'
 import fastq from 'fastq'
 import type { queueAsPromised } from 'fastq'
 import { initiate } from '../gateway/outgoing.js'
 import { logger } from '../logger.js'
+import { enqueueBrowserJob } from './browser-queue.js'
 
 export type AsyncTask = {
   id: string
@@ -294,38 +296,29 @@ function truncate(s: string, n: number): string {
 //   Per-task tab isolation is enforced by the prompt instructions
 //   below.
 
-// Browser pool: multiple agents share one Chrome (the logged-in
-// profile), each task opens its own tab. Persistent agent session is
-// dropped — every task is fresh, with self-contained instructions
-// from the chat-track agent. The trade-off: no cross-task agent
-// memory; the win: real parallelism.
-const BROWSER_CONCURRENCY = Math.max(1, config.browser?.maxWorkers ?? 3)
-const browserQueue: queueAsPromised<AsyncTask, void> = fastq.promise<
-  unknown,
-  AsyncTask,
-  void
->(async (task) => {
-  inProgress.set(task.id, task)
-  try {
-    await runBrowserTask(task)
-  } catch (err) {
-    logger.error(
-      { err, id: task.id, jid: task.jid },
-      'browser task failed unexpectedly',
-    )
-  } finally {
-    inProgress.delete(task.id)
-  }
-}, BROWSER_CONCURRENCY)
-
+// Browser tasks now go into the durable browser_tasks SQLite table.
+// The browser worker pool (src/queue/browser-worker.ts) drains it.
+// In-flight tasks survive process crashes; the orchestrator reclaims
+// stuck claims via the TTL on the table.
 export function enqueueBrowserTask(
   input: Omit<AsyncTask, 'id' | 'startedAt'>,
 ): AsyncTask {
+  // Keep AsyncTask shape exported so existing callers (worker.ts)
+  // don't change. The returned id is informational only — the real
+  // row id is the DB auto-increment.
   const task: AsyncTask = {
     ...input,
     id: `browser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     startedAt: Math.floor(Date.now() / 1000),
   }
+  enqueueBrowserJob({
+    address:            formatAddress(jidToAddress(task.jid)),
+    description:        task.description,
+    originatingMessage: task.originatingMessage,
+    senderNumber:       task.senderNumber,
+    senderName:         task.senderName ?? null,
+    allowedTools:       task.allowedTools,
+  })
   logger.info(
     {
       id: task.id,
@@ -333,9 +326,6 @@ export function enqueueBrowserTask(
       description: task.description.slice(0, 200),
     },
     'browser task enqueued',
-  )
-  browserQueue.push(task).catch((err) =>
-    logger.error({ err, id: task.id }, 'browser queue push failed'),
   )
   return task
 }
@@ -393,7 +383,10 @@ function browserAddDirs(): string[] {
   ]
 }
 
-async function runBrowserTask(task: AsyncTask): Promise<void> {
+// Exported so the browser worker (src/queue/browser-worker.ts) can
+// invoke it for each claimed row. Body unchanged from the pre-queue
+// version — just rehomed for direct invocation by the pool.
+export async function runBrowserTask(task: AsyncTask): Promise<void> {
   const provider = getProvider()
   // Each task is fresh (Phase 4 browser parallelism). No persistent
   // session — would force serialization on concurrent tasks.

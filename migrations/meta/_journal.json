@@ -43,6 +43,13 @@
       "when": 1779674690188,
       "tag": "0005_phase5_memory_writes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1779677301352,
+      "tag": "0006_phase4_browser_tasks",
+      "breakpoints": true
     }
   ]
 }

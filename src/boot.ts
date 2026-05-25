@@ -9,6 +9,7 @@ import { syncIdentitiesFromAccess } from './db/identity-sync.js'
 import { attachIncoming } from './gateway/incoming.js'
 import { logger } from './logger.js'
 import { startScheduler } from './memory/scheduler.js'
+import { startBrowserWorkers, stopBrowserWorkers } from './queue/browser-worker.js'
 import { startChatWorkers, stopChatWorkers } from './queue/chat-worker.js'
 import {
   startMemoryWorker,
@@ -45,6 +46,7 @@ export async function bootBot(): Promise<void> {
   startOrchestrator({
     onShutdownDrained: () => {
       stopChatWorkers()
+      stopBrowserWorkers()
       stopSenderWorker()
       stopMemoryWorker()
       stopOrchestrator()
@@ -57,6 +59,7 @@ export async function bootBot(): Promise<void> {
   // No separate replay step needed.
   startSenderWorker()
   startMemoryWorker()
+  startBrowserWorkers()
   startChatWorkers()
   startScheduler()
 
