@@ -762,3 +762,32 @@ closed; the rest is incremental.
 Validated end-to-end: enqueued create + append + duplicate-append +
 mark_dirty → all 3 unique rows reach 'done', journal file created on
 disk with exactly 1 entry (duplicate blocked by idempotency).
+
+## 2026-05-24  Phase 6  Per-tag permission gate (file-based)
+
+Implemented per-role tag allowlist in access.json. Existing tools
+allowlist stays untouched — tools and tags are independent gates:
+- tools: what the AI itself can call (Read, Bash, etc.)
+- tags: what bot-internal side effects it can trigger (DIGEST,
+  ASYNC, SEND-TEXT, etc.)
+
+Defaults in DEFAULT_ROLES:
+- admin → tags: 'all' (no restriction)
+- user  → tags: ['DIGEST', 'JOURNAL', 'JOURNAL-NEW']
+- guest → tags: [] — pure chat, no side effects at all.
+
+Schema field is optional. Existing access.json files (no `tags`)
+keep working — the field defaults via the per-field merge in
+resolveRoles to whatever DEFAULT_ROLES defines for that role name.
+
+filterFlagsByRole in digest-flag.ts is the enforcement point. Runs
+right after extractFlags in queue/worker.ts. Stripped tags get
+logged ('tags stripped by role gate') so we can spot users who keep
+hitting the gate.
+
+async-tasks doesn't need its own gate. It already drops [ASYNC:] /
+[ASYNC-BROWSER:] from its own output (no recursion). So the gate at
+chat-track entry covers escalation completely.
+
+Validated with three role tiers: guest strips everything, user
+passes journals but strips async+sendText, admin passes all.

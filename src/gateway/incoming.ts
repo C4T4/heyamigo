@@ -293,6 +293,7 @@ async function processMessages(
         senderNumber: stored.senderNumber,
         fromMe: stored.fromMe,
         allowedTools: role.tools,
+        allowedTags: role.tags,
       }
 
       // Enqueue into the inbound table; chat worker pool drains and

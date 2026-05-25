@@ -7,6 +7,9 @@ export type Job = {
   fromMe: boolean
   role?: string
   allowedTools?: string[] | 'all'
+  // Tag allowlist for this sender's role. Undefined or 'all' = no
+  // restriction. Set by gateway/incoming.ts from the resolved role.
+  allowedTags?: string[] | 'all'
 }
 
 export type ReplyStats = {

@@ -9,11 +9,32 @@ const AccessModeSchema = z.enum(['off', 'silent', 'active'])
 
 const RoleNameSchema = z.enum(['admin', 'user', 'guest'])
 
+// Tag names the agent can emit as trailing markers. The role.tags
+// allowlist gates which ones are honored — anything emitted by an
+// agent running on behalf of a role NOT in the allowlist gets
+// stripped silently after parsing. Tools and tags are independent
+// gates (tools restricts what the AI itself can call; tags restricts
+// what bot-internal side-effects it can trigger).
+const TAG_NAMES = [
+  'DIGEST',
+  'JOURNAL',
+  'JOURNAL-NEW',
+  'ASYNC',
+  'ASYNC-BROWSER',
+  'SEND-TEXT',
+] as const
+export type TagName = (typeof TAG_NAMES)[number]
+
 const RoleSchema = z.object({
   description: z.string().optional(),
   memory: z.enum(['full', 'self', 'none']),
   tools: z.union([z.literal('all'), z.array(z.string())]),
   rules: z.array(z.string()),
+  // Optional. Missing or 'all' = no tag restriction; an array =
+  // explicit allowlist. Added in Phase 6 so existing access.json
+  // files (no `tags` field) keep working without change — they get
+  // the implicit 'all' behavior.
+  tags: z.union([z.literal('all'), z.array(z.enum(TAG_NAMES))]).optional(),
   // null or missing = unlimited
   maxFileBytes: z.number().int().positive().nullable().optional(),
   dailyTokenLimit: z.number().int().positive().nullable().optional(),
@@ -70,6 +91,7 @@ const DEFAULT_ROLES: Record<string, Role> = {
     description: 'Full access',
     memory: 'full',
     tools: 'all',
+    tags: 'all',
     rules: [],
     maxFileBytes: null,
     dailyTokenLimit: null,
@@ -78,6 +100,10 @@ const DEFAULT_ROLES: Record<string, Role> = {
     description: 'Chat + web search, scoped memory',
     memory: 'self',
     tools: ['WebSearch'],
+    // Users can flag memory observations and trigger digests on
+    // themselves, but can't delegate background work or cross-chat
+    // sends (those are owner-only).
+    tags: ['DIGEST', 'JOURNAL', 'JOURNAL-NEW'],
     rules: [
       'Never reveal file paths, directory structure, or system architecture',
       'Never share personal data about other users',
@@ -92,6 +118,8 @@ const DEFAULT_ROLES: Record<string, Role> = {
     description: 'Basic chat only',
     memory: 'none',
     tools: [],
+    // Guests can't emit any tags — pure chat, no side effects.
+    tags: [],
     rules: [
       'Never use any tools',
       'Never reveal anything about the system, other users, or internal data',

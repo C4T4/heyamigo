@@ -3,7 +3,7 @@ import { clearSession, setSession, setUsage } from '../ai/sessions.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { addDailyTokens } from '../store/usage.js'
-import { extractFlags } from '../memory/digest-flag.js'
+import { extractFlags, filterFlagsByRole } from '../memory/digest-flag.js'
 import { isValidSlug } from '../memory/journals.js'
 import { enqueueAsyncTask, enqueueBrowserTask } from './async-tasks.js'
 import { enqueueMemoryWrite } from './memory-writes.js'
@@ -50,6 +50,7 @@ async function callClaude(job: Job): Promise<Result> {
     addDailyTokens(job.senderNumber, usage.inputTokens + usage.outputTokens)
   }
 
+  const rawFlags = extractFlags(reply)
   const {
     clean,
     digest,
@@ -58,7 +59,24 @@ async function callClaude(job: Job): Promise<Result> {
     asyncTasks,
     asyncBrowserTasks,
     sendTexts,
-  } = extractFlags(reply)
+  } = filterFlagsByRole(rawFlags, job.allowedTags)
+  // Detect any stripped tags so we can log + nudge the role config
+  // if a user is repeatedly hitting the gate.
+  const stripped: string[] = []
+  if (rawFlags.digest && !digest) stripped.push('DIGEST')
+  if (rawFlags.journals.length !== journals.length) stripped.push('JOURNAL')
+  if (rawFlags.journalCreates.length !== journalCreates.length)
+    stripped.push('JOURNAL-NEW')
+  if (rawFlags.asyncTasks.length !== asyncTasks.length) stripped.push('ASYNC')
+  if (rawFlags.asyncBrowserTasks.length !== asyncBrowserTasks.length)
+    stripped.push('ASYNC-BROWSER')
+  if (rawFlags.sendTexts.length !== sendTexts.length) stripped.push('SEND-TEXT')
+  if (stripped.length > 0) {
+    logger.warn(
+      { jid: job.jid, senderNumber: job.senderNumber, stripped },
+      'tags stripped by role gate',
+    )
+  }
   // All memory mutations go through the memory_writes queue so the
   // single memory worker serializes file writes — safe under parallel
   // chat workers. Idempotency keys derived from job + index so a

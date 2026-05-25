@@ -148,6 +148,26 @@ export function extractFlags(reply: string): FlagResult {
   }
 }
 
+// Strip flags that the sender's role isn't permitted to emit. The
+// agent's reply still goes out as text — only the side-effect markers
+// get suppressed. allowedTags='all' or undefined → no filtering.
+export function filterFlagsByRole(
+  flags: FlagResult,
+  allowedTags: 'all' | readonly string[] | undefined,
+): FlagResult {
+  if (allowedTags === 'all' || allowedTags === undefined) return flags
+  const allowed = new Set(allowedTags)
+  return {
+    clean:             flags.clean,
+    digest:            allowed.has('DIGEST') ? flags.digest : null,
+    journals:          allowed.has('JOURNAL') ? flags.journals : [],
+    journalCreates:    allowed.has('JOURNAL-NEW') ? flags.journalCreates : [],
+    asyncTasks:        allowed.has('ASYNC') ? flags.asyncTasks : [],
+    asyncBrowserTasks: allowed.has('ASYNC-BROWSER') ? flags.asyncBrowserTasks : [],
+    sendTexts:         allowed.has('SEND-TEXT') ? flags.sendTexts : [],
+  }
+}
+
 // Legacy helper kept so existing callers still compile.
 export function extractDigestFlag(reply: string): LegacyFlagResult {
   const r = extractFlags(reply)
