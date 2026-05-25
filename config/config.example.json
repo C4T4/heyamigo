@@ -18,7 +18,7 @@
   },
 
   "triggers": {
-    "aliases": ["heyamigo", "amigo", "claude", "clawd"],
+    "aliases": ["heyamigo", "amigo", "claude", "clawd", "grok", "codex", "xai"],
     "groupMode": "mention",
     "dmMode": "mention",
     "replyToBotCounts": true

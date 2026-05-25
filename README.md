@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/heyamigo-premium-clean.jpg" alt="Heyamigo" width="100%">
+</p>
+
 # heyamigo
 
 A chat-resident assistant for WhatsApp and Telegram. Claude, Codex, or Grok under the hood, durable SQLite queues, per-sender timezone scheduling, two-track architecture so browser work never blocks the chat.
