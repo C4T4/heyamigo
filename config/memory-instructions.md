@@ -234,27 +234,52 @@ The bot has a built-in scheduler. When the user asks for any future or recurring
 
 The current local time is shown at the top of every chat preamble in the SENDER's timezone. Use it when interpreting "at 10:30am" / "tomorrow morning" / etc.
 
-### One-shot reminders — `[REMIND: <time> — <text>]`
+### One-shot reminders — ONE canonical format
 
-Time forms (case-insensitive):
-
-| Form | Example | Meaning |
-|---|---|---|
-| `in N<unit>` | `in 30m` / `in 2h` / `in 3d` | Units: `s`, `m`, `h`, `d`. Also accepts the word forms: `in 30 minutes`. |
-| `at HH(:MM)?[am\|pm]` | `at 10:30am` / `at 14:00` | TODAY at the user's local time. If already past, rolls to tomorrow. |
-| `tomorrow at HH:MM` | `tomorrow at 9am` | Tomorrow at the user's local time. |
-| `<weekday> at HH:MM` | `mon at 9am` / `friday at 18:00` | Next occurrence of that weekday. |
-| `YYYY-MM-DD HH:MM` | `2026-12-25 09:00` | Specific date, user's local time. |
-
-The `<text>` is what the user will receive at fire time.
-
-Examples:
 ```
-[REMIND: in 30m — take the chicken out of the oven]
-[REMIND: at 10:30am — call mom]
-[REMIND: tomorrow at 9am — gym]
-[REMIND: mon at 9am — weekly planning]
+[REMIND: YYYY-MM-DD HH:MM — <text the user will receive>]
 ```
+
+The time is always in the SENDER's timezone (shown in your preamble each
+turn as "Current local time"). YOU translate the user's natural-language
+date/time into the ISO form. Never pass through their raw phrasing.
+
+Translation table (assume current time = `2026-05-25 11:25` BA tz):
+
+| User says | You emit |
+|---|---|
+| `in 30 minutes` | `[REMIND: 2026-05-25 11:55 — ...]` |
+| `in 3 hours` | `[REMIND: 2026-05-25 14:25 — ...]` |
+| `tomorrow` | `[REMIND: 2026-05-26 09:00 — ...]` |
+| `tomorrow morning` | `[REMIND: 2026-05-26 09:00 — ...]` |
+| `tomorrow at 9am` | `[REMIND: 2026-05-26 09:00 — ...]` |
+| `at 10:30am` | `[REMIND: 2026-05-26 10:30 — ...]` (past today → rolls to tomorrow) |
+| `at 2pm` | `[REMIND: 2026-05-25 14:00 — ...]` (still future today) |
+| `20.10` / `20/10` | `[REMIND: 2026-10-20 09:00 — ...]` |
+| `20.10 at 14:00` | `[REMIND: 2026-10-20 14:00 — ...]` |
+| `october 20 at 2pm` | `[REMIND: 2026-10-20 14:00 — ...]` |
+| `next monday` | `[REMIND: 2026-06-01 09:00 — ...]` |
+| `monday morning` | `[REMIND: 2026-06-01 09:00 — ...]` |
+| `december 25` | `[REMIND: 2026-12-25 09:00 — ...]` |
+| `next week` | `[REMIND: 2026-06-01 11:25 — ...]` (+7 days, same time) |
+| `in a couple hours` | `[REMIND: 2026-05-25 13:25 — ...]` (interpret as 2h) |
+
+**Defaults when fields are missing:**
+- No time given → 09:00 sender-tz
+- No date given (just a time) → today, roll to tomorrow if past
+- No year given → current year, roll to next year if past
+
+Examples in actual reply text:
+
+```
+[REMIND: 2026-05-25 11:55 — take the chicken out of the oven]
+[REMIND: 2026-05-26 09:00 — gym]
+[REMIND: 2026-06-01 09:00 — weekly planning]
+```
+
+Do NOT use `in 30m`, `tomorrow at 9am`, or other shorthands. The parser
+accepts them as a fallback but the ISO form is the contract. Single
+format = no ambiguity, no locale concerns, no parser surprises.
 
 ### Recurring crons — `[CRON: <recurrence> — <text>]`
 
