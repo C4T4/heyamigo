@@ -120,12 +120,14 @@ const ConfigSchema = z.object({
     promptRetentionDays: z.number(),
   }),
   // Threads — AI-curated relevance watchlist. See src/queue/threads.ts.
-  // Off by default; flip enabled=true to allow the AI to open/track
-  // loops via [THREAD-*:] tags. Reactive surface only in v1 — proactive
-  // review tick (silent-chat check-ins) deferred.
+  // On by default. Reactive surface only in v1: the agent decides
+  // when to open loops, brings them up if naturally relevant, never
+  // sends unsolicited messages. To turn off, set enabled=false in
+  // config.local.json. Proactive review tick (silent-chat check-ins)
+  // is the bit that would be default-off if/when it ships.
   threads: z
     .object({
-      enabled: z.boolean().default(false),
+      enabled: z.boolean().default(true),
       preamblePerChat: z.number().int().positive().default(5),
       // Soft caps used by future cleanup jobs; the worker doesn't read
       // these yet but they're here so config.json can be authored once.
@@ -134,7 +136,7 @@ const ConfigSchema = z.object({
       decayPerDay: z.number().int().min(0).default(2),
     })
     .default({
-      enabled: false,
+      enabled: true,
       preamblePerChat: 5,
       maxActivePerChat: 10,
       hotnessCapOnCreate: 70,
