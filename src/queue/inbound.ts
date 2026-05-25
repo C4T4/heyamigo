@@ -24,6 +24,10 @@ export type EnqueueInboundInput = {
   mediaBytes?: number | null
   pushName?: string | null
   triggerReason?: string | null         // 'alias'|'mention'|'reply'|'owner'|...
+  // Job-kind tag set when a registered estimator matched at ingest.
+  // Used later by the estimator to compute past-sample averages for
+  // this same kind.
+  kind?: string | null
   receivedAt?: number                   // unix sec; defaults to now
   // Producer-built worker payload (JSON-serialized by the helper).
   // Chat worker deserializes at claim time.
@@ -66,6 +70,7 @@ export function enqueueInbound(input: EnqueueInboundInput): EnqueueInboundResult
       mediaBytes:     input.mediaBytes ?? null,
       pushName:       input.pushName ?? null,
       triggerReason:  input.triggerReason ?? null,
+      kind:           input.kind ?? null,
       payload:        input.payload === undefined ? null : JSON.stringify(input.payload),
       status:         'pending',
       attempts:       0,

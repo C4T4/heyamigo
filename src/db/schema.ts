@@ -175,6 +175,12 @@ export const inbound = sqliteTable('inbound', {
   mediaBytes:          integer('media_bytes'),
   pushName:            text('push_name'),              // sender's display name at send time
   triggerReason:       text('trigger_reason'),         // 'alias'|'mention'|'reply'|'owner'|...
+  // Job-kind tag for duration estimation (see src/estimates/). Set
+  // at ingest time when a registered estimator matches the message
+  // (e.g. 'image-gen', 'browser:ig'). Null otherwise. Queried by
+  // the estimator on subsequent invocations to compute past-sample
+  // averages.
+  kind:                text('kind'),
   // Producer-built worker payload (JSON). Chat worker deserializes
   // at claim time to reconstruct the Job. Keeps the rebuild logic
   // out of the worker for Phase 4; later phases may move portions
@@ -197,6 +203,8 @@ export const inbound = sqliteTable('inbound', {
   byStatusNext: index('inbound_by_status_next').on(t.status, t.nextAttemptAt),
   byAddress:    index('inbound_by_address').on(t.address),
   byPerson:     index('inbound_by_person').on(t.personId, t.receivedAt),
+  // Used by the duration estimator: "last N done rows of this kind".
+  byKindDone:   index('inbound_by_kind_done').on(t.kind, t.status),
   // Sparse unique on external_msg_id: enforced only when set. Same
   // pattern as outbound's idempotency_key.
   uniqExtId:    uniqueIndex('inbound_external_msg_id_uq')

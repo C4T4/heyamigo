@@ -948,3 +948,53 @@ Last bit of in-memory fastq is the GENERAL async lane (the non-
 browser [ASYNC:] tasks). Could migrate to its own SQLite-backed
 queue with the same pattern, but that's a small additional win and
 deferred.
+
+## 2026-05-25  Estimates  Job duration estimation (image-gen first)
+
+Plugin-architecture estimator system. Each kind is a self-contained
+file under src/estimates/, registered via registerEstimator() at
+module load. Outside callers touch only `classify(ctx)` and
+`estimate(ctx)`.
+
+Always-returns-an-estimate semantics: when a kind matches, the
+estimator falls back to its `defaultMs` if no samples exist.
+0 → default; 1 → that one sample; N → mean of last 20 done rows.
+
+Layout:
+- src/estimates/types.ts — interfaces
+- src/estimates/registry.ts — registerEstimator/classify/estimate/
+  querySamplesForKind/aggregateMean/humanDur
+- src/estimates/image-gen.ts — first plugin (regex matcher,
+  defaultMs=30s, custom format text)
+- src/estimates/index.ts — imports all plugins (their imports trigger
+  self-registration) and re-exports the public surface
+
+Schema: ALTER TABLE inbound ADD kind TEXT + index on (kind, status).
+Set at ingest in gateway/incoming.ts from classify(ctx). Chat worker
+writes the duration sample naturally when it marks status='done'.
+
+incoming.ts integration:
+- classify(ctx) → if matched, immediately enqueueOutbound the
+  estimate text + tag inbound row with the kind.
+- If NO estimator matched AND media is present, fall back to the
+  existing "looking…" media-ack so that UX doesn't regress.
+
+Decisions:
+- mean, not median (user spec). Vulnerable to outliers; range
+  disclosure mitigates. Could swap to trimmed-mean later.
+- Sample limit 20. Past that, freshness > breadth.
+- Confidence buckets: <5 low, 5-9 medium, ≥10 high. Future hedging
+  language can hook off this.
+- Range disclosed only when stddev > 50% of mean (otherwise a single
+  point estimate).
+
+Validated end-to-end on a fresh DB:
+- 0 samples       → "generating image, ~30s" (default)
+- 1 sample (35s)  → "generating image, ~35s"
+- 4 samples       → "generating image, ~34s" (low confidence)
+- 5 with outlier  → "generating image, anywhere from ~1s to ~3min"
+- "hi how are you" → no classification → no estimate
+
+Adding the next kind (browser:ig, voice-gen, …) = drop file alongside
+image-gen.ts + add one import line to estimates/index.ts. No other
+code changes.

@@ -12,6 +12,7 @@ import { getSession } from '../ai/sessions.js'
 import { formatAddress, jidToAddress } from '../db/address.js'
 import { personIdForAddress } from '../db/identity-sync.js'
 import { config } from '../config.js'
+import { estimate as estimateJob } from '../estimates/index.js'
 import { logger } from '../logger.js'
 import { buildMemoryPreamble } from '../memory/preamble.js'
 import { enqueueInbound } from '../queue/inbound.js'
@@ -310,12 +311,30 @@ async function processMessages(
         ? personIdForAddress(senderAddress)
         : null
 
-      // For media-bearing messages, send an immediate "looking…" ack
-      // via outbound so the user isn't left wondering whether the bot
-      // saw the image (typing indicator was dropped in Phase 4 —
-      // followup commit will reinstate via ChannelAdapter.sendTyping).
-      // The chat worker still processes the actual reply normally.
-      if (media && config.reply.ackOnMedia !== false) {
+      // Estimator: classify this message and, when a kind matches,
+      // (a) tag the inbound row so future estimates of the same kind
+      // get a fresh sample, and (b) send the estimate text as an
+      // immediate ack so the user sees a timeline before the agent
+      // even starts.
+      const est = estimateJob({
+        description: stored.text,
+        attachments: media ? [{ kind: media.mediaType }] : undefined,
+        senderPersonId: actorPersonId ?? undefined,
+      })
+      const jobKind = est?.kind ?? null
+
+      if (est) {
+        enqueueOutbound({
+          address: chatAddress,
+          kind:    'text',
+          text:    est.text,
+          idempotencyKey: `estimate-${msg.key.id}`,
+        })
+      } else if (media && config.reply.ackOnMedia !== false) {
+        // Fallback media-ack when no estimator matched — keeps the
+        // pre-estimator behavior so image messages still get the
+        // "looking…" hint. A future MediaIncomingEstimator can replace
+        // this with a real average.
         enqueueOutbound({
           address: chatAddress,
           kind:    'text',
@@ -333,6 +352,7 @@ async function processMessages(
         text:           stored.text,
         pushName:       stored.pushName ?? null,
         triggerReason,
+        kind:           jobKind,
         receivedAt:     stored.timestamp,
         payload:        job,
       })
