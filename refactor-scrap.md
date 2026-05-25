@@ -345,3 +345,61 @@ Parser validates both address and body are present; missing either
 
 If we ever need explicit-caption media markers, revisit then. For
 now: simpler tag surface, less duplication.
+
+## 2026-05-24  Phase 2  Orchestrator tick interval = 500ms
+
+Polling-based design (vs event-driven). Tick interval 500ms is the
+compromise between:
+  - Responsiveness: shutdown signal picked up within ~500ms of being
+    written; stuck-claim reclaim happens within ~500ms of TTL expiry.
+  - Database load: 2 reads/sec at idle (control table + workers
+    table). Trivial for SQLite.
+  - Battery / cpu: 2 wakeups/sec is fine for a long-running daemon.
+
+If we ever want sub-second responsiveness (probably not for our use
+case), the right path is a NOTIFY-style mechanism — but SQLite has no
+LISTEN/NOTIFY. We'd have to use file watches or in-process event
+emitters. Not worth it.
+
+## 2026-05-24  Phase 2  Worker-dead threshold = 30s
+
+`WORKER_DEAD_AFTER_SECONDS = 30` means a worker is declared dead if
+its last_seen is older than 30s. Heartbeats fire every 5s, so a live
+worker should never trigger this — even with 1 missed heartbeat (5s
+delay) we'd be at 10s, well under threshold.
+
+The threshold being 30s gives a comfortable margin for:
+  - Brief GC pauses
+  - Network/disk hiccups (the heartbeat is a DB write)
+  - Slow handlers that don't yield often
+
+If we ever want stricter detection (e.g. browser worker crashed
+mid-task and we want its job back fast), bump heartbeat to 1s and
+threshold to 5s. Trade-off: more DB writes.
+
+## 2026-05-24  Phase 2  Graceful shutdown via control table, not signal
+
+Old design: SIGTERM handler calls stopSenderWorker + closeDb + exit
+inline. Problem: any in-flight send gets aborted mid-call → message
+may or may not have been delivered; outbound row may or may not be
+marked done.
+
+New design: SIGTERM writes a `shutdown` row to the control table.
+Orchestrator picks it up, marks self draining, waits until no worker
+has status='busy', then runs the drain hook (stopSenderWorker +
+closeDb) and exits.
+
+Why this is better:
+  - Workers complete their CURRENT job before exiting. Outbound rows
+    don't get orphaned in `sending` state with the worker dead.
+  - Same mechanism works for /shutdown chat command, HTTP webhook,
+    `heyamigo shutdown` CLI — all just write to the same table.
+  - Pause/reload signals piggyback on the same control infrastructure.
+
+Safety net: 30s force-exit timer set when shutdown is requested. If a
+worker truly hangs and never frees its claim, the bot exits anyway.
+Orphaned `sending` rows get reclaimed on next boot via TTL check.
+
+Validated end-to-end: started orchestrator, registered a fake busy
+worker, requested shutdown, watched orchestrator wait (not exit),
+freed the fake worker, watched orchestrator exit cleanly.
