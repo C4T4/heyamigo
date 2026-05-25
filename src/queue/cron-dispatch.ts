@@ -6,6 +6,7 @@
 // here and a cron can fire into them with no other changes.
 
 import { logger } from '../logger.js'
+import { getInternalCronHandler } from './cron-handlers.js'
 import { type CronRow } from './crons.js'
 import { enqueueOutbound, type EnqueueOutboundInput } from './outbound.js'
 
@@ -22,6 +23,9 @@ export function dispatchCron(row: CronRow): void {
     case 'outbound':
       dispatchOutbound(row, payload)
       return
+    case 'internal':
+      dispatchInternal(row, payload)
+      return
     case 'inbound':
     case 'async':
     case 'memory_writes':
@@ -35,6 +39,38 @@ export function dispatchCron(row: CronRow): void {
         { name: row.name, target: row.enqueueInto },
         'cron has unknown target queue',
       )
+  }
+}
+
+function dispatchInternal(row: CronRow, payload: unknown): void {
+  if (!payload || typeof payload !== 'object' || !('handler' in payload)) {
+    logger.error({ id: row.id, name: row.name }, "internal cron missing 'handler' in payload")
+    return
+  }
+  const handlerName = (payload as { handler: unknown }).handler
+  if (typeof handlerName !== 'string') {
+    logger.error({ id: row.id, name: row.name }, 'internal cron handler name not a string')
+    return
+  }
+  const handler = getInternalCronHandler(handlerName)
+  if (!handler) {
+    logger.error(
+      { id: row.id, name: row.name, handler: handlerName },
+      'internal cron handler not registered',
+    )
+    return
+  }
+  // Fire-and-forget. Handler errors are caught and logged but the
+  // cron row still gets marked fired so we don't stack up retries.
+  try {
+    const result = handler()
+    if (result && typeof (result as Promise<void>).catch === 'function') {
+      ;(result as Promise<void>).catch((err) =>
+        logger.error({ err, handler: handlerName }, 'internal cron handler rejected'),
+      )
+    }
+  } catch (err) {
+    logger.error({ err, handler: handlerName }, 'internal cron handler threw')
   }
 }
 

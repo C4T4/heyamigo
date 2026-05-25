@@ -18,7 +18,12 @@ import { getDb } from '../db/index.js'
 import { logger } from '../logger.js'
 import { crons } from '../db/schema.js'
 
-export type CronTarget = 'inbound' | 'async' | 'outbound' | 'memory_writes'
+export type CronTarget =
+  | 'inbound'
+  | 'async'
+  | 'outbound'
+  | 'memory_writes'
+  | 'internal'              // in-process handler registry (cron-handlers.ts)
 
 export type EnqueueCronInput = {
   name: string

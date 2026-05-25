@@ -458,3 +458,74 @@ specify one. Means the same recurring cron firing twice within the
 same second (shouldn't happen, but cron tick + retry could in theory)
 won't double-insert. One-shot crons can supply their own key if they
 need cross-process dedup.
+
+## 2026-05-24  Phase 2  Added 'internal' cron target
+
+Original refactor.md cron design assumed all targets were queues
+(inbound / async / outbound / memory_writes). Reality: a lot of the
+existing setInterval timers are pure in-process work — call a
+function, no queue involved. journal-nudge-tick is the obvious example
+(it just runs `runNudgeTick()`).
+
+Without an 'internal' target, every timer migration would have to
+wait until its appropriate queue exists (Phase 4 inbound, Phase 5
+memory_writes). That's blocking.
+
+Added `enqueueInto: 'internal'`. Payload shape: `{ handler: <name> }`.
+The dispatcher looks the name up in a registry (`src/queue/cron-
+handlers.ts`) and invokes the function. Registry is populated by
+modules at boot via `registerInternalCronHandler(name, fn)`.
+
+This is the right escape hatch: we get to migrate timers immediately
+without inventing a queue per category, and the registry surface is
+tiny (~30 lines). Long-term we'd expect each handler to either stay
+internal (genuinely process-local work) or get rewritten as a
+queue+worker pair when the work needs distribution / crash
+resilience.
+
+## 2026-05-24  Phase 2  Migrated journal-nudge tick to cron (proof)
+
+First setInterval moved to a cron entry. Picked the nudge tick because:
+- Simple body (one function call), no queue interactions yet.
+- Independent of the existing sweep — risk-isolated.
+- High-frequency enough (every 5 min) to be observable in testing.
+
+Pattern:
+```
+registerInternalCronHandler('journal-nudge-tick', runNudgeTickSafe)
+enqueueCron({
+  name: 'journal-nudge-tick',
+  enqueueInto: 'internal',
+  payload: { handler: 'journal-nudge-tick' },
+  recurrence: '@every 300s',
+})
+```
+
+The `enqueueCron` is idempotent on name for recurring → restarting the
+bot doesn't reset the nextRunAt or duplicate the row. First boot ever
+schedules first run at `now + 300s`, matching setInterval's "first
+callback after the interval" semantics.
+
+Validated end-to-end: started orchestrator + scheduler with `@every
+1s` recurrence and a counting handler; observed 3 firings in 2.5s
+(orchestrator ticks every 500ms, so each due cron gets dispatched
+within ~500ms of its nextRunAt). lastRunAt advances after each fire.
+
+Bulk migration of the remaining setIntervals (sweep, prune timers,
+daily quota reset) deferred to a future commit. The pattern is proven
+and each timer migration is now mechanical.
+
+## 2026-05-24  Phase 2  stopScheduler does NOT delete the nudge cron
+
+Old `stopScheduler` cleared the nudge setInterval. Migration changed
+the question: do we delete the cron row when stopping, or leave it?
+
+Decision: leave it. The cron row is durable state; stopping the
+process should not edit it (would be surprising and would re-arm on
+next boot anyway since `enqueueCron` is idempotent).
+
+For "actually disable nudges" the user-facing knob is
+`setCronEnabled('journal-nudge-tick', false)`. For full removal there's
+`deleteNudgeCron()` (exported). Neither is reachable by users yet —
+add a `/nudge off` / `/nudge on` chat command in Phase 7's
+observability work.

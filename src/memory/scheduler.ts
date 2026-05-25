@@ -3,6 +3,8 @@ import type { queueAsPromised } from 'fastq'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { prunePrompts } from '../promptlog.js'
+import { registerInternalCronHandler } from '../queue/cron-handlers.js'
+import { deleteCron, enqueueCron } from '../queue/crons.js'
 import { pruneMedia } from '../store/media.js'
 import { runDigest } from './digest.js'
 import {
@@ -110,7 +112,6 @@ async function sweep(): Promise<void> {
 }
 
 let sweepTimer: NodeJS.Timeout | null = null
-let nudgeTimer: NodeJS.Timeout | null = null
 
 const NUDGE_TICK_MS = 5 * 60 * 1000 // 5 minutes
 
@@ -136,13 +137,17 @@ export function startScheduler(): void {
     )
   }, config.memory.sweepIntervalMs)
 
-  // Faster tick just for proactive journal nudges (check-ins, silent-nudges).
-  // The memory-sweep cycle (default 3h) is too coarse for a "daily 21:00"
-  // check-in. This tick is cheap: it only spawns Claude when something is
-  // actually due for a journal.
-  nudgeTimer = setInterval(() => {
-    void runNudgeTickSafe()
-  }, NUDGE_TICK_MS)
+  // Proactive journal nudges (check-ins, silent-nudges). Migrated from
+  // setInterval to a cron row → orchestrator. Same cadence, same body;
+  // benefits are: survives restarts, visible in `crons` table, can be
+  // paused via control row without code change.
+  registerInternalCronHandler('journal-nudge-tick', runNudgeTickSafe)
+  enqueueCron({
+    name:        'journal-nudge-tick',
+    enqueueInto: 'internal',
+    payload:     { handler: 'journal-nudge-tick' },
+    recurrence:  `@every ${Math.floor(NUDGE_TICK_MS / 1000)}s`,
+  })
 
   logger.info(
     {
@@ -167,10 +172,18 @@ export function stopScheduler(): void {
     clearInterval(sweepTimer)
     sweepTimer = null
   }
-  if (nudgeTimer) {
-    clearInterval(nudgeTimer)
-    nudgeTimer = null
-  }
+  // Nudge cron is owned by the crons table; orchestrator stops on its
+  // own. Deleting the cron row here would re-arm itself on next boot,
+  // so leave it alone — disabling via the `enabled` column is the
+  // user-facing knob.
   for (const t of pendingTimers.values()) clearTimeout(t)
   pendingTimers.clear()
+}
+
+// Exported for callers (CLI, /nudge command) that want to surgically
+// disable nudges without editing config. Use `setCronEnabled` from
+// crons.ts for the on/off switch; this is a hard delete (regenerated
+// on next startScheduler call).
+export function deleteNudgeCron(): boolean {
+  return deleteCron('journal-nudge-tick')
 }
