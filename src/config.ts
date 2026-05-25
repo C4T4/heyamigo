@@ -46,6 +46,14 @@ const ConfigSchema = z.object({
       size: z.number().int().positive().default(5),
     })
     .default({ size: 5 }),
+  browser: z
+    .object({
+      // How many browser tasks can run in parallel on the shared
+      // Chrome. Each worker drives its own tab. Persistent agent
+      // session was dropped in Phase 4; every task is fresh.
+      maxWorkers: z.number().int().positive().default(3),
+    })
+    .default({ maxWorkers: 3 }),
   codex: z
     .object({
       // Optional model override. If unset, Codex uses its default. Passed

@@ -791,3 +791,44 @@ chat-track entry covers escalation completely.
 
 Validated with three role tiers: guest strips everything, user
 passes journals but strips async+sendText, admin passes all.
+
+## 2026-05-24  Phase 4  Browser pool (minimal, in-memory)
+
+Bumped async-tasks browserQueue concurrency from 1 → config-driven
+(default 3). Dropped persistent agent session entirely — every
+browser task is a fresh agent run.
+
+Why "minimal" and not "durable browser ticket queue":
+- The bot's existing browser usage doesn't need crash resilience
+  for in-flight browser tasks (acceptable to re-trigger from chat).
+- A SQLite-backed browser_tasks table is a lot of new code for
+  marginal value over the current in-memory fastq.
+- The headline parallelism win (multiple browser tasks at once)
+  comes from concurrency bump + persistent-session drop, not from
+  the storage swap.
+
+Trade-off accepted: cross-task agent memory is gone. The chat-track
+agent's [ASYNC-BROWSER:] descriptions are self-contained, so this is
+fine in practice. Removed:
+- loadBrowserSession / saveBrowserSession / resetBrowserSession
+- browser-session-<provider>.json files (no longer touched; existing
+  files become orphans on disk, harmless)
+- BrowserSessionState type
+
+Tab isolation enforced by prompt instruction: the worker's first
+action is `browser_tabs({action: 'new'})`; subsequent operations
+stick to that tab; close on finish. Other workers' tabs are visible
+via the shared Chrome but the prompt forbids touching them.
+
+Risk: tab leak if a worker crashes before closing. The browser tab
+janitor cron (refactor.md mentions this) would handle that — not
+shipped yet; for now expect to occasionally need a Chrome restart
+during dev.
+
+Config: `config.browser.maxWorkers` (default 3). 5 was refactor.md's
+target but 3 is safer for shared rate-limited sites like IG/TT.
+
+Migration to durable browser queue (the "real" Phase 4 browser pool
+per refactor.md) is now well-scoped: copy the inbound queue pattern,
+make a browser_tasks table, swap fastq for claim/done. Deferred until
+in-flight crash resilience for browser tasks becomes a felt need.

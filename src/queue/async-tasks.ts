@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { dirname, resolve } from 'path'
+import { resolve } from 'path'
 import { getProvider } from '../ai/providers.js'
 import { config } from '../config.js'
 import fastq from 'fastq'
@@ -287,82 +286,20 @@ function truncate(s: string, n: number): string {
 //
 // - Concurrency is 1. Serialized against itself because (a) the shared
 //   Playwright MCP + Chrome is one physical resource, (b) the session below
-//   is persistent and --resume doesn't allow concurrent resumes.
-// - One GLOBAL persistent session stored at storage/browser-session.json.
-//   First browser task bootstraps fresh (captures sessionId). Subsequent
-//   tasks spawn with --resume <sessionId>, so the browser Claude carries
-//   memory of prior tasks across runs.
-// - Task description is added as a new user message to the persistent
-//   session. The worker sees the accumulated history automatically.
+//   is one physical resource.
+// - Persistent agent session DROPPED in Phase 4 — multiple browser
+//   tasks now run concurrently, each in its own Chrome tab, each as
+//   a fresh agent. Cross-task agent memory was rarely load-bearing
+//   (the chat-track agent writes self-contained task descriptions).
+//   Per-task tab isolation is enforced by the prompt instructions
+//   below.
 
-// Per-provider browser session storage. Each CLI's session ids are opaque
-// to the other, so swapping providers must not feed one's session id to
-// the other. Filename includes the provider name to keep them separate;
-// the legacy provider-less filename is auto-migrated to claude on read.
-function browserSessionFilePath(provider: string): string {
-  return resolve(
-    process.cwd(),
-    config.memory.dir,
-    `browser-session-${provider}.json`,
-  )
-}
-
-function legacyBrowserSessionFilePath(): string {
-  return resolve(process.cwd(), config.memory.dir, 'browser-session.json')
-}
-
-type BrowserSessionState = {
-  sessionId: string | null
-  createdAt: number
-  lastUsedAt: number
-  resumeCount: number
-}
-
-function loadBrowserSession(provider: string): BrowserSessionState {
-  const path = browserSessionFilePath(provider)
-  let source = path
-  if (!existsSync(path)) {
-    const legacy = legacyBrowserSessionFilePath()
-    if (provider === 'claude' && existsSync(legacy)) {
-      // One-time migration: legacy file was implicitly claude.
-      source = legacy
-    } else {
-      return { sessionId: null, createdAt: 0, lastUsedAt: 0, resumeCount: 0 }
-    }
-  }
-  try {
-    const parsed = JSON.parse(readFileSync(source, 'utf-8')) as Partial<BrowserSessionState>
-    return {
-      sessionId: parsed.sessionId ?? null,
-      createdAt: parsed.createdAt ?? 0,
-      lastUsedAt: parsed.lastUsedAt ?? 0,
-      resumeCount: parsed.resumeCount ?? 0,
-    }
-  } catch {
-    return { sessionId: null, createdAt: 0, lastUsedAt: 0, resumeCount: 0 }
-  }
-}
-
-function saveBrowserSession(provider: string, state: BrowserSessionState): void {
-  const path = browserSessionFilePath(provider)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(state, null, 2) + '\n', 'utf-8')
-}
-
-// Reset the browser session for the active provider. Callable from outside
-// if the session gets corrupted or we want a fresh start. Not wired into
-// any command yet.
-export function resetBrowserSession(): void {
-  const provider = getProvider().name
-  saveBrowserSession(provider, {
-    sessionId: null,
-    createdAt: 0,
-    lastUsedAt: 0,
-    resumeCount: 0,
-  })
-  logger.info({ provider }, 'browser session reset')
-}
-
+// Browser pool: multiple agents share one Chrome (the logged-in
+// profile), each task opens its own tab. Persistent agent session is
+// dropped — every task is fresh, with self-contained instructions
+// from the chat-track agent. The trade-off: no cross-task agent
+// memory; the win: real parallelism.
+const BROWSER_CONCURRENCY = Math.max(1, config.browser?.maxWorkers ?? 3)
 const browserQueue: queueAsPromised<AsyncTask, void> = fastq.promise<
   unknown,
   AsyncTask,
@@ -379,7 +316,7 @@ const browserQueue: queueAsPromised<AsyncTask, void> = fastq.promise<
   } finally {
     inProgress.delete(task.id)
   }
-}, 1)
+}, BROWSER_CONCURRENCY)
 
 export function enqueueBrowserTask(
   input: Omit<AsyncTask, 'id' | 'startedAt'>,
@@ -403,12 +340,15 @@ export function enqueueBrowserTask(
   return task
 }
 
-function buildBrowserPrompt(task: AsyncTask, isResume: boolean): string {
-  // Framing tuned for the dedicated browser worker.
+function buildBrowserPrompt(task: AsyncTask): string {
+  // Framing tuned for the dedicated browser worker. Each task is its
+  // own fresh agent run (no persistent session) — multiple browser
+  // tasks may be running in parallel on the same Chrome, each in its
+  // own tab.
   const lines = [
-    isResume
-      ? `You are the BROWSER WORKER. Another task just came in. You already have memory of prior browser tasks in this session — act on it accordingly. Use the shared Chrome at localhost:9222 via Playwright MCP (already logged into the owner's sessions like TikTok, Instagram, etc. — do NOT log out, do NOT start a new browser instance).`
-      : `You are the BROWSER WORKER. You run in a persistent session dedicated to browser tasks for the owner. The chat already got its ack; your output IS the follow-up chat reply the owner is waiting for. Use the shared Chrome at localhost:9222 via Playwright MCP (already authenticated with the owner's sessions — TikTok, Instagram, etc. — do NOT log out, do NOT launch a new browser).`,
+    `You are the BROWSER WORKER. The chat already got its ack; your output IS the follow-up chat reply the owner is waiting for. Use the shared Chrome at localhost:9222 via Playwright MCP (already authenticated with the owner's sessions — TikTok, Instagram, etc. — do NOT log out, do NOT launch a new browser).`,
+    ``,
+    `TAB OWNERSHIP: Other browser workers may be running concurrently on the SAME Chrome instance, each driving its own tab. Your FIRST action is to open a new tab for this task (browser_tabs with action=new). Operate ONLY on that tab for the rest of the task. Do NOT switch to or interact with tabs you didn't open — they belong to other workers. Close your tab when you finish.`,
     ``,
     `TASK:`,
     task.description,
@@ -455,27 +395,26 @@ function browserAddDirs(): string[] {
 
 async function runBrowserTask(task: AsyncTask): Promise<void> {
   const provider = getProvider()
-  const session = loadBrowserSession(provider.name)
-  const isResume = !!session.sessionId
-  const prompt = buildBrowserPrompt(task, isResume)
+  // Each task is fresh (Phase 4 browser parallelism). No persistent
+  // session — would force serialization on concurrent tasks.
+  // Chat-track agent writes self-contained task descriptions, so the
+  // worker doesn't need cross-task agent memory.
+  const prompt = buildBrowserPrompt(task)
   const elapsedLog = () =>
     `${Math.round((Date.now() - task.startedAt * 1000) / 1000)}s`
 
   let reply: string
-  let returnedSessionId: string | undefined
   try {
     const result = await provider.runTask({
       input: prompt,
       caller: 'browser-task',
       mode: 'auto',
       lane: 'async',
-      includeSystemPrompt: !isResume,
+      includeSystemPrompt: true,
       addDirs: browserAddDirs(),
       allowedTools: task.allowedTools,
-      sessionId: session.sessionId ?? undefined,
     })
     reply = result.reply
-    returnedSessionId = result.sessionId
   } catch (err) {
     logger.error(
       { err, id: task.id, jid: task.jid, elapsed: elapsedLog() },
@@ -489,18 +428,6 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
       )}" failed. Ask me again and I'll retry.`,
     })
     return
-  }
-
-  // Persist the session id. On first call the provider returns the new
-  // sessionId; on resume it may return the same or a rotated one.
-  if (returnedSessionId) {
-    const now = Math.floor(Date.now() / 1000)
-    saveBrowserSession(provider.name, {
-      sessionId: returnedSessionId,
-      createdAt: session.createdAt || now,
-      lastUsedAt: now,
-      resumeCount: (session.resumeCount ?? 0) + (isResume ? 1 : 0),
-    })
   }
 
   // Route markers the same way the general async lane does.
@@ -584,7 +511,6 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
       id: task.id,
       jid: task.jid,
       elapsed: elapsedLog(),
-      isResume,
       appended: appendedCount,
       createdJournals: journalCreates.length,
       digestFired: !!digest,
