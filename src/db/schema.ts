@@ -107,3 +107,38 @@ export const outbound = sqliteTable('outbound', {
                    .on(t.idempotencyKey)
                    .where(sql`${t.idempotencyKey} IS NOT NULL`),
 }))
+
+// ──────────────────────────────────────────────────────────────────
+// Cron table (Phase 2.2)
+// ──────────────────────────────────────────────────────────────────
+
+// Schedules. Not really a queue — a *table polled by the orchestrator*
+// that fires inserts into the other queues when next_run_at <= now.
+//
+// recurrence:
+//   null              → one-shot (deleted after firing)
+//   '@every <n><unit>' → 'every 30s', 'every 5m', 'every 3h', 'every 7d'
+//   '@daily HH:MM'    → daily at owner-tz local time
+//   '@weekly DOW HH:MM' → weekly at owner-tz local time
+//                        DOW = mon|tue|wed|thu|fri|sat|sun
+// (Cron expressions intentionally NOT supported until we need them —
+// own@every / @daily / @weekly covers every existing setInterval.)
+export const crons = sqliteTable('crons', {
+  id:          integer('id').primaryKey({ autoIncrement: true }),
+  name:        text('name').notNull(),         // human-readable; uniqueness enforced for non-oneshot
+  enqueueInto: text('enqueue_into').notNull(), // 'inbound'|'async'|'outbound'|'memory_writes'
+  payload:     text('payload').notNull(),      // JSON passed to the target queue
+  recurrence:  text('recurrence'),             // null = one-shot
+  nextRunAt:   integer('next_run_at').notNull(),
+  lastRunAt:   integer('last_run_at'),
+  enabled:     integer('enabled').notNull().default(1), // SQLite bool = int
+  createdAt:   integer('created_at').notNull(),
+}, t => ({
+  byDue:    index('crons_by_due').on(t.enabled, t.nextRunAt),
+  // Named recurring crons must be unique — prevents accidental
+  // duplicate schedules from setup wizard re-runs etc. One-shots
+  // (recurrence IS NULL) can have any name.
+  uniqName: uniqueIndex('crons_name_uq')
+              .on(t.name)
+              .where(sql`${t.recurrence} IS NOT NULL`),
+}))

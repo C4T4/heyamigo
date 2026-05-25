@@ -403,3 +403,58 @@ Orphaned `sending` rows get reclaimed on next boot via TTL check.
 Validated end-to-end: started orchestrator, registered a fake busy
 worker, requested shutdown, watched orchestrator wait (not exit),
 freed the fake worker, watched orchestrator exit cleanly.
+
+## 2026-05-24  Phase 2  Cron recurrence formats (no general cron parser)
+
+refactor.md left the cron expression format open. Surveyed the
+existing setInterval timers in the codebase:
+- memory sweep: every 3h
+- journal observer pass: same 3h sweep
+- journal nudge tick: every Nm (configurable, default 10m or so)
+- media retention prune: daily-ish
+- prompt log prune: daily-ish
+- daily token quota reset: midnight in owner tz
+
+None of them need cron expressions like `0 */4 * * MON-FRI`. Three
+formats cover all:
+  - `@every <n><s|m|h|d>`     for the "every N units" cases
+  - `@daily HH:MM`            for the midnight resets and daily prunes
+  - `@weekly DOW HH:MM`       for future "every Sunday rebuild logins"
+
+Decision: ship just these three. No general cron parser. If we ever
+need it, drop in `croner` or similar — but adding now would be
+unjustified surface area.
+
+The `@daily` and `@weekly` formats fire in **owner timezone**, not
+UTC. Implemented via Intl.DateTimeFormat + a guess-and-correct
+makeDateInTz helper. Avoids pulling in luxon/date-fns for the one
+calculation we need.
+
+## 2026-05-24  Phase 2  Cron name uniqueness for recurring only
+
+`crons.name` has a UNIQUE index, but **only when recurrence IS NOT
+NULL** (partial index). Why:
+- Recurring crons are typically registered once at boot and might be
+  re-registered on every startup. Uniqueness gives us natural upsert
+  — `enqueueCron({name: 'memory-sweep', recurrence: '@every 3h', ...})`
+  on every boot just keeps one row.
+- One-shots (`recurrence: null`) are usually agent-emitted
+  (`[REMIND: ...]`) — multiple distinct reminders might share an
+  agent-generated name. Don't constrain those.
+
+If we ever want named one-shots with uniqueness too, agents can pick
+unique names. The default is "no constraint, multiples allowed."
+
+## 2026-05-24  Phase 2  Cron-dispatch is per-target-queue
+
+`src/queue/cron-dispatch.ts` switches on `enqueueInto`. Today only
+`outbound` is wired (the only queue that exists). When inbound /
+async / memory_writes queues land in Phase 4 + Phase 5, add their
+dispatch arms. The cron table schema doesn't change.
+
+Idempotency for cron-fired outbound: dispatcher fills in
+`idempotency_key = cron-<name>-<now-seconds>` if the payload doesn't
+specify one. Means the same recurring cron firing twice within the
+same second (shouldn't happen, but cron tick + retry could in theory)
+won't double-insert. One-shot crons can supply their own key if they
+need cross-process dedup.

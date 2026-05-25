@@ -15,6 +15,13 @@
       "when": 1779669712372,
       "tag": "0001_phase1_outbound",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779671387894,
+      "tag": "0002_phase2_crons",
+      "breakpoints": true
     }
   ]
 }

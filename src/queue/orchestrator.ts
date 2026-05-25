@@ -19,6 +19,8 @@ import { workers } from '../db/schema.js'
 import { logger } from '../logger.js'
 import { reclaimStuckOutbound } from './outbound.js'
 import { clearControl, readControl, requestControl } from './control.js'
+import { listDueCrons, markCronFired } from './crons.js'
+import { dispatchCron } from './cron-dispatch.js'
 
 const TICK_INTERVAL_MS = 500
 const HEARTBEAT_INTERVAL_MS = 5_000
@@ -114,6 +116,21 @@ async function tick(id: string): Promise<void> {
     const reclaimed = reclaimStuckOutbound()
     if (reclaimed > 0) {
       logger.info({ reclaimed }, 'reclaimed stuck outbound rows')
+    }
+
+    // Fire any due crons. Order: dispatch each in turn; if dispatch
+    // throws (it shouldn't — dispatch swallows), the cron is NOT
+    // marked fired and we'll retry on the next tick.
+    if (!draining) {
+      const due = listDueCrons()
+      for (const row of due) {
+        try {
+          dispatchCron(row)
+          markCronFired(row)
+        } catch (err) {
+          logger.error({ err, name: row.name }, 'cron dispatch crashed')
+        }
+      }
     }
 
     markDeadWorkers()
