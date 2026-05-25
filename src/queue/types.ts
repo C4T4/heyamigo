@@ -1,8 +1,17 @@
 export type Job = {
+  // Legacy name kept for compatibility with the existing session,
+  // memory, and thread stores. For WhatsApp this is the raw JID; for
+  // other channels it is a stable chat key.
   jid: string
+  // Channel-agnostic destination address used by outbound queues.
+  // Older jobs may not have this; callers fall back to jid->WA address.
+  address?: string
+  actorAddress?: string | null
   text: string
   input: string
   sessionId?: string
+  // Historical field name. For non-WA channels this is a stable
+  // sender key such as tg_123456, not necessarily a phone number.
   senderNumber: string
   fromMe: boolean
   role?: string

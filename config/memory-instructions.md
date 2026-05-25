@@ -205,7 +205,7 @@ Cost tracked per cron — `/crons` shows fire count + tokens. Omitting variant d
 
 ### Cross-chat: `[SEND-TEXT: address=wa:dm:<n>@s.whatsapp.net body="..."]`
 
-Rare; usually owner-only.
+Rare; usually owner-only. Telegram targets use the same address grammar, e.g. `tg:dm:123456789` or `tg:group:-1001234567890`.
 
 ### Rules
 

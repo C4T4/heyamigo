@@ -66,6 +66,20 @@ export function addressToExternalId(addr: Address | string): string {
   return a.externalId
 }
 
+export function addressToChatKey(addr: Address | string): string {
+  const a = typeof addr === 'string' ? parseAddress(addr) : addr
+  if (a.channel === 'wa') return a.externalId
+  return `${a.channel}_${a.scope}_${a.externalId}`.replace(/[^a-zA-Z0-9_.-]/g, '_')
+}
+
+export function actorKeyFromAddress(addr: Address | string): string {
+  const a = typeof addr === 'string' ? parseAddress(addr) : addr
+  if (a.channel === 'wa') {
+    return a.externalId.split('@')[0]?.split(':')[0] ?? a.externalId
+  }
+  return `${a.channel}_${a.externalId}`.replace(/[^a-zA-Z0-9_.-]/g, '_')
+}
+
 // Convenience predicates.
 export function isGroup(addr: Address | string): boolean {
   const a = typeof addr === 'string' ? parseAddress(addr) : addr

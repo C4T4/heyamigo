@@ -4,10 +4,11 @@
 import type { Channel } from '../db/address.js'
 import type { ChannelAdapter } from './adapter.js'
 import { baileysAdapter } from './baileys.js'
+import { telegramAdapter } from './telegram.js'
 
 const REGISTRY: Partial<Record<Channel, ChannelAdapter>> = {
   wa: baileysAdapter,
-  // tg: telegramAdapter, // Phase 8
+  tg: telegramAdapter,
 }
 
 export function getChannelAdapter(channel: Channel): ChannelAdapter {

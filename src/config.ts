@@ -6,9 +6,20 @@ const TriggerModeSchema = z.enum(['all', 'mention', 'command', 'off'])
 
 const ConfigSchema = z.object({
   whatsapp: z.object({
+    enabled: z.boolean().default(true),
     authDir: z.string(),
     browserName: z.string(),
   }),
+  telegram: z
+    .object({
+      enabled: z.boolean().default(false),
+      botToken: z.string().optional(),
+      pollIntervalMs: z.number().int().positive().default(1000),
+    })
+    .default({
+      enabled: false,
+      pollIntervalMs: 1000,
+    }),
   owner: z.object({
     number: z.string(),
     treatAsAllowedEverywhere: z.boolean(),

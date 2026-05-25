@@ -1,4 +1,3 @@
-import { unlink } from 'fs/promises'
 import {
   getContentType,
   isJidGroup,
@@ -7,35 +6,17 @@ import {
   type WAMessage,
   type WASocket,
 } from 'baileys'
-import { getProvider } from '../ai/providers.js'
-import { getSession } from '../ai/sessions.js'
-import { formatAddress, jidToAddress } from '../db/address.js'
-import { personIdForAddress } from '../db/identity-sync.js'
+import type { IncomingMessage, TriggerHints } from '../channels/runtime.js'
 import { config } from '../config.js'
-import { estimate as estimateJob } from '../estimates/index.js'
+import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
-import { buildMemoryPreamble } from '../memory/preamble.js'
-import { enqueueInbound } from '../queue/inbound.js'
-import { enqueueOutbound } from '../queue/outbound.js'
-import type { Job } from '../queue/types.js'
 import {
   detectMediaType,
   downloadAndSave,
   getMediaSize,
-  mediaPromptTag,
 } from '../store/media.js'
-import { append, type StoredMessage } from '../store/messages.js'
-import { getDailyTokens } from '../store/usage.js'
-import { sendText } from '../wa/sender.js'
-import {
-  checkAccess,
-  discoverGroupIfNew,
-  getLimitsForUser,
-  getRoleForContext,
-} from '../wa/whitelist.js'
-import { buildInitPayload, buildRecentContext } from './bootstrap.js'
-import { tryCommand } from './commands.js'
-import { checkTrigger } from './triggers.js'
+import { discoverGroupIfNew } from '../wa/whitelist.js'
+import { processIncomingMessage } from './ingest.js'
 
 export function attachIncoming(sock: WASocket): void {
   const ownerJid = sock.user?.id
@@ -49,7 +30,7 @@ export function attachIncoming(sock: WASocket): void {
       { count: historyMsgs.length },
       'history sync received',
     )
-    void processMessages(historyMsgs, sock, ownerJid)
+    void processMessages(historyMsgs, sock, ownerJid, true)
   })
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
@@ -66,296 +47,10 @@ async function processMessages(
 ): Promise<void> {
   for (const msg of messages) {
     try {
-      const stored = await toStored(msg, ownerJid, sock)
-      if (!stored) continue
-
-      // Age gate: skip messages older than maxMessageAgeMs
-      const ageMs = Date.now() - stored.timestamp * 1000
-      if (ageMs > config.reply.maxMessageAgeMs) {
-        if (isHistorySync) continue // don't store ancient history
-        await append(stored)
-        logger.debug(
-          { jid: stored.jid, ageMs: Math.floor(ageMs) },
-          'message too old, stored silently',
-        )
-        continue
-      }
-
-      const isGroup = stored.jid.endsWith('@g.us')
-      if (isGroup) await discoverGroupIfNew(sock, stored.jid)
-
-      const decision = checkAccess({
-        jid: stored.jid,
-        isGroup,
-        senderNumber: stored.senderNumber,
-        fromMe: stored.fromMe,
-      })
-
-      const logCtx = {
-        jid: stored.jid,
-        from: stored.senderNumber || '(owner)',
-        fromMe: stored.fromMe,
-        type: stored.messageType,
-        text: stored.text.slice(0, 80),
-        decision: decision.reason,
-      }
-
-      if (!decision.store) {
-        logger.debug(logCtx, 'message dropped')
-        continue
-      }
-
-      // File-size gate: refuse oversized media BEFORE downloading. Per-role
-      // cap; owner is always unlimited. If a file is too big we store the
-      // message (text/caption preserved for history), tell the user, and
-      // skip the Claude call — Claude would have no useful payload anyway.
-      const limits = getLimitsForUser(stored.senderNumber, isGroup)
-      const incomingMediaType = detectMediaType(msg)
-      if (
-        incomingMediaType &&
-        limits.maxFileBytes !== null &&
-        decision.respond
-      ) {
-        const size = getMediaSize(msg)
-        if (size !== null && size > limits.maxFileBytes) {
-          await append(stored)
-          const quoted = isGroup && config.reply.quoteInGroups ? msg : undefined
-          await sendText(
-            sock,
-            stored.jid,
-            'Could not process that, please try a smaller file.',
-            quoted,
-          ).catch((err) =>
-            logger.error(
-              { err, jid: stored.jid },
-              'failed to send oversized-file notice',
-            ),
-          )
-          logger.info(
-            { ...logCtx, size, cap: limits.maxFileBytes },
-            'oversized media rejected',
-          )
-          continue
-        }
-      }
-
-      // Download media if present (image, video, audio, document)
-      const media = await downloadAndSave(msg, stored.jid)
-
-      // Post-download safety net: re-check against the real buffer size.
-      // Catches cases the pre-download gate missed — protobuf fileLength
-      // missing, nested in documentWithCaptionMessage, stickers, etc.
-      // Only enforced when we'd otherwise respond; silent groups keep the
-      // archive intact regardless of size.
-      if (
-        media &&
-        limits.maxFileBytes !== null &&
-        decision.respond &&
-        media.bytes > limits.maxFileBytes
-      ) {
-        await unlink(media.mediaPath).catch(() => undefined)
-        await append(stored)
-        const quoted =
-          isGroup && config.reply.quoteInGroups ? msg : undefined
-        await sendText(
-          sock,
-          stored.jid,
-          'Could not process that, please try a smaller file.',
-          quoted,
-        ).catch((err) =>
-          logger.error(
-            { err, jid: stored.jid },
-            'failed to send oversized-file notice',
-          ),
-        )
-        logger.info(
-          { ...logCtx, bytes: media.bytes, cap: limits.maxFileBytes },
-          'oversized media rejected (post-download)',
-        )
-        continue
-      }
-
-      if (media) {
-        stored.mediaType = media.mediaType
-        stored.mediaPath = media.mediaPath
-        stored.mediaMime = media.mediaMime
-      }
-
-      await append(stored)
-
-      if (!decision.respond) {
-        logger.info(logCtx, 'message captured, silent')
-        continue
-      }
-
-      // Need either text or media to respond
-      if (!stored.text.trim() && !media) {
-        logger.debug(logCtx, 'message captured, respond skipped (empty)')
-        continue
-      }
-
-      // Commands short-circuit the AI pipeline (always, regardless of trigger mode)
-      const isCommand = await tryCommand({
-        sock,
-        jid: stored.jid,
-        text: stored.text,
-        senderNumber: stored.senderNumber,
-        quoted: isGroup && config.reply.quoteInGroups ? msg : undefined,
-      })
-      if (isCommand) {
-        logger.info(logCtx, 'command handled')
-        continue
-      }
-
-      // Self-chat: owner messaging themselves — always trigger
-      const isSelfChat = stored.fromMe && !isGroup &&
-        jidDecode(stored.jid)?.user === config.owner.number
-
-      // Trigger gate: alias / @mention / reply-to-bot depending on mode
-      let triggerReason = isSelfChat ? 'self-chat' : ''
-      if (!isSelfChat) {
-        const trigger = checkTrigger({
-          isGroup,
-          text: stored.text,
-          msg,
-          sock,
-        })
-        if (!trigger.triggered) {
-          logger.info(
-            { ...logCtx, trigger: trigger.reason },
-            'message captured, no trigger',
-          )
-          continue
-        }
-        triggerReason = trigger.reason
-      }
-
-      // Daily token cap: silent drop once the user has burned their budget
-      // for the day. Owner is exempt (limits.dailyTokenLimit is null).
-      if (limits.dailyTokenLimit !== null) {
-        const used = getDailyTokens(stored.senderNumber)
-        if (used >= limits.dailyTokenLimit) {
-          logger.info(
-            {
-              ...logCtx,
-              used,
-              cap: limits.dailyTokenLimit,
-              trigger: triggerReason,
-            },
-            'daily token quota exhausted, silent drop',
-          )
-          continue
-        }
-      }
-
-      const { role } = getRoleForContext(stored.senderNumber, isGroup)
-
-      const existingSession = getSession(stored.jid, getProvider().name)
-      let userContent = stored.text
-      if (media) {
-        const tag = mediaPromptTag(media, stored.text)
-        userContent = tag
-      }
-
-      const recentText = stored.text
-      const memoryPreamble = buildMemoryPreamble({
-        jid: stored.jid,
-        senderNumber: stored.senderNumber,
-        isGroup,
-        recentText,
-      })
-      let core: string
-      if (existingSession) {
-        const recent = await buildRecentContext(
-          stored.jid,
-          config.bootstrap.recentContextDepth,
-        )
-        const current = `[Current message]\n${stored.senderNumber}: ${userContent}`
-        core = recent ? `${recent}\n${current}` : userContent
-      } else {
-        core = await buildInitPayload({
-          jid: stored.jid,
-          sock,
-          userText: userContent,
-          userNumber: stored.senderNumber,
-        })
-      }
-      const input = `${memoryPreamble}\n\n---\n\n${core}`
-
-      logger.info(
-        { ...logCtx, resume: !!existingSession, trigger: triggerReason },
-        'message captured, enqueuing',
-      )
-
-      const job: Job = {
-        jid: stored.jid,
-        text: stored.text,
-        input,
-        sessionId: existingSession,
-        senderNumber: stored.senderNumber,
-        fromMe: stored.fromMe,
-        allowedTools: role.tools,
-        allowedTags: role.tags,
-      }
-
-      // Enqueue into the inbound table; chat worker pool drains and
-      // calls processJob + handleReply asynchronously. Typing indicator
-      // is temporarily dropped (was tied to the old synchronous flow);
-      // re-add via ChannelAdapter.sendTyping() in a follow-up commit.
-      const chatAddress = formatAddress(jidToAddress(stored.jid))
-      const senderAddress = stored.senderNumber
-        ? formatAddress(jidToAddress(`${stored.senderNumber}@s.whatsapp.net`))
-        : null
-      const personId = personIdForAddress(chatAddress)
-      const actorPersonId = senderAddress
-        ? personIdForAddress(senderAddress)
-        : null
-
-      // Estimator: classify this message and, when a kind matches,
-      // (a) tag the inbound row so future estimates of the same kind
-      // get a fresh sample, and (b) send the estimate text as an
-      // immediate ack so the user sees a timeline before the agent
-      // even starts.
-      const est = estimateJob({
-        description: stored.text,
-        attachments: media ? [{ kind: media.mediaType }] : undefined,
-        senderPersonId: actorPersonId ?? undefined,
-      })
-      const jobKind = est?.kind ?? null
-
-      if (est) {
-        enqueueOutbound({
-          address: chatAddress,
-          kind:    'text',
-          text:    est.text,
-          idempotencyKey: `estimate-${msg.key.id}`,
-        })
-      } else if (media && config.reply.ackOnMedia !== false) {
-        // Fallback media-ack when no estimator matched — keeps the
-        // pre-estimator behavior so image messages still get the
-        // "looking…" hint. A future MediaIncomingEstimator can replace
-        // this with a real average.
-        enqueueOutbound({
-          address: chatAddress,
-          kind:    'text',
-          text:    config.reply.mediaAckText,
-          idempotencyKey: `media-ack-${msg.key.id}`,
-        })
-      }
-
-      enqueueInbound({
-        address:        chatAddress,
-        actorAddress:   senderAddress,
-        personId,
-        actorPersonId,
-        externalMsgId:  msg.key.id ?? null,
-        text:           stored.text,
-        pushName:       stored.pushName ?? null,
-        triggerReason,
-        kind:           jobKind,
-        receivedAt:     stored.timestamp,
-        payload:        job,
-      })
+      const incoming = await toIncoming(msg, ownerJid, sock)
+      if (!incoming) continue
+      if (incoming.isGroup) await discoverGroupIfNew(sock, incoming.accessKey)
+      await processIncomingMessage(incoming, { isHistorySync })
     } catch (err) {
       logger.error(
         { err, msgId: msg.key.id },
@@ -375,11 +70,11 @@ async function resolveToPn(sock: WASocket, jid: string): Promise<string> {
   }
 }
 
-async function toStored(
+async function toIncoming(
   msg: WAMessage,
   ownerJid: string,
   sock: WASocket,
-): Promise<StoredMessage | null> {
+): Promise<IncomingMessage | null> {
   const rawJid = msg.key.remoteJid
   if (!rawJid) return null
   if (!msg.message) return null
@@ -388,8 +83,8 @@ async function toStored(
   const fromMe = !!msg.key.fromMe
   const isGroup = isJidGroup(rawJid) === true
 
-  // canonicalize chat jid: groups stay as @g.us, DMs preferred as @s.whatsapp.net,
-  // drop device suffix (e.g. ":19") so chats from different devices merge
+  // Canonicalize chat jid: groups stay as @g.us, DMs preferred as
+  // @s.whatsapp.net, drop device suffixes so devices merge.
   const jid = isGroup
     ? jidNormalizedUser(rawJid)
     : jidNormalizedUser(await resolveToPn(sock, rawJid))
@@ -407,21 +102,116 @@ async function toStored(
 
   const messageType = getContentType(msg.message) ?? 'unknown'
   const text = extractText(msg.message)
+  const timestamp =
+    typeof msg.messageTimestamp === 'number'
+      ? msg.messageTimestamp
+      : Number(msg.messageTimestamp ?? 0)
+  const msgId = msg.key.id ?? `${jid}-${timestamp}`
+  const mediaType = detectMediaType(msg)
 
   return {
-    id: msg.key.id ?? '',
-    jid,
-    direction: fromMe ? 'out' : 'in',
-    fromMe,
-    sender,
-    senderNumber,
-    pushName: msg.pushName ?? undefined,
-    timestamp:
-      typeof msg.messageTimestamp === 'number'
-        ? msg.messageTimestamp
-        : Number(msg.messageTimestamp ?? 0),
+    id: msgId,
+    externalMsgId: `wa:${msgId}`,
+    channel: 'wa',
+    address: formatAddress(jidToAddress(jid)),
+    chatKey: jid,
+    accessKey: jid,
+    actorAddress: senderNumber
+      ? formatAddress(jidToAddress(`${senderNumber}@s.whatsapp.net`))
+      : null,
+    senderKey: senderNumber,
+    senderLabel: msg.pushName ?? undefined,
+    timestamp,
     text,
+    fromMe,
+    isGroup,
     messageType,
+    mediaType,
+    mediaBytes: mediaType ? getMediaSize(msg) : null,
+    downloadMedia: mediaType ? () => downloadAndSave(msg, jid) : undefined,
+    quoteMsgId: msg.key.id ?? null,
+    triggerHints: waTriggerHints(msg, sock),
+    selfChat:
+      fromMe &&
+      !isGroup &&
+      jidDecode(jid)?.user === config.owner.number,
+    loadChatMetadata: () => loadWaChatMetadata(sock, jid, isGroup),
+  }
+}
+
+function contextInfo(message: NonNullable<WAMessage['message']>) {
+  return (
+    message.extendedTextMessage?.contextInfo ??
+    message.imageMessage?.contextInfo ??
+    message.videoMessage?.contextInfo ??
+    message.audioMessage?.contextInfo ??
+    message.documentMessage?.contextInfo ??
+    message.documentWithCaptionMessage?.message?.documentMessage?.contextInfo ??
+    message.stickerMessage?.contextInfo
+  )
+}
+
+function ownerNumbers(sock: WASocket): Set<string> {
+  const out = new Set<string>()
+  if (config.owner.number) out.add(config.owner.number)
+  const pn = sock.user?.id ? jidDecode(sock.user.id)?.user : undefined
+  if (pn) out.add(pn)
+  const lid = sock.user?.lid ? jidDecode(sock.user.lid)?.user : undefined
+  if (lid) out.add(lid)
+  return out
+}
+
+function waTriggerHints(msg: WAMessage, sock: WASocket): TriggerHints {
+  const ci = msg.message ? contextInfo(msg.message) : undefined
+  if (!ci) return {}
+
+  const owners = ownerNumbers(sock)
+  let mentionedBot = false
+  for (const m of ci.mentionedJid ?? []) {
+    const user = jidDecode(m)?.user
+    if (user && owners.has(user)) {
+      mentionedBot = true
+      break
+    }
+  }
+
+  let replyToBot = false
+  const quotedParticipant = ci.participant
+  if (quotedParticipant) {
+    const user = jidDecode(quotedParticipant)?.user
+    replyToBot = !!user && owners.has(user)
+  }
+
+  return { mentionedBot, replyToBot }
+}
+
+async function loadWaChatMetadata(
+  sock: WASocket,
+  jid: string,
+  isGroup: boolean,
+) {
+  if (!isGroup) {
+    return { platform: 'WhatsApp', isGroup, externalId: jid }
+  }
+
+  let chatName = 'unknown'
+  let memberSummary = ''
+  try {
+    const meta = await sock.groupMetadata(jid)
+    chatName = meta.subject || chatName
+    if (meta.participants?.length) {
+      memberSummary = `${meta.participants.length} participants`
+    }
+  } catch (err) {
+    logger.warn({ err, jid }, 'group metadata fetch failed in bootstrap')
+  }
+
+  return {
+    platform: 'WhatsApp',
+    isGroup,
+    chatName,
+    memberSummary,
+    externalId: jid,
   }
 }
 

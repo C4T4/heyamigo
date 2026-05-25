@@ -1,4 +1,3 @@
-import { jidDecode, type WAMessage, type WASocket } from 'baileys'
 import { config } from '../config.js'
 
 export type TriggerResult = {
@@ -21,23 +20,13 @@ function aliasMatches(text: string, aliases: string[]): string | null {
   return null
 }
 
-function ownerNumbers(sock: WASocket): Set<string> {
-  const out = new Set<string>()
-  if (config.owner.number) out.add(config.owner.number)
-  const pn = sock.user?.id ? jidDecode(sock.user.id)?.user : undefined
-  if (pn) out.add(pn)
-  const lid = sock.user?.lid ? jidDecode(sock.user.lid)?.user : undefined
-  if (lid) out.add(lid)
-  return out
-}
-
 export function checkTrigger(params: {
   isGroup: boolean
   text: string
-  msg: WAMessage
-  sock: WASocket
+  mentionedBot?: boolean
+  replyToBot?: boolean
 }): TriggerResult {
-  const { isGroup, text, msg, sock } = params
+  const { isGroup, text } = params
   const mode = isGroup
     ? config.triggers.groupMode
     : config.triggers.dmMode
@@ -58,36 +47,13 @@ export function checkTrigger(params: {
   const alias = aliasMatches(text, config.triggers.aliases)
   if (alias) return { triggered: true, reason: `alias:${alias}` }
 
-  // Extract contextInfo from any message type (text, image, video, etc.)
-  const content = msg.message ?? {}
-  const contextInfo =
-    (content.extendedTextMessage?.contextInfo) ??
-    (content.imageMessage?.contextInfo) ??
-    (content.videoMessage?.contextInfo) ??
-    (content.audioMessage?.contextInfo) ??
-    (content.documentMessage?.contextInfo) ??
-    (content.documentWithCaptionMessage?.message?.documentMessage?.contextInfo) ??
-    (content.stickerMessage?.contextInfo)
-
-  // 2. WA @mention pointing at owner
-  const owners = ownerNumbers(sock)
-  const mentioned = contextInfo?.mentionedJid ?? []
-  for (const m of mentioned) {
-    const user = jidDecode(m)?.user
-    if (user && owners.has(user)) {
-      return { triggered: true, reason: 'wa mention' }
-    }
-  }
+  // 2. Channel-provided mention signal, e.g. WhatsApp @mention or
+  // Telegram bot username mention.
+  if (params.mentionedBot) return { triggered: true, reason: 'mention' }
 
   // 3. Reply to a bot/owner message
-  if (config.triggers.replyToBotCounts) {
-    const quotedParticipant = contextInfo?.participant
-    if (quotedParticipant) {
-      const user = jidDecode(quotedParticipant)?.user
-      if (user && owners.has(user)) {
-        return { triggered: true, reason: 'reply to bot' }
-      }
-    }
+  if (config.triggers.replyToBotCounts && params.replyToBot) {
+    return { triggered: true, reason: 'reply to bot' }
   }
 
   return { triggered: false, reason: 'no trigger match' }

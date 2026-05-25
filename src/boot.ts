@@ -4,9 +4,12 @@
 // drifted; this prevents that.
 
 import { setBaileysSocket } from './channels/index.js'
+import { telegramRuntime } from './channels/telegram.js'
+import { config } from './config.js'
 import { closeDb, initDb } from './db/index.js'
 import { syncIdentitiesFromAccess } from './db/identity-sync.js'
 import { attachIncoming } from './gateway/incoming.js'
+import { processIncomingMessage } from './gateway/ingest.js'
 import { logger } from './logger.js'
 import { startScheduler } from './memory/scheduler.js'
 import { startBrowserWorkers, stopBrowserWorkers } from './queue/browser-worker.js'
@@ -49,6 +52,7 @@ export async function bootBot(): Promise<void> {
       stopBrowserWorkers()
       stopSenderWorker()
       stopMemoryWorker()
+      void telegramRuntime.stop()
       stopOrchestrator()
       closeDb()
     },
@@ -63,12 +67,18 @@ export async function bootBot(): Promise<void> {
   startChatWorkers()
   startScheduler()
 
-  await startSocket((sock) => {
-    attachIncoming(sock)
-    // Point the Baileys adapter at the live socket. Called on each
-    // reconnect with a fresh sock; the adapter just keeps the latest.
-    setBaileysSocket(sock)
-  })
+  if (config.telegram.enabled) {
+    await telegramRuntime.start(processIncomingMessage)
+  }
+
+  if (config.whatsapp.enabled !== false) {
+    await startSocket((sock) => {
+      attachIncoming(sock)
+      // Point the Baileys adapter at the live socket. Called on each
+      // reconnect with a fresh sock; the adapter just keeps the latest.
+      setBaileysSocket(sock)
+    })
+  }
 }
 
 // Install once. Both signals trigger the same graceful drain:

@@ -49,8 +49,8 @@ function profilePrompt(params: {
   )
   const replyMessages = messages.filter((m) => m.direction === 'out')
   const lines = [
-    `You are consolidating the long-term profile for a WhatsApp contact.`,
-    `Contact number: ${number}`,
+    `You are consolidating the long-term profile for a chat contact.`,
+    `Contact key: ${number}`,
     ``,
     `Current profile (may be empty):`,
     current || '(empty)',
@@ -68,7 +68,7 @@ function profilePrompt(params: {
       : '(none)',
     ``,
     `Rewrite the profile in markdown. Structure:`,
-    `# <Name if known, else number>`,
+    `# <Name if known, else contact key>`,
     `## Facts`,
     `## Preferences`,
     `## Patterns`,
@@ -92,8 +92,8 @@ function briefPrompt(params: {
 }): string {
   const { jid, current, messages, reason } = params
   const lines = [
-    `You are consolidating the long-term brief for a WhatsApp chat.`,
-    `Chat JID: ${jid}`,
+    `You are consolidating the long-term brief for a chat.`,
+    `Chat key: ${jid}`,
     ``,
     `Current brief (may be empty):`,
     current || '(empty)',

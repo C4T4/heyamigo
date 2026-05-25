@@ -1,13 +1,13 @@
 # Architecture notes
 
-A WhatsApp-resident assistant on top of Claude, Codex, or Grok. The interesting parts are not the LLM calls themselves — those are well-trodden territory — but everything around them: how messages flow, how state survives restarts, how schedules fire in the right timezone, how the agent's reply text becomes durable side effects.
+A chat-resident assistant for WhatsApp and Telegram on top of Claude, Codex, or Grok. The interesting parts are not the LLM calls themselves — those are well-trodden territory — but everything around them: how messages flow, how state survives restarts, how schedules fire in the right timezone, how the agent's reply text becomes durable side effects.
 
 This document is a curated set of design notes. The ones that earned their place because the alternative didn't survive contact with real use.
 
 ## Mental model
 
 ```
-WhatsApp (Baileys)
+WhatsApp (Baileys) / Telegram (Bot API)
    │
    ▼
 inbound (sqlite)  ──── per-address claim ────►  chat workers (N)
@@ -17,7 +17,7 @@ inbound (sqlite)  ──── per-address claim ────►  chat workers (
                     outbound (sqlite)         async / browser     memory_writes
                           │                    (own lanes)         (digests,
                           ▼                                         journals,
-                    WhatsApp send                                   threads)
+                    channel send                                    threads)
 ```
 
 Every queue is a SQLite table. The orchestrator's heartbeat polls due rows; workers claim atomically via `UPDATE ... RETURNING` with a `claimed_by` safety check. A row only leaves the queue when its idempotency key is recorded against the side effect, so retries don't duplicate.

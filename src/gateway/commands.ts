@@ -1,16 +1,14 @@
-import type { WAMessage, WASocket } from 'baileys'
 import { clearSession, getSessionInfo } from '../ai/sessions.js'
 import { getProvider, reloadAllSystemPrompts } from '../ai/providers.js'
 import { config } from '../config.js'
 import { runDigestNow } from '../memory/scheduler.js'
-import { sendText } from '../wa/sender.js'
 
 export type CommandContext = {
-  sock: WASocket
   jid: string
+  address: string
   text: string
   senderNumber: string
-  quoted?: WAMessage
+  reply(text: string): Promise<void>
 }
 
 // Feature-level commands (/journal, /snooze, /tasks, etc.) are intentionally
@@ -34,7 +32,7 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     const reply = existed
       ? `Session reset. Next message will bootstrap a fresh ${provider.name} session.`
       : 'No session to reset.'
-    await sendText(ctx.sock, ctx.jid, reply, ctx.quoted)
+    await ctx.reply(reply)
     return true
   }
 
@@ -42,12 +40,7 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     const provider = getProvider()
     const info = getSessionInfo(ctx.jid, provider.name)
     if (!info) {
-      await sendText(
-        ctx.sock,
-        ctx.jid,
-        'No session yet. Next message will bootstrap one.',
-        ctx.quoted,
-      )
+      await ctx.reply('No session yet. Next message will bootstrap one.')
       return true
     }
     const lines = [`Session: ${info.sessionId.slice(0, 8)}…`]
@@ -63,7 +56,7 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
       )
       lines.push(`Turns: ${info.usage.numTurns}`)
     }
-    await sendText(ctx.sock, ctx.jid, lines.join('\n'), ctx.quoted)
+    await ctx.reply(lines.join('\n'))
     return true
   }
 
@@ -73,17 +66,12 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     const reply = existed
       ? 'Personality reloaded and session reset.'
       : 'Personality reloaded.'
-    await sendText(ctx.sock, ctx.jid, reply, ctx.quoted)
+    await ctx.reply(reply)
     return true
   }
 
   if (cmd === 'digest') {
-    await sendText(
-      ctx.sock,
-      ctx.jid,
-      'Digesting memory now, this may take a moment.',
-      ctx.quoted,
-    )
+    await ctx.reply('Digesting memory now, this may take a moment.')
     runDigestNow({
       jid: ctx.jid,
       number: ctx.senderNumber || undefined,
@@ -97,7 +85,7 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
       '../queue/observability.js'
     )
     const snap = takeQueuesSnapshot()
-    await sendText(ctx.sock, ctx.jid, formatQueuesSnapshot(snap), ctx.quoted)
+    await ctx.reply(formatQueuesSnapshot(snap))
     return true
   }
 
@@ -105,42 +93,23 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     const { listChatSchedules, formatScheduleList } = await import(
       '../queue/schedule-list.js'
     )
-    const { formatAddress, jidToAddress } = await import(
-      '../db/address.js'
-    )
     const { getTimezoneForSenderNumber } = await import(
       '../db/identity-sync.js'
     )
-    const chatAddress = formatAddress(jidToAddress(ctx.jid))
     const tz = getTimezoneForSenderNumber(ctx.senderNumber)
     const onlyKind = cmd === 'reminders' ? 'one-shot' : 'recurring'
-    const items = listChatSchedules(chatAddress, onlyKind)
-    await sendText(
-      ctx.sock,
-      ctx.jid,
-      formatScheduleList(items, tz, onlyKind),
-      ctx.quoted,
-    )
+    const items = listChatSchedules(ctx.address, onlyKind)
+    await ctx.reply(formatScheduleList(items, tz, onlyKind))
     return true
   }
 
   if (cmd === 'threads') {
     if (!config.threads?.enabled) {
-      await sendText(
-        ctx.sock,
-        ctx.jid,
-        'threads are disabled in config. Set `threads.enabled: true` to turn on.',
-        ctx.quoted,
-      )
+      await ctx.reply('threads are disabled in config. Set `threads.enabled: true` to turn on.')
       return true
     }
     const { handleThreadsCommand } = await import('../queue/thread-list.js')
-    await sendText(
-      ctx.sock,
-      ctx.jid,
-      handleThreadsCommand(ctx.jid, args),
-      ctx.quoted,
-    )
+    await ctx.reply(handleThreadsCommand(ctx.jid, args))
     return true
   }
 

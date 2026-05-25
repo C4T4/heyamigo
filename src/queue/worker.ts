@@ -6,7 +6,6 @@ import {
   setUsage,
 } from '../ai/sessions.js'
 import { config } from '../config.js'
-import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
 import { addDailyTokens } from '../store/usage.js'
 import { getTimezoneForSenderNumber } from '../db/identity-sync.js'
@@ -26,6 +25,7 @@ import {
 } from './threads.js'
 import { setCategoryWeight } from './thread-weights.js'
 import { enqueueMemoryWrite } from './memory-writes.js'
+import { addressForJob } from './job-address.js'
 import { enqueueOutbound } from './outbound.js'
 import { formatLocalTime, resolveTimeExpression } from './time-expr.js'
 import type { Job, JobCard, Result } from './types.js'
@@ -263,6 +263,7 @@ async function callClaude(job: Job): Promise<Result> {
     const t = asyncTasks[i]!
     enqueueAsyncTask({
       jid: job.jid,
+      address: job.address,
       senderNumber: job.senderNumber,
       description: t.description,
       originatingMessage: job.text,
@@ -283,6 +284,7 @@ async function callClaude(job: Job): Promise<Result> {
     const t = asyncBrowserTasks[i]!
     enqueueBrowserTask({
       jid: job.jid,
+      address: job.address,
       senderNumber: job.senderNumber,
       description: t.description,
       originatingMessage: job.text,
@@ -321,7 +323,7 @@ async function callClaude(job: Job): Promise<Result> {
   // originating chat (job.jid) is the destination for both. Sender's
   // timezone drives "9am" / "today at..." resolution so the schedule
   // lands in their wall-clock time, not the server's.
-  const chatAddress = formatAddress(jidToAddress(job.jid))
+  const chatAddress = addressForJob(job)
   const senderTz = getTimezoneForSenderNumber(job.senderNumber)
   const nowSec = Math.floor(Date.now() / 1000)
   const cronBase = `chat-cron-${job.jid}-${Date.now()}`

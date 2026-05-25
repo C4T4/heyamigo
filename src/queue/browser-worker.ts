@@ -12,7 +12,7 @@ import { hostname } from 'os'
 import { eq } from 'drizzle-orm'
 import { config } from '../config.js'
 import { getDb } from '../db/index.js'
-import { parseAddress } from '../db/address.js'
+import { addressToChatKey } from '../db/address.js'
 import { workers } from '../db/schema.js'
 import { logger } from '../logger.js'
 import {
@@ -98,7 +98,8 @@ function rowToAsyncTask(row: BrowserTaskRow): AsyncTask {
   }
   return {
     id: `browser-${row.id}`,
-    jid: parseAddress(row.address).externalId,
+    jid: addressToChatKey(row.address),
+    address: row.address,
     senderNumber: row.senderNumber,
     senderName: row.senderName ?? undefined,
     description: row.description,
@@ -131,7 +132,8 @@ async function processOne(workerId: string, row: BrowserTaskRow): Promise<void> 
       // User-facing failure ack so the chat isn't left hanging.
       try {
         await initiate({
-          jid: parseAddress(row.address).externalId,
+          jid: addressToChatKey(row.address),
+          address: row.address,
           text: `Heads up: the browser task "${row.description.slice(0, 80)}" failed. Ask me again and I'll retry.`,
         })
       } catch (e) {

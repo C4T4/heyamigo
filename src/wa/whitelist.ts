@@ -3,6 +3,7 @@ import { resolve } from 'path'
 import { jidDecode, type WASocket } from 'baileys'
 import { z } from 'zod'
 import { config } from '../config.js'
+import { actorKeyFromAddress, parseAddress } from '../db/address.js'
 import { logger } from '../logger.js'
 
 const AccessModeSchema = z.enum(['off', 'silent', 'active'])
@@ -192,12 +193,21 @@ export function getAccess(): AccessConfig {
 // consents to the bot nudging them in their own DM. Other DMs and groups
 // require an explicit `proactive: true` entry in access.json.
 export function canSendProactive(jid: string): boolean {
-  const isGroup = jid.endsWith('@g.us')
+  let parsedAddress: ReturnType<typeof parseAddress> | null = null
+  try {
+    parsedAddress = parseAddress(jid)
+  } catch {
+    parsedAddress = null
+  }
+
+  const isGroup = parsedAddress ? parsedAddress.scope === 'group' : jid.endsWith('@g.us')
   if (isGroup) {
     const entry = current.groups.find((g) => g.jid === jid)
     return entry?.proactive === true
   }
-  const number = jidDecode(jid)?.user
+  const number = parsedAddress
+    ? actorKeyFromAddress(parsedAddress)
+    : jidDecode(jid)?.user
   if (!number) return false
   // Owner's self-DM is always allowed.
   if (config.owner.number && number === config.owner.number) return true
@@ -310,15 +320,16 @@ const storeAndRespond = (reason: string): AccessDecision => ({
 
 export function checkAccess(params: {
   jid: string
+  address?: string
   isGroup: boolean
   senderNumber: string
   fromMe: boolean
 }): AccessDecision {
-  const { jid, isGroup, senderNumber, fromMe } = params
+  const { jid, address, isGroup, senderNumber, fromMe } = params
   const ownerAllowed = fromMe && config.owner.treatAsAllowedEverywhere
 
   if (isGroup) {
-    const group = current.groups.find((g) => g.jid === jid)
+    const group = current.groups.find((g) => g.jid === jid || (address && g.jid === address))
     if (!group) return DROP
     if (group.mode === 'off') return DROP
     if (group.mode === 'silent') return storeOnly('group silent')
@@ -330,7 +341,14 @@ export function checkAccess(params: {
     return storeOnly('group sender not in allowedSenders')
   }
 
-  const partnerNumber = jidDecode(jid)?.user ?? ''
+  let partnerNumber = jidDecode(jid)?.user ?? ''
+  if (!partnerNumber && address) {
+    try {
+      partnerNumber = actorKeyFromAddress(address)
+    } catch {
+      partnerNumber = ''
+    }
+  }
 
   // Self-chat: owner messaging themselves — respond like a direct conversation with the bot
   const isSelfChat = fromMe && partnerNumber === config.owner.number
@@ -340,6 +358,30 @@ export function checkAccess(params: {
   if (mode === 'off') return DROP
   if (mode === 'silent') return storeOnly('dm silent')
   return storeAndRespond('dm active')
+}
+
+export async function discoverAddressGroupIfNew(params: {
+  address: string
+  name?: string
+  ownerSender?: string
+}): Promise<boolean> {
+  const parsed = parseAddress(params.address)
+  if (parsed.scope !== 'group') return false
+  if (current.groups.some((g) => g.jid === params.address)) return false
+
+  const entry: GroupEntry = {
+    jid: params.address,
+    name: params.name || 'Unknown group',
+    mode: 'off',
+    allowedSenders: params.ownerSender ? [params.ownerSender] : [],
+    proactive: false,
+  }
+  save({ ...current, groups: [...current.groups, entry] })
+  logger.info(
+    { address: params.address, name: entry.name },
+    'discovered new channel group — added to access.json with mode=off',
+  )
+  return true
 }
 
 export async function discoverGroupIfNew(

@@ -1,43 +1,45 @@
-import { isJidGroup, type WASocket } from 'baileys'
 import { config } from '../config.js'
-import { logger } from '../logger.js'
 import { readLast, type StoredMessage } from '../store/messages.js'
+
+export type ChatBootstrapMetadata = {
+  platform: string
+  isGroup: boolean
+  chatName?: string
+  memberSummary?: string
+  externalId?: string
+}
 
 export type BuildInitParams = {
   jid: string
-  sock: WASocket
   userText: string
   userNumber: string
+  chat?: ChatBootstrapMetadata
 }
 
 export async function buildInitPayload(
   params: BuildInitParams,
 ): Promise<string> {
-  const { jid, sock, userText, userNumber } = params
-  const isGroup = isJidGroup(jid) === true
+  const { jid, userText, userNumber } = params
+  const chat = params.chat ?? {
+    platform: 'WhatsApp',
+    isGroup: jid.endsWith('@g.us'),
+    externalId: jid,
+  }
   const lines: string[] = []
 
   if (config.bootstrap.includeChatMetadata) {
-    lines.push('You are the assistant behind a WhatsApp chat.')
-    if (isGroup) {
-      let subject = 'unknown'
-      let participantSummary = ''
-      try {
-        const meta = await sock.groupMetadata(jid)
-        subject = meta.subject || subject
-        if (meta.participants?.length) {
-          participantSummary = `${meta.participants.length} participants`
-        }
-      } catch (err) {
-        logger.warn({ err, jid }, 'group metadata fetch failed in bootstrap')
-      }
+    lines.push(`You are the assistant behind a ${chat.platform} chat.`)
+    if (chat.isGroup) {
       lines.push(`Chat type: group`)
-      lines.push(`Chat name: "${subject}"`)
-      if (participantSummary) lines.push(`Members: ${participantSummary}`)
+      lines.push(`Chat name: "${chat.chatName || 'unknown'}"`)
+      if (chat.memberSummary) lines.push(`Members: ${chat.memberSummary}`)
     } else {
       lines.push(`Chat type: direct message`)
     }
-    lines.push(`JID: ${jid}`)
+    lines.push(`Chat key: ${jid}`)
+    if (chat.externalId && chat.externalId !== jid) {
+      lines.push(`External id: ${chat.externalId}`)
+    }
     lines.push('')
   }
 

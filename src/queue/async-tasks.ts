@@ -11,6 +11,7 @@ import { enqueueBrowserJob } from './browser-queue.js'
 export type AsyncTask = {
   id: string
   jid: string
+  address?: string
   senderNumber: string
   senderName?: string
   description: string
@@ -151,6 +152,7 @@ async function executeAsyncTask(task: AsyncTask): Promise<void> {
     )
     await initiate({
       jid: task.jid,
+      address: task.address,
       text: `Heads up: the background task "${truncate(
         task.description,
         80,
@@ -233,7 +235,7 @@ async function executeAsyncTask(task: AsyncTask): Promise<void> {
     appendedCount > 0 || journalCreates.length > 0 || digest !== null
 
   if (chatText.length > 0) {
-    await initiate({ jid: task.jid, text: chatText })
+    await initiate({ jid: task.jid, address: task.address, text: chatText })
   } else if (anyMarkerFired) {
     // Worker emitted only markers, no chat text. That's contract-breaking
     // (chat reply is the primary output) but recoverable — send a short
@@ -250,6 +252,7 @@ async function executeAsyncTask(task: AsyncTask): Promise<void> {
     if (digest) bits.push('digest scheduled')
     await initiate({
       jid: task.jid,
+      address: task.address,
       text: `Done. ${bits.join(', ')}.`,
     })
   }
@@ -312,7 +315,7 @@ export function enqueueBrowserTask(
     startedAt: Math.floor(Date.now() / 1000),
   }
   enqueueBrowserJob({
-    address:            formatAddress(jidToAddress(task.jid)),
+    address:            task.address ?? formatAddress(jidToAddress(task.jid)),
     description:        task.description,
     originatingMessage: task.originatingMessage,
     senderNumber:       task.senderNumber,
@@ -415,6 +418,7 @@ export async function runBrowserTask(task: AsyncTask): Promise<void> {
     )
     await initiate({
       jid: task.jid,
+      address: task.address,
       text: `Heads up: the browser task "${truncate(
         task.description,
         80,
@@ -480,7 +484,7 @@ export async function runBrowserTask(task: AsyncTask): Promise<void> {
 
   const chatText = clean.trim()
   if (chatText.length > 0) {
-    await initiate({ jid: task.jid, text: chatText })
+    await initiate({ jid: task.jid, address: task.address, text: chatText })
   } else if (
     appendedCount > 0 ||
     journalCreates.length > 0 ||
@@ -496,7 +500,11 @@ export async function runBrowserTask(task: AsyncTask): Promise<void> {
       )
     }
     if (digest) bits.push('digest scheduled')
-    await initiate({ jid: task.jid, text: `Done. ${bits.join(', ')}.` })
+    await initiate({
+      jid: task.jid,
+      address: task.address,
+      text: `Done. ${bits.join(', ')}.`,
+    })
   }
 
   logger.info(

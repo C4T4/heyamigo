@@ -1,9 +1,9 @@
 import { existsSync, statSync } from 'fs'
 import { extname } from 'path'
-import { isJidGroup, type WAMessage } from 'baileys'
 import { config } from '../config.js'
 import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
+import { addressForJob } from '../queue/job-address.js'
 import { enqueueOutbound } from '../queue/outbound.js'
 import type { Job, ReplyStats, Result } from '../queue/types.js'
 import { detectMediaType } from '../wa/sender.js'
@@ -65,16 +65,13 @@ function fileSize(filePath: string): number | undefined {
 export async function handleReply(
   job: Job,
   result: Result,
-  _originalMsg: WAMessage,
+  _originalMsg: unknown,
 ): Promise<void> {
   const raw = result.reply?.replaceAll('—', ', ').replaceAll('–', '-')
   if (!raw) return
 
   const { text, files } = extractFiles(raw)
-  const isGroup = isJidGroup(job.jid) === true
-  void isGroup // quoting deferred; see comment above
-
-  const address = formatAddress(jidToAddress(job.jid))
+  const address = addressForJob(job)
 
   // Surface media tags in the footer too. Files already parsed above
   // — just map each to its kind so the footer reads e.g. "+2 image".
@@ -165,6 +162,7 @@ export async function handleReply(
 // as media. Returns true if anything was enqueued.
 export async function initiate(params: {
   jid: string
+  address?: string
   text: string
 }): Promise<boolean> {
   const raw = params.text.replaceAll('—', ', ').replaceAll('–', '-')
@@ -173,7 +171,7 @@ export async function initiate(params: {
   const { text, files } = extractFiles(raw)
   if (!text && files.length === 0) return false
 
-  const address = formatAddress(jidToAddress(params.jid))
+  const address = params.address ?? formatAddress(jidToAddress(params.jid))
   let pieceIdx = 0
   const baseKey = `initiate-${params.jid}-${Date.now()}`
   const enqueuePiece = (input: Parameters<typeof enqueueOutbound>[0]) => {

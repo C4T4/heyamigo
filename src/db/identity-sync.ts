@@ -27,12 +27,16 @@ import { getAccess } from '../wa/whitelist.js'
 const OWNER_PERSON_ID = 'person-owner'
 
 function personIdForNumber(number: string): string {
+  if (number.startsWith('tg_')) return `person-${number}`
   // Strip non-digits, prefix with 'person-'. Stable + deterministic.
   const sanitized = number.replace(/\D/g, '')
   return `person-${sanitized}`
 }
 
 function dmAddressFor(number: string): string {
+  if (number.startsWith('tg_')) {
+    return `tg:dm:${number.slice(3)}`
+  }
   const sanitized = number.replace(/\D/g, '')
   return formatAddress(jidToAddress(`${sanitized}@s.whatsapp.net`))
 }
@@ -197,6 +201,9 @@ export function getTimezoneForAddress(address: string): string {
 // to duplicate the format-from-number logic at every call site.
 export function getTimezoneForSenderNumber(senderNumber: string | undefined): string {
   if (!senderNumber) return config.owner.timezone
+  if (senderNumber.startsWith('tg_')) {
+    return getTimezoneForAddress(`tg:dm:${senderNumber.slice(3)}`)
+  }
   const sanitized = senderNumber.replace(/\D/g, '')
   if (!sanitized) return config.owner.timezone
   const address = formatAddress(jidToAddress(`${sanitized}@s.whatsapp.net`))

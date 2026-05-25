@@ -1,12 +1,12 @@
 # heyamigo
 
-A WhatsApp-resident assistant. Claude, Codex, or Grok under the hood, durable SQLite queues, per-sender timezone scheduling, two-track architecture so browser work never blocks the chat.
+A chat-resident assistant for WhatsApp and Telegram. Claude, Codex, or Grok under the hood, durable SQLite queues, per-sender timezone scheduling, two-track architecture so browser work never blocks the chat.
 
 ```
-WhatsApp ─► inbound ─► chat workers ─► outbound ─► WhatsApp
-                          │                ▲
-                          ├──────► async / browser ─┤
-                          └──────► memory_writes ───┘
+WhatsApp / Telegram ─► inbound ─► chat workers ─► outbound ─► WhatsApp / Telegram
+                                     │                ▲
+                                     ├──────► async / browser ─┤
+                                     └──────► memory_writes ───┘
 ```
 
 ## What it does
@@ -30,6 +30,8 @@ npx @c4t4/heyamigo setup                # wizard: pair WhatsApp, pick personalit
 npx @c4t4/heyamigo start                # background, auto-restart
 npx @c4t4/heyamigo logs                 # tail
 ```
+
+Telegram is optional. Create a bot with BotFather, set `telegram.enabled: true` and `telegram.botToken` in `config/config.json`, then allow users/groups in `config/access.json`. Telegram user keys use `tg_<user_id>`; Telegram group entries use addresses like `tg:group:-1001234567890`.
 
 Other providers:
 
@@ -63,7 +65,7 @@ Other providers:
 
 ## Where to run it
 
-A VPS (Hetzner, DO) at ~$5/mo is the path of least resistance. Home server or Raspberry Pi also fine. Needs Node 18+, a persistent filesystem, and one outbound WebSocket to WhatsApp. Not serverless-compatible.
+A VPS (Hetzner, DO) at ~$5/mo is the path of least resistance. Home server or Raspberry Pi also fine. Needs Node 18+, a persistent filesystem, and outbound access to the enabled chat channels. Not serverless-compatible.
 
 ## Tracking memory with git
 

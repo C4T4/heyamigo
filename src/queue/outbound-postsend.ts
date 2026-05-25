@@ -12,7 +12,7 @@
 import { existsSync, unlinkSync } from 'fs'
 import { isAbsolute, resolve } from 'path'
 import { config } from '../config.js'
-import { addressToExternalId, parseAddress } from '../db/address.js'
+import { addressToChatKey, addressToExternalId, parseAddress } from '../db/address.js'
 import { logger } from '../logger.js'
 import { append } from '../store/messages.js'
 import type { OutboundRow } from './outbound.js'
@@ -29,12 +29,9 @@ async function persistToMessageLog(row: OutboundRow, msgId: string): Promise<voi
   } catch {
     return
   }
-  // Message log is currently WA-specific (keyed by JID). Only persist
-  // WA-bound replies for now; multi-channel log unification comes in a
-  // later phase.
-  if (address.channel !== 'wa') return
-
-  const jid = addressToExternalId(address)
+  const jid = address.channel === 'wa'
+    ? addressToExternalId(address)
+    : addressToChatKey(address)
   const messageType =
     row.kind === 'text' ? 'conversation' : `${row.kind}Message`
 

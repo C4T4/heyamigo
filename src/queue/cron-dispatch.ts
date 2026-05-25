@@ -7,6 +7,7 @@
 // /crons show running totals per recurring schedule.
 
 import { logger } from '../logger.js'
+import { addressToChatKey } from '../db/address.js'
 import { enqueueBrowserJob } from './browser-queue.js'
 import { getInternalCronHandler } from './cron-handlers.js'
 import { type CronRow } from './crons.js'
@@ -46,7 +47,8 @@ export function dispatchCron(row: CronRow): void {
           return
         }
         enqueueAsyncTask({
-          jid: payload.address.replace(/^wa:(dm|group):/, ''),  // strip prefix back to raw jid
+          jid: addressToChatKey(payload.address),
+          address: payload.address,
           senderNumber: payload.senderNumber,
           description: payload.description,
           originatingMessage: `[cron:${row.name}]`,
@@ -97,11 +99,7 @@ function dispatchInboundPrompt(row: CronRow, payload: unknown): void {
     logger.error({ id: row.id, payload }, 'cron prompt payload malformed')
     return
   }
-  // Address parsing: payload.address is the chat address (formatted),
-  // so we extract the jid form for the synthesized Job.
-  // For wa:dm:1234@s.whatsapp.net → jid is the part after the second :
-  const jidMatch = /^wa:(?:dm|group):(.+)$/.exec(payload.address)
-  const rawJid = jidMatch ? jidMatch[1]! : payload.address
+  const chatKey = addressToChatKey(payload.address)
   const now = Math.floor(Date.now() / 1000)
 
   // Minimal Job — the chat worker calling processJob will recompute
@@ -109,7 +107,8 @@ function dispatchInboundPrompt(row: CronRow, payload: unknown): void {
   // path. We just provide the user-facing text + the cronId for
   // cost attribution.
   const job = {
-    jid: rawJid,
+    jid: chatKey,
+    address: payload.address,
     text: payload.prompt,
     input: payload.prompt,           // chat worker will wrap with memory preamble
     senderNumber: payload.senderNumber ?? 'system',

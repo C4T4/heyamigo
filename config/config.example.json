@@ -1,7 +1,14 @@
 {
   "whatsapp": {
+    "enabled": true,
     "authDir": "./storage/auth",
     "browserName": "WhatsApp Bot"
+  },
+
+  "telegram": {
+    "enabled": false,
+    "botToken": "",
+    "pollIntervalMs": 1000
   },
 
   "owner": {
