@@ -9,10 +9,12 @@ import {
 } from 'baileys'
 import { getProvider } from '../ai/providers.js'
 import { getSession } from '../ai/sessions.js'
+import { formatAddress, jidToAddress } from '../db/address.js'
+import { personIdForAddress } from '../db/identity-sync.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { buildMemoryPreamble } from '../memory/preamble.js'
-import { enqueue } from '../queue/queue.js'
+import { enqueueInbound } from '../queue/inbound.js'
 import type { Job } from '../queue/types.js'
 import {
   detectMediaType,
@@ -31,7 +33,6 @@ import {
 } from '../wa/whitelist.js'
 import { buildInitPayload, buildRecentContext } from './bootstrap.js'
 import { tryCommand } from './commands.js'
-import { handleReply } from './outgoing.js'
 import { checkTrigger } from './triggers.js'
 
 export function attachIncoming(sock: WASocket): void {
@@ -294,62 +295,31 @@ async function processMessages(
         allowedTools: role.tools,
       }
 
-      // Start typing indicator immediately; refresh every 10s (WA expires ~15s)
-      let typingHeartbeat: NodeJS.Timeout | null = null
-      if (config.reply.typingIndicator) {
-        void sock
-          .sendPresenceUpdate('composing', stored.jid)
-          .catch(() => undefined)
-        typingHeartbeat = setInterval(() => {
-          void sock
-            .sendPresenceUpdate('composing', stored.jid)
-            .catch(() => undefined)
-        }, 10000)
-      }
-      const stopTyping = () => {
-        if (typingHeartbeat) clearInterval(typingHeartbeat)
-        typingHeartbeat = null
-      }
-      // Defense-in-depth: if nothing else clears the heartbeat within 10 min
-      // (e.g. a code path forgot), force-stop. Prevents runaway "typing..."
-      // indicators when the pipeline silently fails.
-      const typingSafetyCap = setTimeout(
-        () => {
-          if (typingHeartbeat) {
-            logger.warn(
-              { jid: job.jid },
-              'typingHeartbeat safety-cap fired, forcing clear',
-            )
-            stopTyping()
-          }
-        },
-        10 * 60 * 1000,
-      )
-      typingSafetyCap.unref()
+      // Enqueue into the inbound table; chat worker pool drains and
+      // calls processJob + handleReply asynchronously. Typing indicator
+      // is temporarily dropped (was tied to the old synchronous flow);
+      // re-add via ChannelAdapter.sendTyping() in a follow-up commit.
+      const chatAddress = formatAddress(jidToAddress(stored.jid))
+      const senderAddress = stored.senderNumber
+        ? formatAddress(jidToAddress(`${stored.senderNumber}@s.whatsapp.net`))
+        : null
+      const personId = personIdForAddress(chatAddress)
+      const actorPersonId = senderAddress
+        ? personIdForAddress(senderAddress)
+        : null
 
-      enqueue(job)
-        .then((result) => handleReply(job, result, msg))
-        .catch((err) => {
-          const isTimeout =
-            err instanceof Error && err.name === 'ClaudeTimeoutError'
-          logger.error(
-            { err, jid: job.jid, isTimeout },
-            'pipeline failed',
-          )
-          const replyText = isTimeout
-            ? 'That request timed out. The task was cancelled, queue is moving.'
-            : config.reply.errorMessage
-          return handleReply(job, { reply: replyText }, msg).catch((e) =>
-            logger.error(
-              { err: e, jid: job.jid },
-              'failed to send error reply',
-            ),
-          )
-        })
-        .finally(() => {
-          stopTyping()
-          clearTimeout(typingSafetyCap)
-        })
+      enqueueInbound({
+        address:        chatAddress,
+        actorAddress:   senderAddress,
+        personId,
+        actorPersonId,
+        externalMsgId:  msg.key.id ?? null,
+        text:           stored.text,
+        pushName:       stored.pushName ?? null,
+        triggerReason,
+        receivedAt:     stored.timestamp,
+        payload:        job,
+      })
     } catch (err) {
       logger.error(
         { err, msgId: msg.key.id },

@@ -38,6 +38,14 @@ const ConfigSchema = z.object({
     outputFormat: z.enum(['json', 'text', 'stream-json']),
     contextWindow: z.number(),
   }),
+  chatPool: z
+    .object({
+      // How many chat workers run in parallel. Per-address
+      // serialization means N workers serve up to N different chats
+      // concurrently; per-chat ordering is preserved naturally.
+      size: z.number().int().positive().default(5),
+    })
+    .default({ size: 5 }),
   codex: z
     .object({
       // Optional model override. If unset, Codex uses its default. Passed

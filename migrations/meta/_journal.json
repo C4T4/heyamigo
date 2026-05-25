@@ -29,6 +29,13 @@
       "when": 1779672156371,
       "tag": "0003_phase4_inbound",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1779672623565,
+      "tag": "0004_phase4_inbound_payload",
+      "breakpoints": true
     }
   ]
 }

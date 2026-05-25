@@ -1,10 +1,6 @@
 import { execSync } from 'child_process'
-import { attachIncoming } from '../gateway/incoming.js'
-import { handleReply } from '../gateway/outgoing.js'
+import { bootBot, installShutdownSignals } from '../boot.js'
 import { logger } from '../logger.js'
-import { startScheduler } from '../memory/scheduler.js'
-import { replayPending } from '../queue/queue.js'
-import { startSocket } from '../wa/socket.js'
 
 export async function main(): Promise<void> {
   try {
@@ -17,26 +13,9 @@ export async function main(): Promise<void> {
     process.exit(1)
   }
 
-  logger.info('heyamigo starting')
-  startScheduler()
-  await startSocket((sock) => {
-    attachIncoming(sock)
-  })
-
-  void replayPending(async (job, result) => {
-    await handleReply(job, result, {} as never)
-  }).catch((err) => logger.error({ err }, 'replay failed'))
+  installShutdownSignals()
+  await bootBot()
 }
-
-process.on('SIGINT', () => {
-  logger.info('SIGINT received, shutting down')
-  process.exit(0)
-})
-
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down')
-  process.exit(0)
-})
 
 main().catch((err) => {
   logger.error({ err }, 'fatal error during boot')

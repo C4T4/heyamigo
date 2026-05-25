@@ -25,6 +25,9 @@ export type EnqueueInboundInput = {
   pushName?: string | null
   triggerReason?: string | null         // 'alias'|'mention'|'reply'|'owner'|...
   receivedAt?: number                   // unix sec; defaults to now
+  // Producer-built worker payload (JSON-serialized by the helper).
+  // Chat worker deserializes at claim time.
+  payload?: unknown
 }
 
 export type InboundRow = typeof inbound.$inferSelect
@@ -63,6 +66,7 @@ export function enqueueInbound(input: EnqueueInboundInput): EnqueueInboundResult
       mediaBytes:     input.mediaBytes ?? null,
       pushName:       input.pushName ?? null,
       triggerReason:  input.triggerReason ?? null,
+      payload:        input.payload === undefined ? null : JSON.stringify(input.payload),
       status:         'pending',
       attempts:       0,
       nextAttemptAt:  null,

@@ -175,6 +175,12 @@ export const inbound = sqliteTable('inbound', {
   mediaBytes:          integer('media_bytes'),
   pushName:            text('push_name'),              // sender's display name at send time
   triggerReason:       text('trigger_reason'),         // 'alias'|'mention'|'reply'|'owner'|...
+  // Producer-built worker payload (JSON). Chat worker deserializes
+  // at claim time to reconstruct the Job. Keeps the rebuild logic
+  // out of the worker for Phase 4; later phases may move portions
+  // (memory preamble assembly) into the worker for fresh-at-claim
+  // semantics. Nullable so non-chat inserters can leave it off.
+  payload:             text('payload'),
   // 'pending'|'claimed'|'done'|'failed'|'dlq'
   status:              text('status').notNull(),
   attempts:            integer('attempts').notNull().default(0),

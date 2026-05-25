@@ -610,3 +610,73 @@ case; we never make it up.
 Sparse unique index — enforced only when externalMsgId is set. Lets
 us insert internal messages (cron-fired self-prompts in later phases)
 without conjuring fake message ids.
+
+## 2026-05-24  Phase 4  Two entry points → one boot module
+
+Found while refactoring: heyamigo has TWO main() functions —
+`src/index.ts` (the npm package's `main` entry) and `src/cli/start.ts`
+(the CLI binary's `dev` subcommand). Originally they did very similar
+work; over time they'd drift.
+
+After Phase 0/1/2/3 changes, src/index.ts was up to date but
+cli/start.ts was still calling the old replayPending path. Worse,
+cli/start.ts is the ACTUAL production entry (npm bin →
+dist/cli/index.js → cli/start.ts.main()). Users running `heyamigo
+start` would have been running pre-refactor code.
+
+Fix: extracted everything into `src/boot.ts` (`bootBot` +
+`installShutdownSignals`). Both entry files now do ~5 lines of glue.
+
+Lesson: anywhere there's a duplicate "main" function, it's a drift
+bomb. Worth a one-off check for any other parallel paths
+(e.g. supervisor.ts, cli/index.ts subcommands) to make sure they go
+through the shared boot when they need the queues.
+
+## 2026-05-24  Phase 4  Typing indicator deferred (regression)
+
+The old incoming.ts started a typing-indicator heartbeat at message
+arrival and stopped it after handleReply finished. With the chat
+worker pool, the worker (not the gateway) owns that lifecycle, AND
+typing is a channel-specific action (Telegram has its own typing API).
+
+Right architecture: add `sendTyping(externalId, state)` to
+ChannelAdapter, have the chat worker call it at busy/idle
+transitions. ~30 lines, deferred to a follow-up commit.
+
+Today's regression: no typing indicator. Bot still works, just no
+"typing…" UI in chats.
+
+## 2026-05-24  Phase 4  Producer-built Job vs claim-time rebuild
+
+Two options for how the chat worker gets the Job:
+  (a) Producer (incoming.ts) builds the Job at enqueue time,
+      serializes into inbound.payload, worker deserializes.
+  (b) Producer puts only raw fields in inbound, worker rebuilds the
+      Job at claim time.
+
+Option (b) is cleaner architecturally — fresh state at claim time
+means a retry after memory updates would use fresh context. But it
+requires moving buildMemoryPreamble + buildInitPayload + getSession
+into the worker, AND buildInitPayload needs the WASocket (group
+metadata lookup).
+
+For Phase 4 I chose (a): less code moved, less risk. The Job is built
+once at ingest and replayed verbatim if the worker retries. Acceptable
+for now; if retry-with-fresh-memory becomes important, the migration
+is well-scoped (move 3 functions, give worker access to getSocket()).
+
+## 2026-05-24  Phase 4  Old fastq queue stays, just orphaned
+
+`src/queue/queue.ts` and `src/queue/persistence.ts` no longer have
+any importers (verified via grep). Left them in place rather than
+deleted — they're harmless, and a separate cleanup commit makes the
+swap diff smaller / easier to review.
+
+`replayPending` is no longer needed at all: the inbound table IS the
+source of truth, so anything pending at restart gets claimed by the
+new chat workers automatically. No special replay path.
+
+Validated by booting the bot to QR-code-display, observing all
+expected log lines (backup → migrate → identity sync → orchestrator →
+sender → chat pool of 5 → scheduler → socket), confirming all 8
+expected tables exist in the fresh DB.
