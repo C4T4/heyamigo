@@ -6,6 +6,7 @@ import {
   appendEntry,
   getLastScannedTs,
   getJournal,
+  normalizeTimestamp,
   readEntries,
   setLastScannedTs,
   type Journal,
@@ -30,13 +31,23 @@ async function spawnObserver(prompt: string): Promise<string> {
 }
 
 function formatMsg(m: StoredMessage): string {
-  const date = new Date(m.timestamp * 1000)
-    .toISOString()
-    .slice(0, 16)
-    .replace('T', ' ')
+  const ts = normalizeMessageTs(m)
+  const date = ts === null ? 'unknown-time' : formatTs(ts)
   const who =
     m.direction === 'out' ? 'assistant' : m.pushName || m.senderNumber || 'user'
   return `[${m.timestamp}] ${who} (${date}): ${m.text}`
+}
+
+function formatTs(ts: number): string {
+  const date = new Date(ts * 1000)
+  if (!Number.isFinite(ts) || Number.isNaN(date.getTime())) {
+    return 'unknown-time'
+  }
+  return date.toISOString().slice(0, 16).replace('T', ' ')
+}
+
+function normalizeMessageTs(m: StoredMessage): number | null {
+  return normalizeTimestamp((m as { timestamp: unknown }).timestamp)
 }
 
 function buildPrompt(params: {
@@ -59,8 +70,7 @@ function buildPrompt(params: {
     recentEntries.length
       ? recentEntries
           .map((e) => {
-            const d = new Date(e.ts * 1000).toISOString().slice(0, 16).replace('T', ' ')
-            return `- [${d}] ${e.note}`
+            return `- [${formatTs(e.ts)}] ${e.note}`
           })
           .join('\n')
       : '(none yet)',
@@ -127,7 +137,10 @@ export async function runJournalObserverForJid(params: {
 
   const since = getLastScannedTs(slug, jid)
   const recent = await readLast(jid, SCAN_WINDOW)
-  const newMessages = recent.filter((m) => m.timestamp > since)
+  const newMessages = recent.filter((m) => {
+    const ts = normalizeMessageTs(m)
+    return ts !== null && ts > since
+  })
   if (newMessages.length === 0) {
     return { appended: 0, scanned: 0 }
   }
@@ -160,7 +173,11 @@ export async function runJournalObserverForJid(params: {
     })
   }
 
-  const maxTs = newMessages[newMessages.length - 1]!.timestamp
+  const maxTs = Math.max(
+    ...newMessages
+      .map(normalizeMessageTs)
+      .filter((ts): ts is number => ts !== null),
+  )
   setLastScannedTs(slug, jid, maxTs)
 
   logger.info(

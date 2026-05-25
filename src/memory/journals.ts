@@ -42,6 +42,13 @@ export type JournalEntry = {
   note: string
 }
 
+const JOURNAL_SOURCES = new Set<JournalEntry['source']>([
+  'reactive',
+  'observer',
+  'manual',
+  'async',
+])
+
 // ---------- paths ----------
 
 function journalsRoot(): string {
@@ -256,9 +263,75 @@ export function updateJournalStatus(
 
 // ---------- entries ----------
 
+export function normalizeTimestamp(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? Math.floor(value) : null
+  }
+  if (typeof value !== 'string') return null
+
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/^\d+$/.test(trimmed)) {
+    const n = Number(trimmed)
+    return Number.isFinite(n) ? Math.floor(n) : null
+  }
+
+  const parsed = Date.parse(trimmed)
+  if (!Number.isFinite(parsed)) return null
+  return Math.floor(parsed / 1000)
+}
+
+function normalizeSource(value: unknown): JournalEntry['source'] {
+  return typeof value === 'string' && JOURNAL_SOURCES.has(value as JournalEntry['source'])
+    ? value as JournalEntry['source']
+    : 'manual'
+}
+
+function normalizeEntry(
+  raw: unknown,
+  slug: string,
+  lineNumber: number,
+): JournalEntry | null {
+  if (!raw || typeof raw !== 'object') return null
+  const obj = raw as Record<string, unknown>
+  const ts = normalizeTimestamp(obj.ts)
+  if (ts === null) {
+    logger.warn(
+      { slug, lineNumber, ts: obj.ts },
+      'journal entry skipped: invalid timestamp',
+    )
+    return null
+  }
+
+  const note =
+    typeof obj.note === 'string' && obj.note.trim()
+      ? obj.note.trim()
+      : typeof obj.title === 'string' && obj.title.trim()
+        ? obj.title.trim()
+        : typeof obj.summary === 'string' && obj.summary.trim()
+          ? obj.summary.trim()
+          : null
+  if (!note) {
+    logger.warn(
+      { slug, lineNumber },
+      'journal entry skipped: missing note/title/summary',
+    )
+    return null
+  }
+
+  return {
+    ts,
+    source: normalizeSource(obj.source),
+    jid: typeof obj.jid === 'string' ? obj.jid : undefined,
+    senderNumber:
+      typeof obj.senderNumber === 'string' ? obj.senderNumber : undefined,
+    note,
+  }
+}
+
 export function appendEntry(
   slug: string,
-  entry: Omit<JournalEntry, 'ts'> & { ts?: number },
+  entry: Omit<JournalEntry, 'ts'> & { ts?: unknown },
 ): boolean {
   if (!journalExists(slug)) {
     logger.warn(
@@ -267,9 +340,19 @@ export function appendEntry(
     )
     return false
   }
+  const ts = entry.ts === undefined
+    ? Math.floor(Date.now() / 1000)
+    : normalizeTimestamp(entry.ts)
+  if (ts === null) {
+    logger.warn(
+      { slug, ts: entry.ts },
+      'journal append ignored: invalid timestamp',
+    )
+    return false
+  }
   const full: JournalEntry = {
-    ts: entry.ts ?? Math.floor(Date.now() / 1000),
-    source: entry.source,
+    ts,
+    source: normalizeSource(entry.source),
     jid: entry.jid,
     senderNumber: entry.senderNumber,
     note: entry.note,
@@ -291,11 +374,14 @@ export function readEntries(
   const raw = readIfExists(journalEntriesPath(slug))
   if (!raw) return []
   const lines = raw.trim().split(/\r?\n/).filter(Boolean)
-  const tail = limit > 0 ? lines.slice(-limit) : lines
+  const startIdx = limit > 0 ? Math.max(0, lines.length - limit) : 0
+  const tail = lines.slice(startIdx)
   const out: JournalEntry[] = []
-  for (const line of tail) {
+  for (let i = 0; i < tail.length; i++) {
+    const line = tail[i]!
     try {
-      out.push(JSON.parse(line) as JournalEntry)
+      const entry = normalizeEntry(JSON.parse(line), slug, startIdx + i + 1)
+      if (entry) out.push(entry)
     } catch {
       // skip malformed line
     }
@@ -386,4 +472,3 @@ export function setLastScannedTs(
 // Nudge-state APIs removed — replaced by the threads watchlist
 // (see src/queue/threads.ts). Existing storage/memory/journals/*/
 // nudge-state.json files become orphaned and can be safely deleted.
-

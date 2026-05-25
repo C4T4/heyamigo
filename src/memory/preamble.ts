@@ -19,8 +19,23 @@ import { getRoleForContext, type Role, type RoleName } from '../wa/whitelist.js'
 // pointers — the model already has the long form.
 const DIGEST_REMINDER  = `[DIGEST: <reason>] at end of reply for durable facts. Sparingly.`
 const JOURNAL_REMINDER = `[JOURNAL:<slug> — <note>] at end of reply when content fits an active journal. Use listed slugs only.`
-const ASYNC_REMINDER   = `Never call browser_* / mcp__*playwright* tools. Delegate via [ASYNC-BROWSER: <task>]. Non-browser long work → [ASYNC: <task>]. Irreversible writes: gather → confirm → act.`
-const THREADS_REMINDER = `Threads = your active watchlist. Open new ones with [THREAD-NEW: title="..." summary="..."]. Close with [THREAD-RESOLVE:<id> — note] / [THREAD-DROP:<id> — reason] / [THREAD-COMPRESS:<id> — note]. Touch (mention naturally) with [THREAD-TOUCH:<id>]. Cool/defer with [THREAD-COOL:<id> — wait Nd]. User voice always wins.`
+const ASYNC_REMINDER   = `Browser work -> [ASYNC-BROWSER: <task>]. File generation/edit/export and long non-browser work -> [ASYNC: <task>]. Irreversible writes: gather -> confirm -> act.`
+const THREADS_REMINDER = `THREAD-* only for active open loops shown in [Live threads]: open/update/touch/cool/resolve/drop/compress/weight. Full grammar in tag docs.`
+
+function buildCoreQueueContract(outboxPath: string): string {
+  return [
+    '[Core queue contract]',
+    'Final reply is the control surface. Tags queue work, memory, schedules, threads, or media.',
+    'Files/browser work are async. No tag = no side effect.',
+    '',
+    '[Core tag reference]',
+    'Work: [ASYNC: task], [ASYNC-BROWSER: task]',
+    `Media: [IMAGE|VIDEO|AUDIO|DOCUMENT: /absolute/path] from ${outboxPath}/`,
+    'Memory: [DIGEST: reason], [JOURNAL:slug - note], [JOURNAL-NEW:slug - purpose]',
+    'Time: [REMIND: YYYY-MM-DD HH:MM - text], [CRON: expr SAY|PROMPT|ASYNC|BROWSER - body]',
+    'Threads: THREAD-* for active open loops shown in [Live threads]. Full grammar in tag docs.',
+  ].join('\n')
+}
 
 // Buildable per-turn so the agent always sees the SENDER's current
 // time. Grammar reference is in cached memory-instructions.md;
@@ -84,12 +99,8 @@ export function buildMemoryPreamble(params: {
   // Time — owner-tz timestamp, no exhortations
   sections.push(`[Time] ${buildTimeLine(config.owner.timezone)}`)
 
-  // Capabilities — tag list only. Rules/rationale are in system prompt.
-  sections.push(
-    '[Caps] Send files: [IMAGE|VIDEO|AUDIO|DOCUMENT: /abs/path]. ' +
-      'Output dir storage/outbox/ (auto-cleaned), scratch storage/temp/. ' +
-      'Browser → [ASYNC-BROWSER: <task>]. Long non-browser work → [ASYNC: <task>].',
-  )
+  // Core tag contract — this is the side-effect API for the queued app.
+  sections.push(buildCoreQueueContract(resolve('storage/outbox')))
 
   // Sender + role (+ FORBIDDEN rules for non-admin)
   sections.push(
@@ -172,7 +183,7 @@ export function buildMemoryPreamble(params: {
     instructions.push(JOURNAL_REMINDER)
   }
   // Scheduling reminder — tells the agent the current local time in
-  // the SENDER's timezone + lists the REMIND/CRON/SEND-TEXT grammar.
+  // the SENDER's timezone + lists the REMIND/CRON grammar.
   // Without this the agent never emits the tag and reminders silently
   // never fire (was the root-cause of the May 2026 reminders-not-
   // working bug).

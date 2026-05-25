@@ -12,6 +12,7 @@
 import { and, asc, eq, isNull, lte, or, sql } from 'drizzle-orm'
 import { getDb } from '../db/index.js'
 import { browserTasks } from '../db/schema.js'
+import { logger } from '../logger.js'
 
 export type BrowserTaskRow = typeof browserTasks.$inferSelect
 
@@ -28,7 +29,7 @@ export type EnqueueBrowserJobInput = {
 export function enqueueBrowserJob(input: EnqueueBrowserJobInput): BrowserTaskRow {
   const db = getDb()
   const now = Math.floor(Date.now() / 1000)
-  return db
+  const row = db
     .insert(browserTasks)
     .values({
       address:            input.address,
@@ -51,12 +52,22 @@ export function enqueueBrowserJob(input: EnqueueBrowserJobInput): BrowserTaskRow
     })
     .returning()
     .get()
+  logger.info(
+    {
+      id: row.id,
+      address: row.address,
+      senderNumber: row.senderNumber,
+      chars: row.description.length,
+    },
+    'browser job added to queue',
+  )
+  return row
 }
 
 export function claimNextBrowserTask(workerId: string): BrowserTaskRow | null {
   const db = getDb()
   const now = Math.floor(Date.now() / 1000)
-  return db.transaction((tx) => {
+  const claimed = db.transaction((tx) => {
     const target = tx
       .select({ id: browserTasks.id })
       .from(browserTasks)
@@ -91,6 +102,18 @@ export function claimNextBrowserTask(workerId: string): BrowserTaskRow | null {
       .get()
     return claimed ?? null
   })
+  if (claimed) {
+    logger.info(
+      {
+        id: claimed.id,
+        address: claimed.address,
+        workerId,
+        attempts: claimed.attempts,
+      },
+      'browser job claimed from queue',
+    )
+  }
+  return claimed
 }
 
 export function markBrowserTaskDone(id: number, workerId: string): boolean {

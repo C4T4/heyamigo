@@ -9,6 +9,7 @@
 import { and, asc, eq, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
 import { getDb } from '../db/index.js'
 import { inbound } from '../db/schema.js'
+import { logger } from '../logger.js'
 
 export type InboundStatus = 'pending' | 'claimed' | 'done' | 'failed' | 'dlq'
 
@@ -53,7 +54,18 @@ export function enqueueInbound(input: EnqueueInboundInput): EnqueueInboundResult
       .from(inbound)
       .where(eq(inbound.externalMsgId, input.externalMsgId))
       .get()
-    if (found) return { inserted: false, row: found }
+    if (found) {
+      logger.info(
+        {
+          id: found.id,
+          address: found.address,
+          externalMsgId: input.externalMsgId,
+          status: found.status,
+        },
+        'inbound job enqueue deduped',
+      )
+      return { inserted: false, row: found }
+    }
   }
 
   const row = db
@@ -84,6 +96,18 @@ export function enqueueInbound(input: EnqueueInboundInput): EnqueueInboundResult
     })
     .returning()
     .get()
+  logger.info(
+    {
+      id: row.id,
+      address: row.address,
+      kind: row.kind,
+      externalMsgId: row.externalMsgId,
+      triggerReason: row.triggerReason,
+      chars: row.text.length,
+      mediaBytes: row.mediaBytes,
+    },
+    'inbound job added to queue',
+  )
   return { inserted: true, row }
 }
 
@@ -95,7 +119,7 @@ export function claimNextInbound(workerId: string): InboundRow | null {
   const db = getDb()
   const now = Math.floor(Date.now() / 1000)
 
-  return db.transaction((tx) => {
+  const claimed = db.transaction((tx) => {
     // Subquery: addresses currently claimed (= one in-flight per chat).
     const busyAddrs = tx
       .select({ address: inbound.address })
@@ -134,6 +158,19 @@ export function claimNextInbound(workerId: string): InboundRow | null {
       .get()
     return claimed ?? null
   })
+  if (claimed) {
+    logger.info(
+      {
+        id: claimed.id,
+        address: claimed.address,
+        workerId,
+        kind: claimed.kind,
+        attempts: claimed.attempts,
+      },
+      'inbound job claimed from queue',
+    )
+  }
+  return claimed
 }
 
 export function markInboundDone(id: number, workerId: string): boolean {

@@ -36,6 +36,15 @@ const queue: queueAsPromised<AsyncTask, void> = fastq.promise<
   AsyncTask,
   void
 >(async (task) => {
+  logger.info(
+    {
+      id: task.id,
+      jid: task.jid,
+      address: task.address,
+      description: task.description.slice(0, 200),
+    },
+    'async task claimed from queue',
+  )
   inProgress.set(task.id, task)
   try {
     await executeAsyncTask(task)
@@ -79,6 +88,16 @@ export function listAsyncTasks(jid?: string): AsyncTask[] {
 
 // ---------- task runner ----------
 
+function fileDeliveryLines(): string[] {
+  const outboxPath = resolve('storage/outbox')
+  return [
+    `FILE DELIVERY:`,
+    `- If this worker creates, edits, exports, or generates files, save final files under ${outboxPath}/.`,
+    `- Deliver each final file with [IMAGE|VIDEO|AUDIO|DOCUMENT: /absolute/path].`,
+    `- If no file was produced, say that plainly.`,
+  ]
+}
+
 function buildPrompt(task: AsyncTask): string {
   const lines = [
     `You are a BACKGROUND WORKER doing a delayed chat reply. The chat already got an ack ("on it, will report back"). Now you do the work, and your output IS the follow-up chat reply — the full answer the owner is waiting for.`,
@@ -97,12 +116,15 @@ function buildPrompt(task: AsyncTask): string {
     `- Concrete findings, no filler. Numbers, names, dates. If you found 10 creators, list them — don't say "multiple creators".`,
     `- If the task failed or hit a wall (login wall, empty page, bot-detection, timeout), say so honestly and briefly. Don't fabricate.`,
     ``,
+    ...fileDeliveryLines(),
+    ``,
     `OPTIONAL MARKERS (at the END of your output, same pattern as main chat):`,
     `- [JOURNAL:<slug> — <one-line finding>] for any finding that belongs in an active journal. These run IN ADDITION to your chat reply — they file structured entries in journals/<slug>/entries.jsonl for future reference, dedup, and cross-session memory. Use existing slugs only (check [Journals: active] in your preamble). ONE marker per finding.`,
     `- [JOURNAL-NEW:<slug> — <one-line purpose>] if the task clearly deserves a new journal that doesn't exist yet. Conservative — only when the topic is a recurring tracking surface, not a one-off.`,
     `- [DIGEST: <one-line reason>] if you learned something durable about the owner or chat that should update the profile/brief.`,
     ``,
     `CONSTRAINTS:`,
+    `- You are already the async worker. Do the task here, including file work.`,
     `- Do NOT emit [ASYNC:...]. No recursive delegation.`,
     `- Markers are bonus persistence, not a substitute for the chat reply. Always write the chat reply first.`,
     `- Stay fully in character (personality).`,
@@ -357,6 +379,8 @@ function buildBrowserPrompt(task: AsyncTask): string {
     `- Concrete findings only. Numbers, names, dates. If you found 10 creators, list them.`,
     `- Failure mode: page hung, login wall, bot-detection, empty feed — say so briefly. Do NOT fabricate.`,
     ``,
+    ...fileDeliveryLines(),
+    ``,
     `BAIL CONDITIONS (stop and report, don't burn the clock):`,
     `- Same tool call with same args retried 3 times → stuck, bail.`,
     `- 3 consecutive empty/error responses from the site → site is throttling, bail.`,
@@ -369,6 +393,7 @@ function buildBrowserPrompt(task: AsyncTask): string {
     `- [DIGEST: <reason>] if a durable fact about the owner/chat came up.`,
     ``,
     `CONSTRAINTS:`,
+    `- You are already the browser worker. Do the browser task here.`,
     `- Do NOT emit [ASYNC:...] or [ASYNC-BROWSER:...]. No recursion.`,
     `- Markers are bonus persistence, not a substitute for the reply.`,
     `- Stay fully in character (personality).`,

@@ -1,4 +1,5 @@
 import { unlink } from 'fs/promises'
+import { resolve } from 'path'
 import { getProvider } from '../ai/providers.js'
 import { getSession } from '../ai/sessions.js'
 import { config } from '../config.js'
@@ -57,6 +58,16 @@ function enqueueTextReply(
         : undefined,
     idempotencyKey,
   })
+}
+
+function buildImageGenRoutingContract(): string {
+  const outboxPath = resolve('storage/outbox')
+  return [
+    '[Image generation routing]',
+    'This turn is classified as image/file generation.',
+    'Do not perform file work in this foreground reply.',
+    `Reply briefly and emit [ASYNC: Generate the requested image using current chat context. Save final files under ${outboxPath}/. Follow-up reply must include one [IMAGE: /absolute/path] tag per final image, or say: Image job failed before producing a file.]`,
+  ].join('\n')
 }
 
 export async function processIncomingMessage(
@@ -251,7 +262,23 @@ export async function processIncomingMessage(
       chat,
     })
   }
-  const input = `${memoryPreamble}\n\n---\n\n${core}`
+
+  const personId = personIdForAddress(incoming.address)
+  const actorPersonId = incoming.actorAddress
+    ? personIdForAddress(incoming.actorAddress)
+    : null
+
+  const est = estimateJob({
+    description: stored.text,
+    attachments: media ? [{ kind: media.mediaType }] : undefined,
+    senderPersonId: actorPersonId ?? undefined,
+  })
+  const jobKind = est?.kind ?? null
+
+  let input = `${memoryPreamble}\n\n---\n\n${core}`
+  if (est?.kind === 'image-gen') {
+    input = `${input}\n\n---\n\n${buildImageGenRoutingContract()}`
+  }
 
   logger.info(
     { ...logCtx, resume: !!existingSession, trigger: triggerReason },
@@ -270,18 +297,6 @@ export async function processIncomingMessage(
     allowedTools: role.tools,
     allowedTags: role.tags,
   }
-
-  const personId = personIdForAddress(incoming.address)
-  const actorPersonId = incoming.actorAddress
-    ? personIdForAddress(incoming.actorAddress)
-    : null
-
-  const est = estimateJob({
-    description: stored.text,
-    attachments: media ? [{ kind: media.mediaType }] : undefined,
-    senderPersonId: actorPersonId ?? undefined,
-  })
-  const jobKind = est?.kind ?? null
 
   if (est) {
     enqueueOutbound({

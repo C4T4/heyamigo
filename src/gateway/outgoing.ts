@@ -1,5 +1,5 @@
-import { existsSync, statSync } from 'fs'
-import { extname } from 'path'
+import { existsSync, realpathSync, statSync } from 'fs'
+import { extname, isAbsolute, relative, resolve } from 'path'
 import { config } from '../config.js'
 import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
@@ -16,15 +16,55 @@ type ParsedReply = {
   files: string[]
 }
 
+function isInsideDir(parent: string, child: string): boolean {
+  const rel = relative(parent, child)
+  return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel))
+}
+
+function outboxDir(): string {
+  const path = resolve(process.cwd(), 'storage/outbox')
+  return existsSync(path) ? realpathSync(path) : path
+}
+
+function resolveSendableFile(path: string): string | null {
+  const trimmed = path.trim()
+  if (!isAbsolute(trimmed)) {
+    logger.warn({ path: trimmed }, 'file tag ignored: path must be absolute')
+    return null
+  }
+  if (!existsSync(trimmed)) {
+    logger.warn({ path: trimmed }, 'file path not found, skipping')
+    return null
+  }
+
+  let realFile: string
+  try {
+    const stat = statSync(trimmed)
+    if (!stat.isFile()) {
+      logger.warn({ path: trimmed }, 'file tag ignored: path is not a file')
+      return null
+    }
+    realFile = realpathSync(trimmed)
+  } catch (err) {
+    logger.warn({ err, path: trimmed }, 'file tag ignored: path unreadable')
+    return null
+  }
+  const outbox = outboxDir()
+  if (!isInsideDir(outbox, realFile)) {
+    logger.warn(
+      { path: trimmed, outbox },
+      'file tag ignored: path is outside storage/outbox',
+    )
+    return null
+  }
+  return realFile
+}
+
 function extractFiles(reply: string): ParsedReply {
   const files: string[] = []
   const text = reply.replace(FILE_TAG_RE, (_, path: string) => {
-    const trimmed = path.trim()
-    if (existsSync(trimmed)) {
-      files.push(trimmed)
-    } else {
-      logger.warn({ path: trimmed }, 'file path not found, skipping')
-    }
+    const resolved = resolveSendableFile(path)
+    if (resolved) files.push(resolved)
     return ''
   }).trim()
   return { text, files }
@@ -57,6 +97,25 @@ function fileSize(filePath: string): number | undefined {
   try { return statSync(filePath).size } catch { return undefined }
 }
 
+function hasSideEffects(stats: ReplyStats | undefined): boolean {
+  if (!stats) return false
+  return (
+    stats.hasDigest ||
+    stats.journalSlugs.length > 0 ||
+    stats.journalCreateCount > 0 ||
+    stats.asyncCount > 0 ||
+    stats.asyncBrowserCount > 0 ||
+    stats.remindCount > 0 ||
+    stats.cronCount > 0 ||
+    stats.sendTextCount > 0 ||
+    stats.threadNewCount > 0 ||
+    stats.threadResolveCount > 0 ||
+    stats.threadDropCount > 0 ||
+    stats.threadCompressCount > 0 ||
+    stats.threadTouchCount > 0
+  )
+}
+
 // `originalMsg` is currently ignored when routing through the outbound
 // queue — Baileys quoting needs the full WAMessage embedded in
 // contextInfo, which we'd have to serialize through the DB row and
@@ -67,11 +126,39 @@ export async function handleReply(
   result: Result,
   _originalMsg: unknown,
 ): Promise<void> {
-  const raw = result.reply?.replaceAll('—', ', ').replaceAll('–', '-')
-  if (!raw) return
+  const raw = result.reply?.replaceAll('—', ', ').replaceAll('–', '-').trim()
+  const address = addressForJob(job)
+
+  if (!raw) {
+    const footer =
+      result.stats && config.reply.showStats
+        ? formatStatsFooter(result.stats)
+        : ''
+    const text = hasSideEffects(result.stats) || (result.jobCards?.length ?? 0) > 0
+      ? 'Done.'
+      : config.reply.errorMessage
+    enqueueOutbound({
+      address,
+      kind: 'text',
+      text: footer ? `${text}\n\n${footer}` : text,
+      idempotencyKey: `reply-empty-${job.jid}-${Date.now()}`,
+    })
+    for (const card of result.jobCards ?? []) {
+      enqueueOutbound({
+        address,
+        kind: 'text',
+        text: card.text,
+        idempotencyKey: card.idempotencyKey,
+      })
+    }
+    logger.warn(
+      { jid: job.jid, cards: result.jobCards?.length ?? 0 },
+      'empty reply converted to fallback outbound',
+    )
+    return
+  }
 
   const { text, files } = extractFiles(raw)
-  const address = addressForJob(job)
 
   // Surface media tags in the footer too. Files already parsed above
   // — just map each to its kind so the footer reads e.g. "+2 image".

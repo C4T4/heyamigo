@@ -9,6 +9,7 @@
 import { and, asc, eq, isNull, lte, or, sql } from 'drizzle-orm'
 import { getDb } from '../db/index.js'
 import { outbound } from '../db/schema.js'
+import { logger } from '../logger.js'
 
 export type OutboundKind = 'text' | 'image' | 'video' | 'audio' | 'document'
 export type OutboundStatus = 'pending' | 'sending' | 'done' | 'failed' | 'dlq'
@@ -45,7 +46,19 @@ export function enqueueOutbound(input: EnqueueOutboundInput): EnqueueResult {
       .from(outbound)
       .where(eq(outbound.idempotencyKey, input.idempotencyKey))
       .get()
-    if (found) return { inserted: false, row: found }
+    if (found) {
+      logger.info(
+        {
+          id: found.id,
+          address: found.address,
+          kind: found.kind,
+          idempotencyKey: input.idempotencyKey,
+          status: found.status,
+        },
+        'outbound job enqueue deduped',
+      )
+      return { inserted: false, row: found }
+    }
   }
 
   const inserted = db
@@ -70,6 +83,17 @@ export function enqueueOutbound(input: EnqueueOutboundInput): EnqueueResult {
     })
     .returning()
     .get()
+  logger.info(
+    {
+      id: inserted.id,
+      address: inserted.address,
+      kind: inserted.kind,
+      idempotencyKey: inserted.idempotencyKey,
+      chars: inserted.text?.length ?? 0,
+      mediaBytes: inserted.mediaBytes,
+    },
+    'outbound job added to queue',
+  )
   return { inserted: true, row: inserted }
 }
 
@@ -82,7 +106,7 @@ export function claimNextOutbound(workerId: string): OutboundRow | null {
   const now = Math.floor(Date.now() / 1000)
 
   // SQLite supports UPDATE ... RETURNING since 3.35.
-  return db.transaction((tx) => {
+  const claimed = db.transaction((tx) => {
     const target = tx
       .select({ id: outbound.id })
       .from(outbound)
@@ -110,6 +134,19 @@ export function claimNextOutbound(workerId: string): OutboundRow | null {
       .get()
     return claimed ?? null
   })
+  if (claimed) {
+    logger.info(
+      {
+        id: claimed.id,
+        address: claimed.address,
+        workerId,
+        kind: claimed.kind,
+        attempts: claimed.attempts,
+      },
+      'outbound job claimed from queue',
+    )
+  }
+  return claimed
 }
 
 // Mark done — succeeds only when the row is still owned by the caller.
