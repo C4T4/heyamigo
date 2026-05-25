@@ -28,7 +28,7 @@ const ConfigSchema = z.object({
   }),
   ai: z
     .object({
-      provider: z.enum(['claude', 'codex']).default('claude'),
+      provider: z.enum(['claude', 'codex', 'grok']).default('claude'),
     })
     .default({ provider: 'claude' }),
   claude: z.object({
@@ -59,6 +59,7 @@ const ConfigSchema = z.object({
       // Optional model override. If unset, Codex uses its default. Passed
       // as `-m <model>` to `codex exec`.
       model: z.string().optional(),
+      contextWindow: z.number().int().positive().default(200000),
       // Emits --yolo, which bundles no-approvals + full sandbox + skip-
       // trust-check. The narrower verbose flag does not subsume the trust
       // gate on all versions and hangs the process, so --yolo is the safe
@@ -71,6 +72,27 @@ const ConfigSchema = z.object({
       // Appended verbatim to every `codex exec` invocation. Escape hatch
       // for version-specific flags we haven't first-classed (e.g. flip
       // back to --yolo if the canonical name ever goes away).
+      extraArgs: z.array(z.string()).default([]),
+    })
+    .default({}),
+  grok: z
+    .object({
+      // Binary name or absolute path. xAI's installer puts `grok` on PATH,
+      // but some desktop installs expose it from an app bundle.
+      bin: z.string().default('grok'),
+      // Optional model override. If unset, Grok Build uses its configured
+      // default. Passed as `-m <model>`.
+      model: z.string().optional(),
+      contextWindow: z.number().int().positive().default(1000000),
+      // Headless Grok can prompt for tool approvals. In the bot runtime there
+      // is no human TUI, so auto-approval is the practical default for write
+      // modes; read-only tasks still use plan/read-only settings.
+      alwaysApprove: z.boolean().default(true),
+      // Keep Grok's own cross-session memory out of heyamigo's explicit memory
+      // files unless the operator opts in.
+      memory: z.boolean().default(false),
+      // Appended verbatim to every `grok` invocation. Escape hatch for CLI
+      // version drift without changing code.
       extraArgs: z.array(z.string()).default([]),
     })
     .default({}),

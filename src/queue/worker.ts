@@ -31,9 +31,12 @@ import { formatLocalTime, resolveTimeExpression } from './time-expr.js'
 import type { Job, JobCard, Result } from './types.js'
 
 function isStaleSessionError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const msg = err.message.toLowerCase()
   return (
-    err instanceof Error &&
-    err.message.includes('No conversation found')
+    msg.includes('no conversation found') ||
+    msg.includes('session not found') ||
+    msg.includes('no session found')
   )
 }
 
@@ -508,7 +511,7 @@ async function callClaude(job: Job): Promise<Result> {
       outputTokens: turnOutput,
       cacheReadTokens: turnCacheRead,
       totalContextTokens,
-      contextWindow: config.claude.contextWindow,
+      contextWindow: provider.contextWindow,
       fresh: wasFresh,
       hasDigest: digest !== null,
       journalSlugs: journals.map((j) => j.slug),

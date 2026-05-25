@@ -16,7 +16,7 @@ const program = new Command()
 
 program
   .name('heyamigo')
-  .description('WhatsApp AI Bot powered by Claude')
+  .description('WhatsApp AI Bot powered by Claude, Codex, or Grok')
   .version(pkgVersion)
 
 program

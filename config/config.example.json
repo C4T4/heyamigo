@@ -37,8 +37,17 @@
   },
 
   "codex": {
+    "contextWindow": 200000,
     "yolo": true,
     "skipGitRepoCheck": true,
+    "extraArgs": []
+  },
+
+  "grok": {
+    "bin": "grok",
+    "contextWindow": 1000000,
+    "alwaysApprove": true,
+    "memory": false,
     "extraArgs": []
   },
 

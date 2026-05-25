@@ -1,14 +1,36 @@
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { bootBot, installShutdownSignals } from '../boot.js'
+import { config } from '../config.js'
 import { logger } from '../logger.js'
 
+function requiredCli(): { bin: string; install: string } {
+  switch (config.ai.provider) {
+    case 'claude':
+      return {
+        bin: 'claude',
+        install: 'npm install -g @anthropic-ai/claude-code',
+      }
+    case 'codex':
+      return {
+        bin: 'codex',
+        install: 'npm install -g @openai/codex',
+      }
+    case 'grok':
+      return {
+        bin: config.grok.bin,
+        install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+      }
+  }
+}
+
 export async function main(): Promise<void> {
+  const cli = requiredCli()
   try {
-    execSync('which claude', { stdio: 'pipe' })
+    execFileSync('which', [cli.bin], { stdio: 'pipe' })
   } catch {
     console.error(
-      'Claude CLI not found. Install it first:\n\n' +
-        '  npm install -g @anthropic-ai/claude-code\n',
+      `${config.ai.provider} CLI not found. Install it first:\n\n` +
+        `  ${cli.install}\n`,
     )
     process.exit(1)
   }

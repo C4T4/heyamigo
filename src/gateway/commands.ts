@@ -39,7 +39,8 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
   }
 
   if (config.commands.status.includes(cmd)) {
-    const info = getSessionInfo(ctx.jid, getProvider().name)
+    const provider = getProvider()
+    const info = getSessionInfo(ctx.jid, provider.name)
     if (!info) {
       await sendText(
         ctx.sock,
@@ -51,7 +52,7 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     }
     const lines = [`Session: ${info.sessionId.slice(0, 8)}…`]
     if (info.usage) {
-      const max = config.claude.contextWindow
+      const max = provider.contextWindow
       const used = info.usage.totalContextTokens
       // Clamp leftPct to [0, 100] so stale or inconsistent data
       // doesn't surface a negative or >100 percentage.

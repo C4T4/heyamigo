@@ -1,6 +1,6 @@
 # Architecture notes
 
-A WhatsApp-resident assistant on top of Claude (or Codex). The interesting parts are not the LLM calls themselves — those are well-trodden territory — but everything around them: how messages flow, how state survives restarts, how schedules fire in the right timezone, how the agent's reply text becomes durable side effects.
+A WhatsApp-resident assistant on top of Claude, Codex, or Grok. The interesting parts are not the LLM calls themselves — those are well-trodden territory — but everything around them: how messages flow, how state survives restarts, how schedules fire in the right timezone, how the agent's reply text becomes durable side effects.
 
 This document is a curated set of design notes. The ones that earned their place because the alternative didn't survive contact with real use.
 
@@ -68,7 +68,7 @@ Each cron row carries `fire_count`, `total_input_tokens`, `total_output_tokens`.
 
 ## Two-track architecture
 
-The chat track answers in real time. Browser work — anything touching Playwright / `mcp__*playwright*` tools — is always delegated to a parallel Claude session via an `[ASYNC-BROWSER: <task>]` tag.
+The chat track answers in real time. Browser work — anything touching Playwright / `mcp__*playwright*` tools — is always delegated to a parallel provider session via an `[ASYNC-BROWSER: <task>]` tag.
 
 ```
 chat reply ──── [ASYNC-BROWSER: ...] ────► browser_tasks (sqlite)
@@ -121,14 +121,14 @@ A `[DIGEST: <reason>]` tag on the agent's reply triggers a debounced background 
 
 ## Multi-provider
 
-Claude and Codex both implement the same `AiProvider` interface. Swap via `config.ai.provider`. Sessions persist across model switches (the session-id mapping is provider-aware). Cumulative-vs-per-turn token reporting differs between the two — Claude reports per-turn, Codex reports cumulative — handled in the worker with a `usageReportingMode` discriminator + delta math. Without that, the context % footer reads `7018% ctx` and the user loses trust.
+Claude, Codex, and Grok Build implement the same `AiProvider` interface. Swap via `config.ai.provider`. Sessions persist across model switches (the session-id mapping is provider-aware). Cumulative-vs-per-turn token reporting differs by provider — Claude and Grok report per-turn when available, Codex reports cumulative — handled in the worker with a `usageReportingMode` discriminator + delta math. Without that, the context % footer reads `7018% ctx` and the user loses trust.
 
 ## Defaults that bias toward not-broken
 
 - **Proactive messaging defaults to off.** Groups stay silent unless `proactive: true` is explicitly set in `access.json`. The bot never volunteers a message into a group it wasn't invited into the conversation of.
 - **Per-role token quotas.** Each user role has a daily token cap. Once exceeded, replies are dropped silently (logged, not announced).
 - **Per-role file-size caps.** Inbound media over the role's MB limit is rejected before download.
-- **Sessions survive provider swaps.** If you switch from Claude to Codex mid-stream, existing sessions resume against the new provider rather than vanishing.
+- **Sessions survive provider swaps.** If you switch between Claude, Codex, and Grok mid-stream, existing sessions stay dormant under their provider key rather than vanishing.
 - **Schema migrations through drizzle-kit, never direct DDL.** A schema-drift detector at boot warns when the live SQLite shape diverges from the codebase's expectations.
 - **WAL mode + Litestream-friendly.** Database lives on a single durable volume; remote replication is configured but optional.
 
@@ -151,14 +151,14 @@ The estimate ack hits the chat before the AI even starts processing the message,
 - `/queues` shows live queue depths per kind.
 - `/crons` lists recurring schedules with fire counts and accumulated token cost.
 - `/threads` lists the live watchlist with hotness and per-category learning state.
-- `/status` shows the current Claude session's context utilization.
+- `/status` shows the current provider session's context utilization.
 - Per-reply footer surfaces every emitted tag (`+remind`, `+browser`, `+thread-new`, etc).
 - Structured pino logs are queryable; long-running prompts are retained on disk for replay (`promptlog`).
 
 ## Trade-offs the codebase deliberately made
 
 - **SQLite, not Redis.** The bot is a single-process workload with durable-by-default semantics. SQLite with WAL gives us atomic claims, durable rows, and Litestream replication for the price of zero infrastructure. A queue layer would have been overkill.
-- **Tags as the side-effect channel, not tool calls.** The agent emits side effects as text. This works across providers (Claude and Codex see the same grammar), survives provider tool-schema differences, and gives us a parseable record per turn. Trade-off: the agent has to be coaxed into using the grammar reliably — that's what the system prompt + per-turn `[Live threads]` / scheduling reminders are for.
+- **Tags as the side-effect channel, not tool calls.** The agent emits side effects as text. This works across providers (Claude, Codex, and Grok see the same grammar), survives provider tool-schema differences, and gives us a parseable record per turn. Trade-off: the agent has to be coaxed into using the grammar reliably — that's what the system prompt + per-turn `[Live threads]` / scheduling reminders are for.
 - **Address-bound everything.** Every queue row carries the target JID. Reminders fire to the chat where they were created. Threads belong to a chat. Schedules respect the per-chat proactive gate. No row floats free.
 - **Personality as a separate file.** The bot's voice is a markdown file loaded into the system prompt. The default ("sharp") is opinionated about not people-pleasing, not hedging, not opening with validation. Swap or write your own for a different voice.
 - **No metrics dashboard. Yet.** The footer + `/queues` + `/crons` + `/threads` are the visible state. A real dashboard makes sense once volume warrants it; for personal-bot scale, the chat itself is the dashboard.
@@ -169,7 +169,7 @@ The estimate ack hits the chat before the AI even starts processing the message,
 |---|---|
 | Queue tables, schema | `src/db/schema.ts`, `migrations/` |
 | Queue dispatch | `src/queue/*.ts` |
-| AI providers | `src/ai/{claude,codex,provider}.ts` |
+| AI providers | `src/ai/{claude,codex,grok,provider}.ts` |
 | Tag parsing | `src/memory/digest-flag.ts` |
 | Memory layers | `src/memory/{store,router,compressed,journals}.ts` |
 | Preamble assembly | `src/memory/preamble.ts` |

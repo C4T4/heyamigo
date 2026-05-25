@@ -77,6 +77,38 @@ function setConfigOwnerNumber(configPath: string, number: string): void {
   } catch {}
 }
 
+type AiProviderChoice = 'claude' | 'codex' | 'grok'
+
+function readConfigObject(configPath: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function getConfiguredProvider(configPath: string): AiProviderChoice {
+  const cfg = readConfigObject(configPath)
+  const ai = cfg?.ai
+  if (ai && typeof ai === 'object') {
+    const provider = (ai as Record<string, unknown>).provider
+    if (provider === 'claude' || provider === 'codex' || provider === 'grok') {
+      return provider
+    }
+  }
+  return 'claude'
+}
+
+function setConfiguredProvider(
+  configPath: string,
+  provider: AiProviderChoice,
+): void {
+  const cfg = readConfigObject(configPath)
+  if (!cfg) return
+  cfg.ai = { ...((cfg.ai as Record<string, unknown> | undefined) ?? {}), provider }
+  writeFileSync(configPath, JSON.stringify(cfg, null, 2) + '\n', 'utf-8')
+}
+
 function findPackageDir(): string | null {
   // __pkgRoot = two levels up from dist/cli/ = package root
   if (existsSync(resolve(__pkgRoot, 'config', 'config.example.json'))) {
@@ -263,33 +295,61 @@ export async function runSetup(): Promise<void> {
     p.log.info('access.json already exists')
   }
 
-  // ── Claude CLI (critical — bot cannot work without this) ─────
-  const claudePath = which('claude')
-  if (!claudePath) {
-    p.cancel(
-      'Claude CLI is required but was not found.\n' +
-        'Install it first, then re-run setup:\n\n' +
-        '  npm install -g @anthropic-ai/claude-code\n\n' +
-        'For other install methods see: https://docs.anthropic.com/en/docs/claude-code',
-    )
-    process.exit(1)
-  }
-  p.log.success('Claude CLI found')
+  // ── AI provider ───────────────────────────────────────────────
+  const currentProvider = getConfiguredProvider(configPath)
+  const providerChoice = await p.select({
+    message: 'Choose AI provider',
+    options: [
+      {
+        value: 'claude',
+        label: 'Claude',
+        hint: 'Claude Code CLI',
+      },
+      {
+        value: 'grok',
+        label: 'Grok Build',
+        hint: 'xAI Grok Build CLI',
+      },
+      {
+        value: 'codex',
+        label: 'Codex',
+        hint: 'OpenAI Codex CLI',
+      },
+    ],
+    initialValue: currentProvider,
+  })
+  const provider = p.isCancel(providerChoice)
+    ? currentProvider
+    : (providerChoice as AiProviderChoice)
+  setConfiguredProvider(configPath, provider)
+  p.log.success(`AI provider: ${provider}`)
 
-  // Auth (critical — bot uses your Claude subscription, not API)
-  const authenticated = run('claude auth status').ok
-  if (!authenticated) {
-    p.cancel(
-      'Claude is not logged in.\n' +
-        'Run claude in your terminal and follow the login instructions:\n\n' +
-        '  claude\n\n' +
-        'Once logged in, re-run: npx @c4t4/heyamigo setup',
-    )
-    process.exit(1)
-  }
-  p.log.success('Claude authenticated')
+  if (provider === 'claude') {
+    // ── Claude CLI (critical — bot cannot work without this) ─────
+    const claudePath = which('claude')
+    if (!claudePath) {
+      p.cancel(
+        'Claude CLI is required but was not found.\n' +
+          'Install it first, then re-run setup:\n\n' +
+          '  npm install -g @anthropic-ai/claude-code\n\n' +
+          'For other install methods see: https://docs.anthropic.com/en/docs/claude-code',
+      )
+      process.exit(1)
+    }
+    p.log.success('Claude CLI found')
 
-  {
+    // Auth (critical — bot uses your Claude subscription, not API)
+    const authenticated = run('claude auth status').ok
+    if (!authenticated) {
+      p.cancel(
+        'Claude is not logged in.\n' +
+          'Run claude in your terminal and follow the login instructions:\n\n' +
+          '  claude\n\n' +
+          'Once logged in, re-run: npx @c4t4/heyamigo setup',
+      )
+      process.exit(1)
+    }
+    p.log.success('Claude authenticated')
 
     // Tool permissions — write .claude/settings.json in project root.
     p.log.info(
@@ -304,87 +364,122 @@ export async function runSetup(): Promise<void> {
     if (p.isCancel(grantPermissions) || !grantPermissions) {
       p.log.info('Skipped. Create .claude/settings.json manually if needed.')
     } else {
-    const claudeSettingsDir = resolve(cwd, '.claude')
-    const claudeSettingsPath = resolve(claudeSettingsDir, 'settings.json')
-    try {
-      mkdirSync(claudeSettingsDir, { recursive: true })
-      let settings: Record<string, unknown> = {}
-      if (existsSync(claudeSettingsPath)) {
-        settings = JSON.parse(readFileSync(claudeSettingsPath, 'utf-8'))
-      }
-      const permissions = (settings.permissions ?? {}) as Record<
-        string,
-        unknown
-      >
-      const existing = Array.isArray(permissions.allow)
-        ? (permissions.allow as string[])
-        : []
-      const required = [
-        'WebFetch',
-        'WebSearch',
-        'Read',
-        'Edit',
-        'Write',
-        'mcp__playwright__*',
-      ]
-      const merged = [...new Set([...existing, ...required])]
-      permissions.allow = merged
-      settings.permissions = permissions
-      writeFileSync(
-        claudeSettingsPath,
-        JSON.stringify(settings, null, 2) + '\n',
-        'utf-8',
-      )
-      p.log.success('Tool permissions configured')
-    } catch (err) {
-      p.log.warning(
-        `Could not write ${claudeSettingsPath}: ${(err as Error).message}`,
-      )
-      p.log.info(
-        'Create .claude/settings.json manually with permissions.allow array',
-      )
-    }
-
-    // Trust project directory in ~/.claude.json
-    const claudeConfigPath = resolve(
-      homedir(),
-      '.claude.json',
-    )
-    try {
-      if (existsSync(claudeConfigPath)) {
-        const claudeCfg = JSON.parse(
-          readFileSync(claudeConfigPath, 'utf-8'),
-        ) as Record<string, unknown>
-        const projects = (claudeCfg.projects ?? {}) as Record<
+      const claudeSettingsDir = resolve(cwd, '.claude')
+      const claudeSettingsPath = resolve(claudeSettingsDir, 'settings.json')
+      try {
+        mkdirSync(claudeSettingsDir, { recursive: true })
+        let settings: Record<string, unknown> = {}
+        if (existsSync(claudeSettingsPath)) {
+          settings = JSON.parse(readFileSync(claudeSettingsPath, 'utf-8'))
+        }
+        const permissions = (settings.permissions ?? {}) as Record<
           string,
-          Record<string, unknown>
+          unknown
         >
-        if (!projects[cwd]) projects[cwd] = {}
-        projects[cwd]!.hasTrustDialogAccepted = true
-        claudeCfg.projects = projects
+        const existing = Array.isArray(permissions.allow)
+          ? (permissions.allow as string[])
+          : []
+        const required = [
+          'WebFetch',
+          'WebSearch',
+          'Read',
+          'Edit',
+          'Write',
+          'mcp__playwright__*',
+        ]
+        const merged = [...new Set([...existing, ...required])]
+        permissions.allow = merged
+        settings.permissions = permissions
         writeFileSync(
-          claudeConfigPath,
-          JSON.stringify(claudeCfg, null, 2) + '\n',
+          claudeSettingsPath,
+          JSON.stringify(settings, null, 2) + '\n',
           'utf-8',
         )
-        p.log.success('Project directory trusted')
+        p.log.success('Tool permissions configured')
+      } catch (err) {
+        p.log.warning(
+          `Could not write ${claudeSettingsPath}: ${(err as Error).message}`,
+        )
+        p.log.info(
+          'Create .claude/settings.json manually with permissions.allow array',
+        )
       }
-    } catch {
-      // Non-critical, trust prompt will appear on first run
+
+      // Trust project directory in ~/.claude.json
+      const claudeConfigPath = resolve(
+        homedir(),
+        '.claude.json',
+      )
+      try {
+        if (existsSync(claudeConfigPath)) {
+          const claudeCfg = JSON.parse(
+            readFileSync(claudeConfigPath, 'utf-8'),
+          ) as Record<string, unknown>
+          const projects = (claudeCfg.projects ?? {}) as Record<
+            string,
+            Record<string, unknown>
+          >
+          if (!projects[cwd]) projects[cwd] = {}
+          projects[cwd]!.hasTrustDialogAccepted = true
+          claudeCfg.projects = projects
+          writeFileSync(
+            claudeConfigPath,
+            JSON.stringify(claudeCfg, null, 2) + '\n',
+            'utf-8',
+          )
+          p.log.success('Project directory trusted')
+        }
+      } catch {
+        // Non-critical, trust prompt will appear on first run
+      }
     }
-    } // end grant permissions
-  } // end claude cli block
+  } else if (provider === 'grok') {
+    // ── Grok Build CLI ──────────────────────────────────────────
+    const grokPath = which('grok')
+    if (!grokPath) {
+      p.cancel(
+        'Grok Build CLI is required but was not found.\n' +
+          'Install it first, then re-run setup:\n\n' +
+          '  curl -fsSL https://x.ai/cli/install.sh | bash',
+      )
+      process.exit(1)
+    }
+    p.log.success('Grok Build CLI found')
+    if (!process.env.XAI_API_KEY) {
+      p.log.info(
+        'If Grok is not logged in on this machine yet, run:\n\n' +
+          '  grok login\n\n' +
+          'Headless servers can also use XAI_API_KEY.',
+      )
+    }
+  } else {
+    // ── Codex CLI ───────────────────────────────────────────────
+    const codexPath = which('codex')
+    if (!codexPath) {
+      p.cancel(
+        'Codex CLI is required but was not found.\n' +
+          'Install it first, then re-run setup:\n\n' +
+          '  npm install -g @openai/codex',
+      )
+      process.exit(1)
+    }
+    p.log.success('Codex CLI found')
+    p.log.info(
+      'If Codex is not logged in on this machine yet, run:\n\n' +
+        '  codex login',
+    )
+  }
 
   // ── Shared browser (optional) ──────────────────────────────────
   p.log.info(
-    'Claude can control a real Chrome browser to browse websites, ' +
+    'The AI provider can control a real Chrome browser to browse websites, ' +
       'fill forms, take screenshots, and interact with web apps. ' +
       'Everything runs on localhost only, nothing is exposed publicly. ' +
       'You can connect to watch the browser via a secure SSH tunnel.',
   )
 
   const wantBrowser = await p.confirm({
-    message: 'Enable browser control for Claude?',
+    message: 'Enable browser control?',
     initialValue: false,
   })
 
@@ -395,24 +490,37 @@ export async function runSetup(): Promise<void> {
         'Automated browser setup is available on Linux only. ' +
           'On macOS/Windows: start Chrome with --remote-debugging-port=9222 manually, ' +
           'then for Claude: claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "http://localhost:9222"; ' +
-          'for Codex: add [mcp_servers.playwright] to ~/.codex/config.toml.',
+          'for Codex: add [mcp_servers.playwright] to ~/.codex/config.toml; ' +
+          'for Grok: use grok mcp to add the same Playwright MCP server.',
       )
     } else {
       // ── Check if already running ─────────────────────────────
       const cdpUrl = 'http://localhost:9222'
       const alreadyRunning = run(`curl -s '${cdpUrl}/json/version'`)
-      const mcpConfigured = run('claude mcp list 2>/dev/null').output.includes('playwright')
+      const hasClaude = !!which('claude')
+      const mcpConfigured =
+        hasClaude && run('claude mcp list 2>/dev/null').output.includes('playwright')
       const hasCodex = !!which('codex')
+      const hasGrok = !!which('grok')
 
-      if (alreadyRunning.ok && alreadyRunning.output.includes('Browser') && mcpConfigured) {
+      if (alreadyRunning.ok && alreadyRunning.output.includes('Browser')) {
         p.log.success('Chrome already running (localhost:9222)')
-        p.log.success('Claude already connected to Chrome')
+        if (hasClaude && mcpConfigured) {
+          p.log.success('Claude already connected to Chrome')
+        }
         if (hasCodex) {
           if (addPlaywrightToCodexConfig(cdpUrl)) {
             p.log.success('Codex connected to Chrome (~/.codex/config.toml)')
           } else {
-            p.log.warning('Could not write ~/.codex/config.toml — add [mcp_servers.playwright] manually')
+            p.log.warning(
+              'Could not write ~/.codex/config.toml — add [mcp_servers.playwright] manually',
+            )
           }
+        }
+        if (hasGrok) {
+          p.log.info(
+            'For Grok, add Playwright MCP with grok mcp if it is not already configured.',
+          )
         }
         p.log.info(
           'View browser (SSH tunnel):\n' +
@@ -420,135 +528,142 @@ export async function runSetup(): Promise<void> {
             '  Then open: http://localhost:6090/vnc.html',
         )
       } else {
-      // ── Chrome ───────────────────────────────────────────────
-      let chromeFound = false
-      for (const bin of [
-        'chromium',
-        'chromium-browser',
-        'google-chrome',
-        'google-chrome-stable',
-      ]) {
-        if (run(`which ${bin}`).ok) {
-          p.log.success(`Chrome found: ${bin}`)
-          chromeFound = true
-          break
-        }
-      }
-
-      if (!chromeFound) {
-        const installChrome = await p.confirm({
-          message:
-            'Chrome/Chromium not found. Install Chromium? (apt install chromium)',
-          initialValue: true,
-        })
-
-        if (!p.isCancel(installChrome) && installChrome) {
-          p.log.step('Installing Chromium...')
-          if (runLive('apt-get update && apt-get install -y chromium')) {
-            p.log.success('Chromium installed')
+        // ── Chrome ───────────────────────────────────────────────
+        let chromeFound = false
+        for (const bin of [
+          'chromium',
+          'chromium-browser',
+          'google-chrome',
+          'google-chrome-stable',
+        ]) {
+          if (run(`which ${bin}`).ok) {
+            p.log.success(`Chrome found: ${bin}`)
             chromeFound = true
-          } else {
-            p.log.warning('Chromium install failed. Run manually: apt install -y chromium')
+            break
           }
         }
-      }
 
-      // ── VNC (optional, for human viewing) ────────────────────
-      let vncInstalled = false
-      if (chromeFound) {
-        p.log.info(
-          'noVNC lets you watch and interact with the browser Claude is controlling. ' +
-            'It runs on localhost:6090 only, accessible via SSH tunnel. Nothing public.',
-        )
+        if (!chromeFound) {
+          const installChrome = await p.confirm({
+            message:
+              'Chrome/Chromium not found. Install Chromium? (apt install chromium)',
+            initialValue: true,
+          })
 
-        const wantVnc = await p.confirm({
-          message: 'Install noVNC? (lets you view the browser via SSH tunnel)',
-          initialValue: true,
-        })
+          if (!p.isCancel(installChrome) && installChrome) {
+            p.log.step('Installing Chromium...')
+            if (runLive('apt-get update && apt-get install -y chromium')) {
+              p.log.success('Chromium installed')
+              chromeFound = true
+            } else {
+              p.log.warning('Chromium install failed. Run manually: apt install -y chromium')
+            }
+          }
+        }
 
-        if (!p.isCancel(wantVnc) && wantVnc) {
-          const vncDeps = ['xvfb', 'x11vnc', 'novnc']
-          const missing = vncDeps.filter(
-            (d) => !run(`dpkg -s ${d} 2>/dev/null`).ok,
+        // ── VNC (optional, for human viewing) ────────────────────
+        let vncInstalled = false
+        if (chromeFound) {
+          p.log.info(
+            'noVNC lets you watch and interact with the browser Claude is controlling. ' +
+              'It runs on localhost:6090 only, accessible via SSH tunnel. Nothing public.',
           )
 
-          if (missing.length > 0) {
-            p.log.step(`Installing ${missing.join(', ')}...`)
-            if (runLive(`apt-get install -y ${missing.join(' ')}`)) {
-              p.log.success('noVNC dependencies installed')
+          const wantVnc = await p.confirm({
+            message: 'Install noVNC? (lets you view the browser via SSH tunnel)',
+            initialValue: true,
+          })
+
+          if (!p.isCancel(wantVnc) && wantVnc) {
+            const vncDeps = ['xvfb', 'x11vnc', 'novnc']
+            const missing = vncDeps.filter(
+              (d) => !run(`dpkg -s ${d} 2>/dev/null`).ok,
+            )
+
+            if (missing.length > 0) {
+              p.log.step(`Installing ${missing.join(', ')}...`)
+              if (runLive(`apt-get install -y ${missing.join(' ')}`)) {
+                p.log.success('noVNC dependencies installed')
+                vncInstalled = true
+              } else {
+                p.log.warning(
+                  `Some packages failed. Run manually: apt install -y ${missing.join(' ')}`,
+                )
+              }
+            } else {
+              p.log.success('noVNC dependencies already installed')
               vncInstalled = true
-            } else {
-              p.log.warning(
-                `Some packages failed. Run manually: apt install -y ${missing.join(' ')}`,
-              )
             }
-          } else {
-            p.log.success('noVNC dependencies already installed')
-            vncInstalled = true
           }
         }
-      }
 
-      // ── Start browser ────────────────────────────────────────
-      if (chromeFound) {
-        p.log.step('Starting Chrome' + (vncInstalled ? ' + noVNC' : '') + '...')
-        const scriptPath = resolve(cwd, 'scripts/start-browser.sh')
-        if (!runLive(`bash "${scriptPath}"`)) {
-          p.log.warning(
-            'You can start manually: bash scripts/start-browser.sh',
-          )
-        }
-
-        // Verify CDP
-        const cdpUrl = 'http://localhost:9222'
-        const cdpCheck = run(`curl -s '${cdpUrl}/json/version'`)
-        if (cdpCheck.ok && cdpCheck.output.includes('Browser')) {
-          p.log.success('Chrome running (localhost:9222, not public)')
-
-          // Connect Claude to Chrome via CDP
-          const sc = p.spinner()
-          sc.start('Connecting Claude to Chrome')
-          run('claude mcp remove playwright')
-          const addResult = run(
-            `claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "${cdpUrl}"`,
-          )
-          if (
-            addResult.ok ||
-            addResult.output.includes('already exists')
-          ) {
-            sc.stop('Claude connected to Chrome')
-          } else {
-            sc.stop('Connection failed')
+        // ── Start browser ────────────────────────────────────────
+        if (chromeFound) {
+          p.log.step('Starting Chrome' + (vncInstalled ? ' + noVNC' : '') + '...')
+          const scriptPath = resolve(cwd, 'scripts/start-browser.sh')
+          if (!runLive(`bash "${scriptPath}"`)) {
             p.log.warning(
-              'Run manually: claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "http://localhost:9222"',
+              'You can start manually: bash scripts/start-browser.sh',
             )
           }
 
-          // Mirror the MCP entry into Codex if it's installed, so the same
-          // browser lane works when ai.provider is flipped to codex.
-          if (hasCodex) {
-            if (addPlaywrightToCodexConfig(cdpUrl)) {
-              p.log.success('Codex connected to Chrome (~/.codex/config.toml)')
-            } else {
-              p.log.warning(
-                'Could not write ~/.codex/config.toml — add [mcp_servers.playwright] manually',
+          // Verify CDP
+          const cdpUrl = 'http://localhost:9222'
+          const cdpCheck = run(`curl -s '${cdpUrl}/json/version'`)
+          if (cdpCheck.ok && cdpCheck.output.includes('Browser')) {
+            p.log.success('Chrome running (localhost:9222, not public)')
+
+            if (hasClaude) {
+              // Connect Claude to Chrome via CDP
+              const sc = p.spinner()
+              sc.start('Connecting Claude to Chrome')
+              run('claude mcp remove playwright')
+              const addResult = run(
+                `claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "${cdpUrl}"`,
+              )
+              if (
+                addResult.ok ||
+                addResult.output.includes('already exists')
+              ) {
+                sc.stop('Claude connected to Chrome')
+              } else {
+                sc.stop('Connection failed')
+                p.log.warning(
+                  'Run manually: claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "http://localhost:9222"',
+                )
+              }
+            }
+
+            // Mirror the MCP entry into Codex if it's installed, so the same
+            // browser lane works when ai.provider is flipped to codex.
+            if (hasCodex) {
+              if (addPlaywrightToCodexConfig(cdpUrl)) {
+                p.log.success('Codex connected to Chrome (~/.codex/config.toml)')
+              } else {
+                p.log.warning(
+                  'Could not write ~/.codex/config.toml — add [mcp_servers.playwright] manually',
+                )
+              }
+            }
+            if (hasGrok) {
+              p.log.info(
+                'For Grok, add Playwright MCP with grok mcp if it is not already configured.',
               )
             }
-          }
 
-          if (vncInstalled) {
-            p.log.info(
-              'Watch the browser (localhost only, via SSH tunnel):\n' +
-                `  ssh -L 6090:127.0.0.1:6090 ${process.env.USER || 'root'}@<server-ip>\n` +
-                '  Then open: http://localhost:6090/vnc.html',
+            if (vncInstalled) {
+              p.log.info(
+                'Watch the browser (localhost only, via SSH tunnel):\n' +
+                  `  ssh -L 6090:127.0.0.1:6090 ${process.env.USER || 'root'}@<server-ip>\n` +
+                  '  Then open: http://localhost:6090/vnc.html',
+              )
+            }
+          } else {
+            p.log.warning(
+              'Chrome not reachable. Start manually: bash scripts/start-browser.sh',
             )
           }
-        } else {
-          p.log.warning(
-            'Chrome not reachable. Start manually: bash scripts/start-browser.sh',
-          )
-        }
-      } // end else (not already running)
+        } // end else (not already running)
       }
     }
   }
@@ -800,40 +915,42 @@ export async function runSetup(): Promise<void> {
     } catch {}
   }
 
-  // ── Claude model ─────────────────────────────────────────────
-  const model = await p.select({
-    message: 'Choose a Claude model',
-    options: [
-      {
-        value: 'claude-opus-4-7',
-        label: 'Opus',
-        hint: 'highest quality, recommended (default)',
-      },
-      {
-        value: 'claude-sonnet-4-6',
-        label: 'Sonnet',
-        hint: 'faster, lower cost',
-      },
-    ],
-    initialValue: 'claude-opus-4-7',
-  })
+  if (provider === 'claude') {
+    // ── Claude model ─────────────────────────────────────────────
+    const model = await p.select({
+      message: 'Choose a Claude model',
+      options: [
+        {
+          value: 'claude-opus-4-7',
+          label: 'Opus',
+          hint: 'highest quality, recommended (default)',
+        },
+        {
+          value: 'claude-sonnet-4-6',
+          label: 'Sonnet',
+          hint: 'faster, lower cost',
+        },
+      ],
+      initialValue: 'claude-opus-4-7',
+    })
 
-  if (!p.isCancel(model)) {
-    const configPath = resolve(cwd, 'config/config.json')
-    if (existsSync(configPath)) {
-      let cfg = readFileSync(configPath, 'utf-8')
-      cfg = cfg.replace(
-        /"model":\s*"[^"]*"/,
-        `"model": "${model}"`,
-      )
-      writeFileSync(configPath, cfg)
-      const label =
-        model === 'claude-sonnet-4-6'
-          ? 'Sonnet'
-          : model === 'claude-opus-4-7'
-            ? 'Opus'
-            : 'Haiku'
-      p.log.success(`Model: ${label}`)
+    if (!p.isCancel(model)) {
+      const configPath = resolve(cwd, 'config/config.json')
+      if (existsSync(configPath)) {
+        let cfg = readFileSync(configPath, 'utf-8')
+        cfg = cfg.replace(
+          /"model":\s*"[^"]*"/,
+          `"model": "${model}"`,
+        )
+        writeFileSync(configPath, cfg)
+        const label =
+          model === 'claude-sonnet-4-6'
+            ? 'Sonnet'
+            : model === 'claude-opus-4-7'
+              ? 'Opus'
+              : 'Haiku'
+        p.log.success(`Model: ${label}`)
+      }
     }
   }
 

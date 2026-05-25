@@ -1,11 +1,11 @@
 // Provider abstraction for the user-facing chat ask path. Lets the worker
-// route conversation turns to either Claude or Codex (or any future CLI)
+// route conversation turns to Claude, Codex, Grok, or any future CLI
 // without knowing the wire details.
 //
-// Scope: covers the interactive worker call (one turn in, one turn out, with
-// resumable session ids and per-role tool gating). Memory digests, async
-// tasks, and the journal observers stay on `runClaude` directly — they're
-// Claude-specific batch pipelines and not in this interface.
+// Scope: covers the interactive worker call and general provider-backed agent
+// tasks (memory digests, async/background work, browser tasks). A few legacy
+// utilities may still call a specific CLI directly, but runtime work should
+// flow through this interface.
 
 export type AskParams = {
   input: string
@@ -32,11 +32,10 @@ export type AskResult = {
   usage: AskUsage
 }
 
-export type ProviderName = 'claude' | 'codex'
+export type ProviderName = 'claude' | 'codex' | 'grok'
 
-// Sandbox/permission tier. Claude maps these onto --permission-mode +
-// --allowedTools defaults; Codex maps them onto its three approval levels
-// (read-only / auto / full-access).
+// Sandbox/permission tier. Providers map this onto their native permission
+// vocabulary.
 export type TaskMode = 'read-only' | 'auto' | 'full'
 
 // Timeout bucket — providers pick the actual milliseconds from spawn.ts's
@@ -52,8 +51,8 @@ export type RunTaskParams = {
   caller: TaskCaller
   mode: TaskMode
   lane: TaskLane
-  // Additional directories the agent can read/write. Maps to --add-dir on
-  // both Claude and Codex.
+  // Additional directories the agent can read/write. Providers that expose
+  // explicit extra roots map this to their native flag.
   addDirs?: string[]
   // Resume an existing session (browser worker uses this to keep one
   // long-lived agent). Opaque provider-native id.
@@ -63,9 +62,8 @@ export type RunTaskParams = {
   // all framing inside their prompt and don't need it. The async/browser
   // workers turn this on so their replies sound like the main chat.
   includeSystemPrompt?: boolean
-  // Per-tool allowlist. Claude honors it via --allowedTools; Codex ignores
-  // it (mode handles tool gating coarsely). Pass undefined or 'all' for
-  // no restriction.
+  // Per-tool allowlist. Providers translate this where their CLI has a matching
+  // permission surface. Pass undefined or 'all' for no restriction.
   allowedTools?: string[] | 'all'
 }
 
@@ -89,6 +87,7 @@ export type UsageReportingMode = 'per-turn' | 'cumulative'
 export interface AiProvider {
   readonly name: ProviderName
   readonly usageReportingMode: UsageReportingMode
+  readonly contextWindow: number
   // Conversational chat turn — opinionated defaults (always system prompt,
   // memory + media dirs auto-included, session id tracked).
   ask(params: AskParams): Promise<AskResult>

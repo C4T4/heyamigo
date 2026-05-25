@@ -1,6 +1,6 @@
 # heyamigo
 
-A WhatsApp-resident assistant. Claude or Codex under the hood, durable SQLite queues, per-sender timezone scheduling, two-track architecture so browser work never blocks the chat.
+A WhatsApp-resident assistant. Claude, Codex, or Grok under the hood, durable SQLite queues, per-sender timezone scheduling, two-track architecture so browser work never blocks the chat.
 
 ```
 WhatsApp ─► inbound ─► chat workers ─► outbound ─► WhatsApp
@@ -14,7 +14,7 @@ WhatsApp ─► inbound ─► chat workers ─► outbound ─► WhatsApp
 - **Long-term memory per person, per chat, per topic.** Files on disk. The agent decides what's worth keeping; background workers consolidate while you're not chatting.
 - **A relevance watchlist.** Open loops the agent tracks on your behalf — questions you'd forget, things you're waiting on — surfaced naturally when the moment matches. Built like external working memory for the user.
 - **Scheduling in the sender's timezone.** Natural language → `[REMIND: 2026-05-26 09:00 — ...]` or `[CRON: 0 9 * * 1 PROMPT — ...]`. Fires at the user's wall-clock 9am, not the server's. Cron variants: deliver text, run AI, kick off async work, or drive a browser.
-- **A real Chrome.** Browser delegation via `[ASYNC-BROWSER: ...]` to a parallel Claude session on a shared logged-in Chrome over CDP. TikTok, Instagram, anywhere the owner is logged in. SSH-tunneled noVNC for setup.
+- **A real Chrome.** Browser delegation via `[ASYNC-BROWSER: ...]` to a parallel provider session on a shared logged-in Chrome over CDP. TikTok, Instagram, anywhere the owner is logged in. SSH-tunneled noVNC for setup.
 - **Per-reply footer with confirmation tags.** Every side effect from the turn is visible: `_9.9s · 465k↑ 169↓ · +remind · +thread-new · +digest_`. No guessing whether a schedule actually got created.
 - **Default-deny proactive messaging.** Groups stay silent unless explicitly opted in. Per-role token quotas, file-size caps, tool restrictions.
 
@@ -31,7 +31,10 @@ npx @c4t4/heyamigo start                # background, auto-restart
 npx @c4t4/heyamigo logs                 # tail
 ```
 
-Codex instead of Claude: install `@openai/codex` and set `ai.provider: "codex"` in `config/config.json`.
+Other providers:
+
+- Codex: install `@openai/codex` and set `ai.provider: "codex"` in `config/config.json`.
+- Grok Build: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, run `grok login`, and set `ai.provider: "grok"`.
 
 ## In-chat commands
 

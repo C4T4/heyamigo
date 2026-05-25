@@ -74,7 +74,11 @@ function load(): SessionMap {
           ('codex' in obj &&
             typeof obj.codex === 'object' &&
             obj.codex !== null &&
-            'sessionId' in (obj.codex as object))
+            'sessionId' in (obj.codex as object)) ||
+          ('grok' in obj &&
+            typeof obj.grok === 'object' &&
+            obj.grok !== null &&
+            'sessionId' in (obj.grok as object))
         if (isNamespaced) {
           out[jid] = obj as ProviderSessions
         } else if ('sessionId' in obj) {
