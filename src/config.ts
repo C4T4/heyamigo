@@ -72,6 +72,10 @@ const ConfigSchema = z.object({
     errorMessage: z.string(),
     maxMessageAgeMs: z.number(),
     showStats: z.boolean().default(true),
+    // Hard cap on outbound media size enforced by the sender worker.
+    // Default 25MB matches WhatsApp's published per-message media limit
+    // for most kinds. Set to null to disable the check.
+    maxOutboundMediaBytes: z.number().int().positive().nullable().default(25 * 1024 * 1024),
   }),
   storage: z.object({
     messagesDir: z.string(),

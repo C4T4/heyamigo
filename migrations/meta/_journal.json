@@ -8,6 +8,13 @@
       "when": 1779668680508,
       "tag": "0000_phase0_identity_control",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1779669712372,
+      "tag": "0001_phase1_outbound",
+      "breakpoints": true
     }
   ]
 }

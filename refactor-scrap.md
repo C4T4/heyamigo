@@ -216,3 +216,95 @@ deterministic + human-readable. Tradeoffs:
 If we ever want to merge two persons (`[MERGE-PERSONS:]` marker in
 refactor.md), we use the merge_persons op in memory_writes to point
 all identities at the surviving person_id and delete the dead one.
+
+## 2026-05-24  Phase 1  Quoting deferred (known regression)
+
+`handleReply` used to embed the original WAMessage as a quoted reply
+in group chats (`config.reply.quoteInGroups`). The Baileys API needs
+the full WAMessage object embedded in `contextInfo`, not just an id.
+
+The outbound queue carries only `quote_msg_id` (a string). To support
+quoting properly through the queue we'd need to:
+  (a) serialize the WAMessage into the outbound row JSON, or
+  (b) keep an in-memory LRU of recent WAMessages by id that the
+      sender worker can rehydrate from.
+
+Option (b) is the right answer (lossless, no schema growth) but
+deferred. For Phase 1, group replies just lose the quote — visible
+regression. Note this in the refactor.md tracker and fix in a small
+follow-up slice once Phase 1 is stable.
+
+## 2026-05-24  Phase 1  Post-send bookkeeping = sender worker's job
+
+The pre-refactor `handleReply` did three things per piece:
+  1. Send via `sock.sendMessage`
+  2. `await append(...)` to the message log
+  3. `unlinkSync(filePath)` for media files
+
+If we keep (2) and (3) in `handleReply` while routing (1) through a
+queue, the log gets populated BEFORE the send actually happens. Worse,
+if the bot crashes mid-queue, the message log claims the bot said
+things it didn't.
+
+Decision: move (2) and (3) into the sender worker, in a `afterSend`
+hook that runs *after* `markOutboundDone` returns true. The log
+reflects what was actually sent. Media files get cleaned up only when
+the send succeeded.
+
+Edge: file cleanup is opt-out for files in `config.storage.mediaDir`
+(inbound media has its own retention cron). Everything else
+(claude-generated outbox stuff, files Claude wrote to /tmp) gets
+unlinked.
+
+## 2026-05-24  Phase 1  Idempotency key format
+
+`reply-<jid>-<ts>-<piece-idx>` and `initiate-<jid>-<ts>-<piece-idx>`.
+
+Why include the timestamp: handleReply might be called multiple times
+for the same job (e.g. orchestrator reclaims a slow chat worker and
+the original eventually returns). Without a timestamp, the second
+call's inserts would collide with the first's by piece index and
+silently no-op (good — that's idempotency) — but if the jobs are
+actually different (different replies), the second one would be
+swallowed.
+
+The timestamp guarantees different invocations get different key
+prefixes; collisions only happen within a single invocation (which
+is what we want, to dedupe). Once the inbound queue lands in Phase 4
+we'll switch to `from-inbound-<id>-<piece-idx>` which is cleaner —
+the inbound id is stable per message regardless of when handleReply
+fires.
+
+## 2026-05-24  Phase 1  Backoff schedule + TTL + max attempts
+
+- Backoff: 1s, 5s, 30s, 2min. After the 4th attempt → DLQ.
+- TTL for sender-side reclaim: 60s (config? no — hardcoded for now,
+  fine for single-instance sender).
+- Max outbound media cap: 25MB (matches WA limits for most kinds).
+  Configurable via `reply.maxOutboundMediaBytes`, null = unlimited.
+
+These are all judgment calls picked from refactor.md. Worth revisiting
+if real ops show different numbers are needed.
+
+## 2026-05-24  Phase 1  Sender worker stays single-instance
+
+Pool size 1. Two reasons:
+  - Preserves per-address message ordering naturally (the only worker
+    has to send them in claim order).
+  - WA throttles per-IP; multiple parallel senders don't help and
+    risk bans.
+If we ever want per-channel parallelism (e.g. one WA sender + one TG
+sender), we'd add a `channel` filter to the claim query so each
+sender only picks rows for its channel. Cheap to add later.
+
+## 2026-05-24  Phase 1  Baileys error classification
+
+Transient vs Permanent split is a heuristic based on substrings in
+the error message ("connection closed", "timed out", "socket", etc).
+Brittle but pragmatic — Baileys doesn't expose typed errors. If we
+ever miscategorize and DLQ a transient error or retry-loop a
+permanent one, add to the substring list and ship.
+
+Worst case: a permanent error miscategorized as transient gets
+retried 4 times then DLQ'd. Visible in `outbound` rows, no data loss.
+Acceptable.

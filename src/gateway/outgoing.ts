@@ -1,11 +1,12 @@
-import { existsSync, unlinkSync } from 'fs'
+import { existsSync, statSync } from 'fs'
+import { extname } from 'path'
 import { isJidGroup, type WAMessage } from 'baileys'
 import { config } from '../config.js'
+import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
+import { enqueueOutbound } from '../queue/outbound.js'
 import type { Job, ReplyStats, Result } from '../queue/types.js'
-import { append } from '../store/messages.js'
-import { detectMediaType, sendFile, sendText } from '../wa/sender.js'
-import { getSocket } from '../wa/socket.js'
+import { detectMediaType } from '../wa/sender.js'
 
 // Matches [FILE: path], [IMAGE: path], [VIDEO: path], [AUDIO: path], [DOCUMENT: path]
 const FILE_TAG_RE = /\[(?:FILE|IMAGE|VIDEO|AUDIO|DOCUMENT):\s*([^\]]+)\]/gi
@@ -29,126 +30,171 @@ function extractFiles(reply: string): ParsedReply {
   return { text, files }
 }
 
+function kindForFile(filePath: string): 'image' | 'video' | 'audio' | 'document' {
+  return detectMediaType(filePath)
+}
+
+const MIME_MAP: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp',
+  '.mp4': 'video/mp4', '.avi': 'video/avi', '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.opus': 'audio/opus',
+  '.m4a': 'audio/mp4', '.wav': 'audio/wav',
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.csv': 'text/csv', '.txt': 'text/plain', '.zip': 'application/zip',
+}
+
+function mimeFor(filePath: string): string {
+  return MIME_MAP[extname(filePath).toLowerCase()] ?? 'application/octet-stream'
+}
+
+function fileSize(filePath: string): number | undefined {
+  try { return statSync(filePath).size } catch { return undefined }
+}
+
+// `originalMsg` is currently ignored when routing through the outbound
+// queue — Baileys quoting needs the full WAMessage embedded in
+// contextInfo, which we'd have to serialize through the DB row and
+// reconstruct. Known regression for Phase 1; see refactor-scrap.md.
+// Kept in the signature so existing callers don't change.
 export async function handleReply(
   job: Job,
   result: Result,
-  originalMsg: WAMessage,
+  _originalMsg: WAMessage,
 ): Promise<void> {
-  const sock = getSocket()
-  if (!sock) {
-    logger.warn({ jid: job.jid }, 'no socket available to send reply')
-    return
-  }
-
   const raw = result.reply?.replaceAll('—', ', ').replaceAll('–', '-')
   if (!raw) return
 
   const { text, files } = extractFiles(raw)
   const isGroup = isJidGroup(job.jid) === true
-  const quoted = isGroup && config.reply.quoteInGroups ? originalMsg : undefined
+  void isGroup // quoting deferred; see comment above
+
+  const address = formatAddress(jidToAddress(job.jid))
 
   const footer =
     result.stats && config.reply.showStats
       ? formatStatsFooter(result.stats)
       : ''
 
-  try {
-    // Send files first (images, videos, PDFs, audio, etc.)
-    for (const filePath of files) {
-      const isFirst = filePath === files[0]
-      const mediaType = detectMediaType(filePath)
-      // First file gets caption if text is short + single file + supports captions
-      const supportsCaption = mediaType !== 'audio'
-      const caption =
-        isFirst && text && text.length <= 1000 && files.length === 1 && supportsCaption
-          ? text
-          : undefined
-      // Append footer to caption at send time only (not to storage). Only
-      // when this media file is the final user-facing payload (no text
-      // coming after, single file with caption case).
-      const willHaveTextAfter =
-        !!text &&
-        !(files.length === 1 && text.length <= 1000 && supportsCaption)
-      const captionForSend =
-        caption && footer && !willHaveTextAfter
-          ? `${caption}\n\n${footer}`
-          : caption
-      await sendFile(
-        sock,
-        job.jid,
-        filePath,
-        captionForSend,
-        isFirst ? quoted : undefined,
-      )
-      await append({
-        id: `reply-file-${Date.now()}`,
-        jid: job.jid,
-        direction: 'out',
-        fromMe: true,
-        sender: sock.user?.id ?? '',
-        senderNumber: config.owner.number,
-        timestamp: Math.floor(Date.now() / 1000),
-        text: caption || `[${mediaType}: ${filePath}]`,
-        messageType: `${mediaType}Message`,
-        mediaPath: filePath,
-        mediaType,
-      })
-      logger.info({ jid: job.jid, path: filePath, mediaType }, 'file sent')
-      // Clean up temp file after sending
-      try { unlinkSync(filePath) } catch {}
-      if (files.length > 1) await sleep(config.reply.chunkDelayMs)
-    }
-
-    // Send text (skip if already used as caption on single file)
-    const textAlreadySent =
-      files.length === 1 && text && text.length <= 1000 && detectMediaType(files[0]!) !== 'audio'
-    if (text && !textAlreadySent) {
-      const chunks = chunkText(text, config.reply.chunkChars)
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]!
-        const q = i === 0 && files.length === 0 ? quoted : undefined
-        const isLast = i === chunks.length - 1
-        const chunkForSend =
-          isLast && footer ? `${chunk}\n\n${footer}` : chunk
-        await sendText(sock, job.jid, chunkForSend, q)
-
-        await append({
-          id: `reply-${Date.now()}-${i}`,
-          jid: job.jid,
-          direction: 'out',
-          fromMe: true,
-          sender: sock.user?.id ?? '',
-          senderNumber: config.owner.number,
-          timestamp: Math.floor(Date.now() / 1000),
-          text: chunk,
-          messageType: 'conversation',
-        })
-
-        if (i < chunks.length - 1) await sleep(config.reply.chunkDelayMs)
-      }
-    }
-
-    if (config.reply.typingIndicator) {
-      await sock
-        .sendPresenceUpdate('paused', job.jid)
-        .catch(() => undefined)
-    }
-
-    logger.info(
-      {
-        jid: job.jid,
-        files: files.length,
-        chars: text.length,
-      },
-      'reply sent',
-    )
-  } catch (err) {
-    logger.error({ err, jid: job.jid }, 'failed to send reply')
+  let pieceIdx = 0
+  const baseKey = `reply-${job.jid}-${Date.now()}`
+  const enqueuePiece = (input: Parameters<typeof enqueueOutbound>[0]) => {
+    enqueueOutbound({ ...input, idempotencyKey: `${baseKey}-${pieceIdx++}` })
   }
+
+  // Files first. Caption goes on the single-file-with-short-text case,
+  // matching pre-refactor behavior.
+  for (let i = 0; i < files.length; i++) {
+    const filePath = files[i]!
+    const isFirst = i === 0
+    const kind = kindForFile(filePath)
+    const supportsCaption = kind !== 'audio'
+    const caption =
+      isFirst && text && text.length <= 1000 && files.length === 1 && supportsCaption
+        ? text
+        : undefined
+    const willHaveTextAfter =
+      !!text && !(files.length === 1 && text.length <= 1000 && supportsCaption)
+    const captionForSend =
+      caption && footer && !willHaveTextAfter
+        ? `${caption}\n\n${footer}`
+        : caption
+    enqueuePiece({
+      address,
+      kind,
+      text:       captionForSend,
+      mediaPath:  filePath,
+      mediaMime:  mimeFor(filePath),
+      mediaBytes: fileSize(filePath),
+    })
+  }
+
+  // Text — skip if already used as a caption on a single file.
+  const textAlreadySent =
+    files.length === 1 &&
+    text &&
+    text.length <= 1000 &&
+    kindForFile(files[0]!) !== 'audio'
+
+  if (text && !textAlreadySent) {
+    const chunks = chunkText(text, config.reply.chunkChars)
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!
+      const isLast = i === chunks.length - 1
+      const chunkForSend = isLast && footer ? `${chunk}\n\n${footer}` : chunk
+      enqueuePiece({ address, kind: 'text', text: chunkForSend })
+    }
+  }
+
+  logger.info(
+    { jid: job.jid, files: files.length, chars: text.length, pieces: pieceIdx },
+    'reply enqueued for outbound',
+  )
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms))
+// Proactive outbound: send a message to a chat without an incoming
+// trigger. Same parsing as handleReply; enqueues outbound rows.
+// `text` may contain [FILE:...] tags; they're extracted and enqueued
+// as media. Returns true if anything was enqueued.
+export async function initiate(params: {
+  jid: string
+  text: string
+}): Promise<boolean> {
+  const raw = params.text.replaceAll('—', ', ').replaceAll('–', '-')
+  if (!raw.trim()) return false
+
+  const { text, files } = extractFiles(raw)
+  if (!text && files.length === 0) return false
+
+  const address = formatAddress(jidToAddress(params.jid))
+  let pieceIdx = 0
+  const baseKey = `initiate-${params.jid}-${Date.now()}`
+  const enqueuePiece = (input: Parameters<typeof enqueueOutbound>[0]) => {
+    enqueueOutbound({ ...input, idempotencyKey: `${baseKey}-${pieceIdx++}` })
+  }
+
+  for (let i = 0; i < files.length; i++) {
+    const filePath = files[i]!
+    const isFirst = i === 0
+    const kind = kindForFile(filePath)
+    const supportsCaption = kind !== 'audio'
+    const caption =
+      isFirst && text && text.length <= 1000 && files.length === 1 && supportsCaption
+        ? text
+        : undefined
+    enqueuePiece({
+      address,
+      kind,
+      text:       caption,
+      mediaPath:  filePath,
+      mediaMime:  mimeFor(filePath),
+      mediaBytes: fileSize(filePath),
+    })
+  }
+
+  const textAlreadySent =
+    files.length === 1 &&
+    text &&
+    text.length <= 1000 &&
+    kindForFile(files[0]!) !== 'audio'
+
+  if (text && !textAlreadySent) {
+    const chunks = chunkText(text, config.reply.chunkChars)
+    for (const chunk of chunks) {
+      enqueuePiece({ address, kind: 'text', text: chunk })
+    }
+  }
+
+  logger.info(
+    { jid: params.jid, files: files.length, chars: text.length, pieces: pieceIdx },
+    'proactive message enqueued for outbound',
+  )
+  return pieceIdx > 0
 }
 
 // Append-only-at-send footer. Never stored, never in Claude's recent-context
@@ -178,20 +224,11 @@ export function formatStatsFooter(stats: ReplyStats): string {
     else if (pct >= 70) parts.push(`${pct}% ctx`)
   }
 
-  // Fresh session — resume is default, says nothing
   if (stats.fresh) parts.push('fresh')
-
-  // Journal flagged — show each slug (usually 0 or 1)
   for (const slug of stats.journalSlugs) parts.push(`+journal:${slug}`)
-
-  // Digest fired
   if (stats.hasDigest) parts.push('+digest')
-
-  // Async spawned
   if (stats.asyncCount > 0) {
-    parts.push(
-      stats.asyncCount === 1 ? '+async' : `+${stats.asyncCount} async`,
-    )
+    parts.push(stats.asyncCount === 1 ? '+async' : `+${stats.asyncCount} async`)
   }
 
   return `_${parts.join(' · ')}_`
@@ -201,98 +238,6 @@ function compactTokens(n: number): string {
   if (n < 1000) return String(n)
   if (n < 10_000) return `${(n / 1000).toFixed(1)}k`
   return `${Math.round(n / 1000)}k`
-}
-
-// Proactive outbound: send a message to a chat without an incoming trigger.
-// Extracts [FILE:]/[IMAGE:]/etc tags the same way handleReply does — files
-// get sent as WhatsApp media, remaining text sent normally. Chunks, persists
-// to the message log, never throws. Callers are responsible for the
-// canSendProactive() gate — this function does not re-check it.
-export async function initiate(params: {
-  jid: string
-  text: string
-}): Promise<boolean> {
-  const sock = getSocket()
-  if (!sock) {
-    logger.warn({ jid: params.jid }, 'initiate: no socket available')
-    return false
-  }
-  const raw = params.text.replaceAll('—', ', ').replaceAll('–', '-')
-  if (!raw.trim()) return false
-
-  const { text, files } = extractFiles(raw)
-
-  try {
-    // Send any files first — images, video, PDFs, audio, etc.
-    for (const filePath of files) {
-      const isFirst = filePath === files[0]
-      const mediaType = detectMediaType(filePath)
-      const supportsCaption = mediaType !== 'audio'
-      const caption =
-        isFirst &&
-        text &&
-        text.length <= 1000 &&
-        files.length === 1 &&
-        supportsCaption
-          ? text
-          : undefined
-      await sendFile(sock, params.jid, filePath, caption)
-      await append({
-        id: `initiate-file-${Date.now()}`,
-        jid: params.jid,
-        direction: 'out',
-        fromMe: true,
-        sender: sock.user?.id ?? '',
-        senderNumber: config.owner.number,
-        timestamp: Math.floor(Date.now() / 1000),
-        text: caption || `[${mediaType}: ${filePath}]`,
-        messageType: `${mediaType}Message`,
-        mediaPath: filePath,
-        mediaType,
-      })
-      logger.info(
-        { jid: params.jid, path: filePath, mediaType },
-        'proactive file sent',
-      )
-      try { unlinkSync(filePath) } catch {}
-      if (files.length > 1) await sleep(config.reply.chunkDelayMs)
-    }
-
-    // Send text — skip only when it was used as the caption on a single file
-    const textAlreadySent =
-      files.length === 1 &&
-      text &&
-      text.length <= 1000 &&
-      detectMediaType(files[0]!) !== 'audio'
-    if (text && !textAlreadySent) {
-      const chunks = chunkText(text, config.reply.chunkChars)
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]!
-        await sendText(sock, params.jid, chunk)
-        await append({
-          id: `initiate-${Date.now()}-${i}`,
-          jid: params.jid,
-          direction: 'out',
-          fromMe: true,
-          sender: sock.user?.id ?? '',
-          senderNumber: config.owner.number,
-          timestamp: Math.floor(Date.now() / 1000),
-          text: chunk,
-          messageType: 'conversation',
-        })
-        if (i < chunks.length - 1) await sleep(config.reply.chunkDelayMs)
-      }
-    }
-
-    logger.info(
-      { jid: params.jid, files: files.length, chars: text.length },
-      'proactive message sent',
-    )
-    return true
-  } catch (err) {
-    logger.error({ err, jid: params.jid }, 'initiate failed')
-    return false
-  }
 }
 
 export function chunkText(text: string, maxChars: number): string[] {
