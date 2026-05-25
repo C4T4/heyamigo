@@ -1,6 +1,6 @@
 {
   "name": "@c4t4/heyamigo",
-  "version": "0.9.22",
+  "version": "0.9.23",
   "description": "WhatsApp AI bot powered by Claude with long-term memory, browser control, and role-based access",
   "type": "module",
   "main": "dist/index.js",
@@ -55,6 +55,7 @@
     "baileys": "7.0.0-rc.9",
     "better-sqlite3": "^12.10.0",
     "commander": "^14.0.3",
+    "croner": "^10.0.1",
     "drizzle-orm": "^0.45.2",
     "fastq": "^1.17.1",
     "pino": "^9.3.2",

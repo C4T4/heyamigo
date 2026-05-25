@@ -13,6 +13,9 @@ export type ScheduleItem = {
   recurrence: string | null
   nextRunAt: number
   bodyPreview: string
+  fireCount: number
+  totalInputTokens: number
+  totalOutputTokens: number
 }
 
 // Pull crons whose payload targets the given chat address. We tag
@@ -50,6 +53,9 @@ export function listChatSchedules(
       recurrence: r.recurrence,
       nextRunAt: r.nextRunAt,
       bodyPreview: extractBodyPreview(r.payload),
+      fireCount: r.fireCount,
+      totalInputTokens: r.totalInputTokens,
+      totalOutputTokens: r.totalOutputTokens,
     }))
 }
 
@@ -80,7 +86,22 @@ export function formatScheduleList(
     const tail = item.recurrence ? ` · ${item.recurrence}` : ''
     lines.push(`  ${when}${tail}`)
     if (item.bodyPreview) lines.push(`    "${item.bodyPreview}"`)
+    // Cost line for recurring crons that have fired at least once.
+    if (kind === 'recurring' && item.fireCount > 0) {
+      const cost = formatTokenCost(item.totalInputTokens, item.totalOutputTokens)
+      lines.push(`    fired ${item.fireCount}× · ${cost}`)
+    }
   }
   lines.push(`Timezone: ${tz}`)
   return lines.join('\n')
+}
+
+function formatTokenCost(input: number, output: number): string {
+  const total = input + output
+  if (total === 0) return 'no tokens'
+  const compact = (n: number) =>
+    n < 1000 ? `${n}`
+    : n < 10_000 ? `${(n / 1000).toFixed(1)}k`
+    : `${Math.round(n / 1000)}k`
+  return `${compact(input)}↑ ${compact(output)}↓ tokens`
 }

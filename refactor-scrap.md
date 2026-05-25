@@ -1228,3 +1228,69 @@ Validated end-to-end:
 - "10:30am" in BA vs Sydney → unix times 13h apart (correct TZ delta)
 - Bad inputs ("sometime later", "at 25:00", "in -1h") all rejected
 - Bad markers now log a clear warning instead of silently dropping
+
+## 2026-05-25  CRON  Standard cron syntax + variant verbs + cost tracking
+
+User push: replace the custom @every/@daily/@weekly grammar with
+standard POSIX cron + variant verbs that route the fire to AI lanes,
+plus token-usage tracking per cron so users see what each recurring
+schedule costs.
+
+### Schema changes
+- Migration 0009: ALTER TABLE crons ADD fire_count, total_input_tokens,
+  total_output_tokens (all INT default 0).
+- crons.timezone (added earlier) used by croner.
+
+### Croner integration
+- Replaced ~100 lines of custom @every/@daily/@weekly parsing in
+  crons.ts with hybrid: own @every Nu shortcut (croner doesn't grok
+  it) + croner for everything else (5-field POSIX, aliases, Nth-
+  weekday, DST math).
+- Net: ~50 lines added, ~100 deleted.
+
+### Variant verbs (SAY/PROMPT/ASYNC/BROWSER)
+- digest-flag.ts parseCronPayload now accepts `[CRON: <expr> VERB —
+  body]` with optional trailing verb. Default = SAY (back-compat).
+- worker.ts switches on c.variant to pick enqueueInto target:
+  SAY     → outbound (literal text, no AI; today's behavior)
+  PROMPT  → inbound (synthesized as if user typed it; AI runs)
+  ASYNC   → async  (background AI task)
+  BROWSER → browser (browser AI task)
+
+### cron-dispatch.ts wired
+- dispatchInbound: synthesizes inbound row with `actor_address=
+  'system:cron:<id>'`, `trigger_reason='cron'`, and a Job payload
+  carrying `cronId: row.id` so chat worker can attribute usage.
+- dispatchAsync / dispatchBrowser: enqueue into respective lanes with
+  the cron's body as task description.
+- All four arms (SAY/PROMPT/ASYNC/BROWSER) now work end-to-end.
+
+### Cost attribution
+- Job.cronId? optional field. Set by dispatchInbound for PROMPT
+  variant; chat worker calls addCronUsage(cronId, turnInput,
+  turnOutput) after AI returns.
+- markCronFired bumps fire_count always (even for SAY).
+- /crons output now shows "fired Nx · Xk↑ Yk↓ tokens" for recurring
+  crons with usage. SAY crons show fire_count only (no token cost).
+
+### Open follow-ups (deferred)
+- ASYNC variant cost tracking — general async lane is in-memory fastq;
+  task doesn't carry cronId through. Would need to thread it OR
+  migrate that lane to SQLite (same pattern as browser_tasks).
+- BROWSER variant cost tracking — browser_tasks table doesn't have
+  cron_id column yet. ~15 lines to add + worker logic.
+- Both deferred since PROMPT covers the most common "recurring AI
+  task" use case and the others' wiring is mechanical.
+
+### Validated end-to-end
+- @every 5m / @every 30s / @hourly / @daily / 0 9 * * * /
+  0 9 * * 1-5 / 0 9 1 * * / 0 9 * * 1#1 → all compute correct next
+  run in BA tz
+- "garbage" rejected with log warning
+- All 4 variant verbs parse correctly; legacy unverb'd parses as SAY
+- PROMPT dispatch: cron row → synthesized inbound row with
+  cronId=1 in payload → ready for chat worker
+- addCronUsage accumulates across firings: 1234+800 = 2034 input,
+  567+400 = 967 output
+- /crons output: "Tue, 26 May 2026, 09:00 · 0 9 * * *\n  fired 1× ·
+  2.0k↑ 967↓ tokens"

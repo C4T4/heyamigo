@@ -3,16 +3,22 @@
 // then `markCronFired()` updates `lastRunAt` and recomputes
 // `nextRunAt` (or deletes if one-shot).
 //
-// Recurrence formats supported:
-//   '@every <n><unit>'        n>0 integer; unit s|m|h|d
-//   '@daily HH:MM'            owner-tz local
-//   '@weekly DOW HH:MM'       owner-tz local; DOW = mon..sun
+// Recurrence: standard 5-field POSIX cron + croner's @every / @daily
+// shorthand. Croner handles parsing, timezone, DST.
 //
-// No general cron expression parser — every existing setInterval in
-// the bot maps to one of the three forms above. Adding cron parsing
-// is straightforward later if we need it.
+//   '0 9 * * *'      daily at 9am sender-tz
+//   '0 9 * * 1-5'    weekdays at 9am
+//   '0 9 1 * *'      first of every month at 9am
+//   '0 9 25 12 *'    every Dec 25 at 9am
+//   '*/30 * * * *'   every 30 minutes
+//   '0 9 * * 1#1'    first Monday of every month at 9am
+//   '@every 5m'      every 5 minutes (croner extension)
+//   '@daily'         croner alias for '0 0 * * *' (use full cron for sub-hour times)
+//
+// Day-of-week: 0-6 (Sun-Sat) or names MON..SUN. Both work.
 
-import { and, asc, eq, lte } from 'drizzle-orm'
+import { and, asc, eq, lte, sql } from 'drizzle-orm'
+import { Cron } from 'croner'
 import { config } from '../config.js'
 import { getDb } from '../db/index.js'
 import { logger } from '../logger.js'
@@ -21,6 +27,7 @@ import { crons } from '../db/schema.js'
 export type CronTarget =
   | 'inbound'
   | 'async'
+  | 'browser'
   | 'outbound'
   | 'memory_writes'
   | 'internal'              // in-process handler registry (cron-handlers.ts)
@@ -110,12 +117,17 @@ export function listDueCrons(asOf: number = Math.floor(Date.now() / 1000)): Cron
 
 // Called by orchestrator after the cron's payload has been enqueued
 // into its target queue. Recurring crons get nextRunAt advanced;
-// one-shots get deleted. Uses the row's stored timezone for @daily /
-// @weekly resolution; falls back to owner tz for legacy rows.
+// one-shots get deleted. Always bumps fire_count for visibility.
 export function markCronFired(row: CronRow): void {
   const db = getDb()
   const now = Math.floor(Date.now() / 1000)
   if (row.recurrence === null) {
+    // One-shot. Bump fire_count first (in case anything else queries
+    // before delete), then delete.
+    db.update(crons)
+      .set({ fireCount: sql`${crons.fireCount} + 1` })
+      .where(eq(crons.id, row.id))
+      .run()
     db.delete(crons).where(eq(crons.id, row.id)).run()
     return
   }
@@ -127,14 +139,42 @@ export function markCronFired(row: CronRow): void {
       'cron has unparseable recurrence after firing; disabling',
     )
     db.update(crons)
-      .set({ enabled: 0, lastRunAt: now })
+      .set({
+        enabled: 0,
+        lastRunAt: now,
+        fireCount: sql`${crons.fireCount} + 1`,
+      })
       .where(eq(crons.id, row.id))
       .run()
     return
   }
   db.update(crons)
-    .set({ lastRunAt: now, nextRunAt: next })
+    .set({
+      lastRunAt: now,
+      nextRunAt: next,
+      fireCount: sql`${crons.fireCount} + 1`,
+    })
     .where(eq(crons.id, row.id))
+    .run()
+}
+
+// Attribution: called by the chat / async / browser workers after an
+// AI-backed firing completes. Increments running totals on the cron
+// row so /crons can show cumulative cost. Safe to call concurrently —
+// the SQL `col + ?` form is atomic.
+export function addCronUsage(
+  id: number,
+  inputTokens: number,
+  outputTokens: number,
+): void {
+  if (!id || (inputTokens <= 0 && outputTokens <= 0)) return
+  const db = getDb()
+  db.update(crons)
+    .set({
+      totalInputTokens:  sql`${crons.totalInputTokens}  + ${inputTokens}`,
+      totalOutputTokens: sql`${crons.totalOutputTokens} + ${outputTokens}`,
+    })
+    .where(eq(crons.id, id))
     .run()
 }
 
@@ -160,25 +200,22 @@ export function setCronEnabled(name: string, enabled: boolean): boolean {
 }
 
 // ──────────────────────────────────────────────────────────────────
-// Recurrence parser
+// Recurrence — hybrid: @every Nu shortcut + croner for the rest
 // ──────────────────────────────────────────────────────────────────
 
-const EVERY_RE = /^@every\s+(\d+)\s*([smhd])$/
-const DAILY_RE = /^@daily\s+(\d{1,2}):(\d{2})$/
-const WEEKLY_RE = /^@weekly\s+(mon|tue|wed|thu|fri|sat|sun)\s+(\d{1,2}):(\d{2})$/i
-
-const UNIT_SECONDS: Record<string, number> = {
+// Croner handles cron expressions + @hourly/@daily/@weekly/@monthly/
+// @yearly aliases, but does NOT support @every Nu shorthand (custom
+// extension some libs ship). We keep our own tiny @every parser so
+// users can write "@every 5m" / "@every 30s" / "@every 3h" — useful
+// for short intervals where the 5-field cron equivalent is awkward
+// (or impossible, for sub-minute intervals).
+const EVERY_RE = /^@every\s+(\d+)\s*([smhd])$/i
+const UNIT_SEC: Record<string, number> = {
   s: 1, m: 60, h: 3600, d: 86400,
 }
 
-const DOW_INDEX: Record<string, number> = {
-  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
-}
-
-// Returns the next-run timestamp (unix seconds) for a recurrence, or
-// null for an unparseable format. tz defaults to owner timezone but
-// per-user crons should pass the sender's local tz so @daily HH:MM
-// fires in the user's wall-clock time, not the server's.
+// Returns the next-run timestamp (unix seconds), or null when the
+// expression doesn't parse.
 export function computeNextRun(
   recurrence: string | null,
   nowSec: number,
@@ -186,107 +223,28 @@ export function computeNextRun(
 ): number | null {
   if (!recurrence) return null
 
-  const everyMatch = EVERY_RE.exec(recurrence)
+  // Fast path: @every Nu shorthand (croner doesn't grok this).
+  const everyMatch = EVERY_RE.exec(recurrence.trim())
   if (everyMatch) {
     const n = parseInt(everyMatch[1]!, 10)
-    const unit = everyMatch[2]!
-    if (n <= 0) return null
-    return nowSec + n * (UNIT_SECONDS[unit] ?? 0)
+    const unit = everyMatch[2]!.toLowerCase()
+    const mult = UNIT_SEC[unit]
+    if (!mult || n <= 0) return null
+    return nowSec + n * mult
   }
 
-  const dailyMatch = DAILY_RE.exec(recurrence)
-  if (dailyMatch) {
-    return nextLocalHourMinute(
-      nowSec,
-      parseInt(dailyMatch[1]!, 10),
-      parseInt(dailyMatch[2]!, 10),
-      null,
-      tz,
+  // Everything else → croner. Handles 5-field POSIX cron,
+  // @hourly/@daily/@weekly/@monthly/@yearly aliases, DST math.
+  try {
+    const c = new Cron(recurrence, { timezone: tz })
+    const nextDate = c.nextRun(new Date(nowSec * 1000))
+    if (!nextDate) return null
+    return Math.floor(nextDate.getTime() / 1000)
+  } catch (err) {
+    logger.warn(
+      { recurrence, err: (err as Error).message },
+      'computeNextRun: unparseable recurrence',
     )
+    return null
   }
-
-  const weeklyMatch = WEEKLY_RE.exec(recurrence)
-  if (weeklyMatch) {
-    const dow = DOW_INDEX[weeklyMatch[1]!.toLowerCase()]!
-    return nextLocalHourMinute(
-      nowSec,
-      parseInt(weeklyMatch[2]!, 10),
-      parseInt(weeklyMatch[3]!, 10),
-      dow,
-      tz,
-    )
-  }
-
-  return null
-}
-
-// Compute the next unix-seconds at HH:MM in the given timezone,
-// optionally constrained to a day-of-week. Always returns a moment
-// strictly in the future (> nowSec).
-function nextLocalHourMinute(
-  nowSec: number,
-  hour: number,
-  minute: number,
-  dayOfWeek: number | null,
-  tz: string,
-): number {
-  const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    weekday: 'short', hour12: false,
-  })
-
-  // Walk forward in 1-hour steps from now until we land on the right
-  // (day, dow) and the candidate moment is in the future. Cheaper than
-  // it sounds — at most 7*24 = 168 iterations.
-  for (let step = 0; step < 24 * 8; step++) {
-    const candidate = new Date((nowSec + step * 3600) * 1000)
-    const parts = fmt.formatToParts(candidate)
-    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
-    const cYear  = parseInt(get('year'), 10)
-    const cMonth = parseInt(get('month'), 10) - 1
-    const cDay   = parseInt(get('day'), 10)
-    const wdName = get('weekday').toLowerCase()
-    const cDow   = DOW_INDEX[wdName] ?? -1
-
-    if (dayOfWeek !== null && cDow !== dayOfWeek) continue
-
-    // Build a UTC instant for HH:MM on (cYear,cMonth,cDay) in the tz.
-    // Easier path: format candidate at hour/minute and re-parse via
-    // the timezone-offset trick.
-    const candidateLocal = makeDateInTz(cYear, cMonth, cDay, hour, minute, tz)
-    if (candidateLocal > nowSec) return candidateLocal
-  }
-  // Fallback (shouldn't be reachable): an hour from now.
-  return nowSec + 3600
-}
-
-// Build a unix-seconds for a given Y/M/D HH:MM in a named timezone.
-// Done by guess-and-correct: assume the input is UTC, see how the tz
-// renders that instant, take the delta, apply it.
-function makeDateInTz(
-  year: number, month: number, day: number,
-  hour: number, minute: number,
-  tz: string,
-): number {
-  const guessUtcMs = Date.UTC(year, month, day, hour, minute, 0)
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  })
-  const parts = fmt.formatToParts(new Date(guessUtcMs))
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '0'
-  const renderedUtcMs = Date.UTC(
-    parseInt(get('year'), 10),
-    parseInt(get('month'), 10) - 1,
-    parseInt(get('day'), 10),
-    parseInt(get('hour'), 10),
-    parseInt(get('minute'), 10),
-    parseInt(get('second'), 10),
-  )
-  const offsetMs = guessUtcMs - renderedUtcMs
-  return Math.floor((guessUtcMs + offsetMs) / 1000)
 }

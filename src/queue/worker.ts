@@ -14,7 +14,7 @@ import { estimate as estimateJob } from '../estimates/index.js'
 import { extractFlags, filterFlagsByRole } from '../memory/digest-flag.js'
 import { isValidSlug } from '../memory/journals.js'
 import { enqueueAsyncTask, enqueueBrowserTask } from './async-tasks.js'
-import { enqueueCron } from './crons.js'
+import { addCronUsage, enqueueCron, type CronTarget } from './crons.js'
 import { enqueueMemoryWrite } from './memory-writes.js'
 import { enqueueOutbound } from './outbound.js'
 import { formatLocalTime, resolveTimeExpression } from './time-expr.js'
@@ -123,6 +123,13 @@ async function callClaude(job: Job): Promise<Result> {
   // Cache-read tokens are excluded — they don't cost real budget.
   if (job.senderNumber) {
     addDailyTokens(job.senderNumber, turnInput + turnOutput)
+  }
+
+  // Cron-attribution: if this Job was synthesized by a [CRON: ... PROMPT]
+  // firing, charge the cron row's running total. Lets /crons show
+  // cumulative token cost per recurring schedule.
+  if (job.cronId) {
+    addCronUsage(job.cronId, turnInput, turnOutput)
   }
 
   const rawFlags = extractFlags(reply)
@@ -286,20 +293,57 @@ async function callClaude(job: Job): Promise<Result> {
   const cronBase = `chat-cron-${job.jid}-${Date.now()}`
   for (let i = 0; i < crons.length; i++) {
     const c = crons[i]!
+    // Variant maps to enqueueInto + payload shape. SAY stays as the
+    // current behavior (text delivery, no AI). PROMPT/ASYNC/BROWSER
+    // route through inbound/async/browser respectively at fire time.
+    let enqueueInto: CronTarget
+    let payload: unknown
+    switch (c.variant) {
+      case 'SAY':
+        enqueueInto = 'outbound'
+        payload = { address: chatAddress, kind: 'text', text: c.body }
+        break
+      case 'PROMPT':
+        enqueueInto = 'inbound'
+        payload = {
+          address: chatAddress,
+          prompt: c.body,
+          senderNumber: job.senderNumber,
+          personId: null,    // resolved at preamble time
+        }
+        break
+      case 'ASYNC':
+        enqueueInto = 'async'
+        payload = {
+          address: chatAddress,
+          description: c.body,
+          senderNumber: job.senderNumber,
+        }
+        break
+      case 'BROWSER':
+        enqueueInto = 'browser'
+        payload = {
+          address: chatAddress,
+          description: c.body,
+          senderNumber: job.senderNumber,
+        }
+        break
+    }
     try {
       enqueueCron({
         name:        `${cronBase}-${i}`,
-        enqueueInto: 'outbound',
-        payload:     { address: chatAddress, kind: 'text', text: c.body },
+        enqueueInto,
+        payload,
         recurrence:  c.recurrence,
-        // Sender's local timezone so @daily HH:MM fires in their
-        // wall-clock time, not the server's.
+        // Sender's local timezone so cron expressions like "0 9 * * *"
+        // fire at their wall-clock 9am, not the server's.
         timezone:    senderTz,
       })
       logger.info(
         {
           jid: job.jid,
           recurrence: c.recurrence,
+          variant: c.variant,
           tz: senderTz,
           chars: c.body.length,
         },
@@ -307,7 +351,7 @@ async function callClaude(job: Job): Promise<Result> {
       )
     } catch (err) {
       logger.warn(
-        { err, jid: job.jid, recurrence: c.recurrence },
+        { err, jid: job.jid, recurrence: c.recurrence, variant: c.variant },
         'CRON tag failed (bad recurrence?)',
       )
     }

@@ -281,22 +281,45 @@ Do NOT use `in 30m`, `tomorrow at 9am`, or other shorthands. The parser
 accepts them as a fallback but the ISO form is the contract. Single
 format = no ambiguity, no locale concerns, no parser surprises.
 
-### Recurring crons — `[CRON: <recurrence> — <text>]`
+### Recurring crons — `[CRON: <expr> <VARIANT> — <body>]`
 
-Recurrence forms:
+Standard POSIX 5-field cron expression (or croner aliases) + an
+explicit verb that picks what happens at each firing.
 
-| Form | Example | Meaning |
+| `<expr>` example | Meaning (interpreted in sender's tz) |
+|---|---|
+| `0 9 * * *` | every day at 9am |
+| `0 9 * * 1-5` | weekdays at 9am |
+| `0 9 1 * *` | first of every month at 9am |
+| `0 9 25 12 *` | every December 25 at 9am |
+| `*/30 * * * *` | every 30 minutes |
+| `0 9 * * 1#1` | first Monday of every month at 9am |
+| `@every 5m` | every 5 minutes (croner shorthand) |
+| `@every 3h` | every 3 hours |
+
+`<VARIANT>` is one of:
+
+| Verb | Effect | Cost |
 |---|---|---|
-| `@every N<unit>` | `@every 1h` / `@every 5m` | Fires repeatedly at that interval. |
-| `@daily HH:MM` | `@daily 09:00` | Every day at that user-local time (24h format). |
-| `@weekly <DOW> HH:MM` | `@weekly mon 09:00` | Every week on that weekday at that time. |
+| `SAY` | Delivers `<body>` to the chat verbatim. No AI runs. | free |
+| `PROMPT` | Feeds `<body>` to YOU as if the user typed it. Reply lands in chat. | 1 AI inference / fire |
+| `ASYNC` | Kicks `<body>` off as a background async task. Reply lands in chat when done. | 1 AI inference + tools / fire |
+| `BROWSER` | Kicks `<body>` off as a browser task on the shared Chrome. | 1 AI inference + Playwright / fire |
 
 Examples:
 ```
-[CRON: @daily 09:00 — morning check-in: what's the focus today?]
-[CRON: @weekly sun 18:00 — weekly review: what worked, what didn't]
-[CRON: @every 2h — hydration reminder]
+[CRON: 0 9 * * * SAY — good morning, ready to roll?]
+[CRON: 0 9 * * 1 PROMPT — plan my week based on observations + active journals]
+[CRON: 0 9 * * 1 BROWSER — scrape my top 5 IG creators, report what's new]
+[CRON: 0 17 * * 5 ASYNC — read journals/health/entries.jsonl, flag patterns]
+[CRON: @every 4h PROMPT — quick hydration nudge if I've been quiet]
 ```
+
+The bot tracks cumulative token cost per recurring schedule. Run
+`/crons` to see fire count + tokens consumed for each — useful for
+spotting expensive schedules and pausing them.
+
+If you omit the variant verb (legacy form), it defaults to `SAY`.
 
 ### Cross-chat send — `[SEND-TEXT: ...]`
 

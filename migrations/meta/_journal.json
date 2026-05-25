@@ -64,6 +64,13 @@
       "when": 1779718733955,
       "tag": "0008_crons_timezone",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1779721119860,
+      "tag": "0009_crons_usage_tracking",
+      "breakpoints": true
     }
   ]
 }

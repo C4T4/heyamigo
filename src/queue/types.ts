@@ -10,6 +10,10 @@ export type Job = {
   // Tag allowlist for this sender's role. Undefined or 'all' = no
   // restriction. Set by gateway/incoming.ts from the resolved role.
   allowedTags?: string[] | 'all'
+  // Set when this job was synthesized by a [CRON: ... PROMPT — ...]
+  // firing. The chat worker attributes token usage back to this cron
+  // row via addCronUsage() so /crons can show cumulative cost.
+  cronId?: number
 }
 
 export type ReplyStats = {

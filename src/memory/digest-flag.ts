@@ -33,10 +33,17 @@ export type AsyncTaskFlag = { description: string }
 // group conversation, or vice versa.
 export type SendTextFlag = { address: string; body: string }
 
-// Recurring schedule. Recurrence in cron.ts's canonical format
-// (`@every Nu`, `@daily HH:MM`, `@weekly DOW HH:MM`). Body is the
-// text to send back to the originating chat at each firing.
-export type CronFlag = { recurrence: string; body: string }
+// Recurring schedule. Recurrence is a standard POSIX cron expression
+// (or croner's @every/@daily/@weekly/etc aliases). Variant picks
+// what happens at each firing:
+//   SAY     — send the body text to the chat (current behavior, no AI)
+//   PROMPT  — feed the body to the AI as if the user had typed it
+//   ASYNC   — kick the body off as a background async task
+//   BROWSER — kick off as a browser task (Playwright on shared Chrome)
+// Default is SAY (back-compat). Body is the text-or-prompt-or-task
+// description used by the variant.
+export type CronVariant = 'SAY' | 'PROMPT' | 'ASYNC' | 'BROWSER'
+export type CronFlag = { recurrence: string; variant: CronVariant; body: string }
 
 // One-shot future send. Carries a structured TimeExpression (relative,
 // today, tomorrow, weekday, ISO) and resolution to absolute time
@@ -209,16 +216,31 @@ export function extractDigestFlag(reply: string): LegacyFlagResult {
 
 const JOURNAL_SEP_RE = /\s*(?:[—\-–]|:)\s*/
 
-// Parse `<recurrence> — <body>` payload. recurrence must start with
-// '@' to match cron.ts's grammar (@every / @daily / @weekly).
+// Parse `<recurrence> [VARIANT] — <body>` payload.
+// Recurrence is a standard POSIX cron expression OR a croner alias
+// (@every / @hourly / @daily / @weekly / @monthly / @yearly).
+// VARIANT is optional, defaults to SAY for back-compat. Recognized
+// variants: SAY | PROMPT | ASYNC | BROWSER (case-insensitive).
+const VARIANT_RE = /\s+(SAY|PROMPT|ASYNC|BROWSER)$/i
 function parseCronPayload(payload: string): CronFlag | null {
   const sepMatch = payload.match(/\s+[—–-]\s+/)
   if (!sepMatch || sepMatch.index === undefined) return null
-  const recurrence = payload.slice(0, sepMatch.index).trim()
+  let recurrencePart = payload.slice(0, sepMatch.index).trim()
   const body = payload.slice(sepMatch.index + sepMatch[0].length).trim()
-  if (!recurrence || !body) return null
-  if (!recurrence.startsWith('@')) return null
-  return { recurrence, body }
+  if (!recurrencePart || !body) return null
+
+  // Strip trailing variant verb (if present) off the recurrence side.
+  let variant: CronVariant = 'SAY'
+  const verbMatch = VARIANT_RE.exec(recurrencePart)
+  if (verbMatch) {
+    variant = verbMatch[1]!.toUpperCase() as CronVariant
+    recurrencePart = recurrencePart.slice(0, verbMatch.index).trim()
+  }
+
+  // Recurrence may start with '@' (alias) or a digit / star (5-field
+  // cron). Reject obviously-malformed.
+  if (!recurrencePart) return null
+  return { recurrence: recurrencePart, variant, body }
 }
 
 // Parse `<time-spec> — <body>` payload. Time spec is anything the
