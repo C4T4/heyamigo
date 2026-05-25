@@ -15,11 +15,18 @@ const KINDS = [
   'JOURNAL-NEW',
   'ASYNC',
   'ASYNC-BROWSER',
+  'SEND-TEXT',
 ] as const
 
 export type JournalFlag = { slug: string; note: string }
 export type JournalCreateOp = { slug: string; purpose: string }
 export type AsyncTaskFlag = { description: string }
+
+// Cross-chat text send. The agent specifies the destination address
+// explicitly. Used when the agent wants to text a *different* chat
+// than the one it's currently in — e.g. notifying the owner from a
+// group conversation, or vice versa.
+export type SendTextFlag = { address: string; body: string }
 
 export type FlagResult = {
   clean: string
@@ -28,6 +35,7 @@ export type FlagResult = {
   journalCreates: JournalCreateOp[]
   asyncTasks: AsyncTaskFlag[]
   asyncBrowserTasks: AsyncTaskFlag[]
+  sendTexts: SendTextFlag[]
 }
 
 // Backward-compat type alias for older imports
@@ -97,6 +105,7 @@ export function extractFlags(reply: string): FlagResult {
   const journalCreates: JournalCreateOp[] = []
   const asyncTasks: AsyncTaskFlag[] = []
   const asyncBrowserTasks: AsyncTaskFlag[] = []
+  const sendTexts: SendTextFlag[] = []
 
   while (true) {
     const peeled = peelTrailingTag(current)
@@ -122,6 +131,9 @@ export function extractFlags(reply: string): FlagResult {
       if (payload.length >= 8) {
         asyncBrowserTasks.unshift({ description: payload })
       }
+    } else if (kind === 'SEND-TEXT') {
+      const parsed = parseSendTextPayload(payload)
+      if (parsed) sendTexts.unshift(parsed)
     }
   }
 
@@ -132,6 +144,7 @@ export function extractFlags(reply: string): FlagResult {
     journalCreates,
     asyncTasks,
     asyncBrowserTasks,
+    sendTexts,
   }
 }
 
@@ -142,6 +155,26 @@ export function extractDigestFlag(reply: string): LegacyFlagResult {
 }
 
 const JOURNAL_SEP_RE = /\s*(?:[—\-–]|:)\s*/
+
+// Parse `address=<addr> body="..."` style key=value payload.
+// Body is delimited by double quotes; everything else by whitespace.
+// Returns null if address or body is missing.
+function parseSendTextPayload(payload: string): SendTextFlag | null {
+  // Grab body="..." first (longest match so quoted body can contain spaces)
+  const bodyMatch = payload.match(/\bbody\s*=\s*"((?:[^"\\]|\\.)*)"/)
+  if (!bodyMatch) return null
+  const body = bodyMatch[1]!
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\')
+  if (!body.trim()) return null
+
+  // Strip the body=... portion so address parsing doesn't trip on it
+  const withoutBody = payload.replace(bodyMatch[0], '').trim()
+  const addrMatch = withoutBody.match(/\baddress\s*=\s*([^\s]+)/)
+  if (!addrMatch) return null
+
+  return { address: addrMatch[1]!, body }
+}
 
 function parseJournalPayload(payload: string): JournalFlag | null {
   // Split on first em-dash, en-dash, hyphen, or colon between slug and note.

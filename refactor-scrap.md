@@ -308,3 +308,40 @@ permanent one, add to the substring list and ship.
 Worst case: a permanent error miscategorized as transient gets
 retried 4 times then DLQ'd. Visible in `outbound` rows, no data loss.
 Acceptable.
+
+## 2026-05-24  Phase 1  SEND-* tag scope cut
+
+refactor.md tag inventory listed four SEND-* tags:
+  - `[SEND-IMAGE: path — caption]`
+  - `[SEND-DOC: path — caption]`
+  - `[SEND-AUDIO: path]`
+  - `[SEND-TEXT: address=X body=Y]`
+
+Reality check after seeing the existing code: the bot already supports
+inline `[FILE:]`, `[IMAGE:]`, `[VIDEO:]`, `[AUDIO:]`, `[DOCUMENT:]`
+tags via `extractFiles()` in `gateway/outgoing.ts`, and my Phase 1
+refactor routed those cleanly through the new outbound queue. The
+first three SEND-* tags would just duplicate existing functionality
+with slightly different ergonomics (trailing position + explicit
+caption vs inline + adjacent-text caption).
+
+Decision: **defer SEND-IMAGE / SEND-DOC / SEND-AUDIO indefinitely**.
+The existing `[FILE:]` family already covers the use case and is
+working end-to-end through the queue. Adding parallel tags creates
+two ways to do the same thing → drift, agent confusion, more code.
+
+**Ship `[SEND-TEXT: address=X body="..."]` only.** It's the genuinely
+new capability: cross-chat text send. Without it, the agent has no
+way to text a different chat than the one it's responding in. Wired
+through worker.ts (main chat replies) AND both async-task lanes
+(general + browser) so any agent context can use it.
+
+Payload format: `address=<addr> body="<text>"`. Body in double
+quotes so it can contain spaces. Future extension if needed:
+multiple `address=` entries for multi-target broadcast (not yet).
+
+Parser validates both address and body are present; missing either
+→ the tag is dropped silently with a log line. Safer than partial.
+
+If we ever need explicit-caption media markers, revisit then. For
+now: simpler tag surface, less duplication.

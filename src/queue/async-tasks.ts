@@ -163,7 +163,21 @@ async function executeAsyncTask(task: AsyncTask): Promise<void> {
   // as markers; clean pre-marker text is only sent to chat when short (a
   // failure explanation or tight ack) or when no markers fired at all.
   const { extractFlags } = await import('../memory/digest-flag.js')
-  const { clean, digest, journals, journalCreates } = extractFlags(output)
+  const { clean, digest, journals, journalCreates, sendTexts } = extractFlags(output)
+
+  // SEND-TEXT: async task wants to text a different chat too.
+  if (sendTexts.length > 0) {
+    const { enqueueOutbound } = await import('./outbound.js')
+    for (let i = 0; i < sendTexts.length; i++) {
+      const t = sendTexts[i]!
+      enqueueOutbound({
+        address: t.address,
+        kind:    'text',
+        text:    t.body,
+        idempotencyKey: `async-sendtext-${task.id}-${i}`,
+      })
+    }
+  }
 
   // Journal creates run first so an entry flagged in the same output against
   // a new slug lands correctly.
@@ -504,7 +518,20 @@ async function runBrowserTask(task: AsyncTask): Promise<void> {
 
   // Route markers the same way the general async lane does.
   const { extractFlags } = await import('../memory/digest-flag.js')
-  const { clean, digest, journals, journalCreates } = extractFlags(reply)
+  const { clean, digest, journals, journalCreates, sendTexts } = extractFlags(reply)
+
+  if (sendTexts.length > 0) {
+    const { enqueueOutbound } = await import('./outbound.js')
+    for (let i = 0; i < sendTexts.length; i++) {
+      const t = sendTexts[i]!
+      enqueueOutbound({
+        address: t.address,
+        kind:    'text',
+        text:    t.body,
+        idempotencyKey: `browser-sendtext-${task.id}-${i}`,
+      })
+    }
+  }
 
   const { appendEntry, createJournal, getJournal, isValidSlug } =
     await import('../memory/journals.js')

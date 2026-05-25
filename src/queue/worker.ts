@@ -12,6 +12,7 @@ import {
 } from '../memory/journals.js'
 import { scheduleDigest } from '../memory/scheduler.js'
 import { enqueueAsyncTask, enqueueBrowserTask } from './async-tasks.js'
+import { enqueueOutbound } from './outbound.js'
 import type { Job, Result } from './types.js'
 
 function isStaleSessionError(err: unknown): boolean {
@@ -61,6 +62,7 @@ async function callClaude(job: Job): Promise<Result> {
     journalCreates,
     asyncTasks,
     asyncBrowserTasks,
+    sendTexts,
   } = extractFlags(reply)
   if (digest) {
     logger.info(
@@ -144,6 +146,22 @@ async function callClaude(job: Job): Promise<Result> {
       originatingMessage: job.text,
       allowedTools: job.allowedTools ?? 'all',
     })
+  }
+  // SEND-TEXT: cross-chat text send. Agent specified the destination
+  // address explicitly. Just drops a row in outbound; sender worker
+  // dispatches by channel.
+  for (let i = 0; i < sendTexts.length; i++) {
+    const t = sendTexts[i]!
+    enqueueOutbound({
+      address: t.address,
+      kind:    'text',
+      text:    t.body,
+      idempotencyKey: `sendtext-${job.jid}-${Date.now()}-${i}`,
+    })
+    logger.info(
+      { from: job.jid, to: t.address, chars: t.body.length },
+      'SEND-TEXT enqueued',
+    )
   }
 
   return {
