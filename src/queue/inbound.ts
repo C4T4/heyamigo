@@ -232,10 +232,11 @@ export function markInboundFailed(
   return result.length > 0
 }
 
-// Orchestrator helper. Chat workers run longer than sender workers
-// (AI calls + memory writes), so the TTL is more generous. 300s
-// matches the typical chat-track timeout (5min).
-const CLAIM_TTL_SECONDS = 360
+// Orchestrator helper. MUST exceed TIMEOUT_MS.main (30min as of the
+// /goal-friendly bump) so live workers don't get reclaimed mid-spawn.
+// 5min headroom past the spawn cap so the orchestrator only catches
+// rows whose worker actually died.
+const CLAIM_TTL_SECONDS = 35 * 60
 
 export function reclaimStuckInbound(): number {
   const db = getDb()

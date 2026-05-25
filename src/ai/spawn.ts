@@ -256,8 +256,14 @@ export async function runClaude(
 
 // Per-lane defaults. Individual callers can override, but these are the
 // shipped caps. Browser-heavy work lives in the async lane.
+//
+// Values picked to accommodate /goal-style long-running tasks (Claude
+// Code / Codex CLI support multi-hour goal sessions). Matching claim
+// TTLs in queue/inbound.ts and queue/browser-queue.ts MUST exceed
+// these — otherwise the orchestrator reclaims live workers and the
+// same task gets processed twice.
 export const TIMEOUT_MS = {
-  main: 5 * 60 * 1000,
-  async: 15 * 60 * 1000,
-  background: 3 * 60 * 1000,
+  main: 30 * 60 * 1000,        // 30 min — chat track, covers /goal
+  async: 60 * 60 * 1000,       // 60 min — async lane, deep browser scrapes
+  background: 5 * 60 * 1000,   // 5 min — digest / sweep / housekeeping
 } as const

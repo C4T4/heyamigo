@@ -162,8 +162,11 @@ export function markBrowserTaskRetryOrDlq(
   })
 }
 
-// Browser tasks take 1-15 min routinely. Generous reclaim TTL.
-const CLAIM_TTL_SECONDS = 20 * 60
+// MUST exceed TIMEOUT_MS.async (60min as of the /goal-friendly bump)
+// so live browser workers don't get reclaimed mid-spawn. 5min headroom
+// past the spawn cap so the orchestrator only catches truly dead
+// workers. Browser tasks legitimately run 30-45min for deep scrapes.
+const CLAIM_TTL_SECONDS = 65 * 60
 
 export function reclaimStuckBrowserTasks(): number {
   const db = getDb()

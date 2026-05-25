@@ -1050,3 +1050,46 @@ Validated all four matrix cells (cumulative-fresh, cumulative-
 running, per-turn-fresh, per-turn-running) + the bug-recovery
 scenario. Bug-recovery turn shows 3290% (impossible, hidden by
 clamp); next turn would be accurate.
+
+## 2026-05-25  Timeouts  Bumped spawn caps + matching claim TTLs (/goal support)
+
+User wanted CLI /goal mode to work without bot-side detection or
+routing. /goal in Claude Code / Codex can run multi-hour sessions;
+old 5min main-lane spawn cap killed them prematurely.
+
+Bumps in src/ai/spawn.ts:
+  main:       5 min → 30 min
+  async:     15 min → 60 min
+  background: 3 min →  5 min   (small bump for safety; these are
+                                housekeeping ops that should be fast)
+
+Critical co-change in queue files — claim TTL MUST exceed spawn
+timeout. Otherwise the orchestrator's stuck-claim reclaimer fires
+on a still-running spawn and a second worker claims the same row,
+producing duplicate work:
+
+  src/queue/inbound.ts        CLAIM_TTL: 6 min → 35 min
+  src/queue/browser-queue.ts  CLAIM_TTL: 20min → 65 min
+
+5min headroom past spawn cap = orchestrator only reclaims rows whose
+worker actually died (process crashed, OOM-killed, etc.), not rows
+whose worker is still running near the cap.
+
+Outbound (60s) + memory_writes (60s) TTLs unchanged — those workers
+don't spawn AI calls, just file I/O / Baileys send. Fast operations,
+short TTLs stay appropriate.
+
+Known side effect: per-address serialization means a 30min /goal
+locks that ONE chat for 30min. Different chats are unaffected (chat
+pool has 5 workers serving different addresses in parallel). If
+multi-threading within one chat ever becomes a felt need, the route-
+goals-to-async option I sketched earlier closes that gap. For now,
+acceptable.
+
+Three files changed:
+  - src/ai/spawn.ts: TIMEOUT_MS constants
+  - src/queue/inbound.ts: CLAIM_TTL_SECONDS
+  - src/queue/browser-queue.ts: CLAIM_TTL_SECONDS
+
+No new behavior — just larger caps. /goal traffic now survives long
+enough to complete.
