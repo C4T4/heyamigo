@@ -275,6 +275,13 @@ export function formatStatsFooter(
   if (stats.journalCreateCount > 0) parts.push(plus('journal-new', stats.journalCreateCount))
   if (stats.hasDigest) parts.push('+digest')
   if (stats.sendTextCount > 0)     parts.push(plus('send-text', stats.sendTextCount))
+  // Thread watchlist — loud events only. Updates/cools are intentional
+  // no-ops in the footer (would clutter normal conversation).
+  if (stats.threadNewCount > 0)      parts.push(plus('thread-new', stats.threadNewCount))
+  if (stats.threadTouchCount > 0)    parts.push(plus('thread-touch', stats.threadTouchCount))
+  if (stats.threadResolveCount > 0)  parts.push(plus('thread-resolve', stats.threadResolveCount))
+  if (stats.threadDropCount > 0)     parts.push(plus('thread-drop', stats.threadDropCount))
+  if (stats.threadCompressCount > 0) parts.push(plus('thread-compress', stats.threadCompressCount))
 
   // Media — counted per-kind from the file list. e.g. +2 image, +video.
   // 'document' shortened to 'doc' to keep the footer tight.

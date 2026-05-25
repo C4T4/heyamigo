@@ -22,7 +22,10 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
   const trimmed = ctx.text.trim()
   if (!trimmed.startsWith(prefix)) return false
 
-  const cmd = trimmed.slice(prefix.length).split(/\s+/)[0]?.toLowerCase() ?? ''
+  const afterPrefix = trimmed.slice(prefix.length)
+  const tokens = afterPrefix.split(/\s+/)
+  const cmd = tokens[0]?.toLowerCase() ?? ''
+  const args = tokens.slice(1)
   if (!cmd) return false
 
   if (config.commands.reset.includes(cmd)) {
@@ -115,6 +118,26 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
       ctx.sock,
       ctx.jid,
       formatScheduleList(items, tz, onlyKind),
+      ctx.quoted,
+    )
+    return true
+  }
+
+  if (cmd === 'threads') {
+    if (!config.threads?.enabled) {
+      await sendText(
+        ctx.sock,
+        ctx.jid,
+        'threads are disabled in config. Set `threads.enabled: true` to turn on.',
+        ctx.quoted,
+      )
+      return true
+    }
+    const { handleThreadsCommand } = await import('../queue/thread-list.js')
+    await sendText(
+      ctx.sock,
+      ctx.jid,
+      handleThreadsCommand(ctx.jid, args),
       ctx.quoted,
     )
     return true

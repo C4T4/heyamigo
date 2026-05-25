@@ -9,7 +9,6 @@ export type PromptLogEntry = {
     | 'digester'
     | 'importer'
     | 'journal-observer'
-    | 'journal-nudger'
     | 'async-task'
     | 'browser-task'
     | 'compressed'

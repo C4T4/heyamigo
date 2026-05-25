@@ -3,6 +3,7 @@ import { resolve } from 'path'
 import { config } from '../config.js'
 import { getTimezoneForSenderNumber } from '../db/identity-sync.js'
 import { listAsyncTasks } from '../queue/async-tasks.js'
+import { listLiveThreads } from '../queue/threads.js'
 import { readCompressed } from './compressed.js'
 import {
   buildJournalsPreambleBlock,
@@ -19,6 +20,7 @@ import { getRoleForContext, type Role, type RoleName } from '../wa/whitelist.js'
 const DIGEST_REMINDER  = `[DIGEST: <reason>] at end of reply for durable facts. Sparingly.`
 const JOURNAL_REMINDER = `[JOURNAL:<slug> — <note>] at end of reply when content fits an active journal. Use listed slugs only.`
 const ASYNC_REMINDER   = `Never call browser_* / mcp__*playwright* tools. Delegate via [ASYNC-BROWSER: <task>]. Non-browser long work → [ASYNC: <task>]. Irreversible writes: gather → confirm → act.`
+const THREADS_REMINDER = `Threads = your active watchlist. Open new ones with [THREAD-NEW: title="..." summary="..."]. Close with [THREAD-RESOLVE:<id> — note] / [THREAD-DROP:<id> — reason] / [THREAD-COMPRESS:<id> — note]. Touch (mention naturally) with [THREAD-TOUCH:<id>]. Cool/defer with [THREAD-COOL:<id> — wait Nd]. User voice always wins.`
 
 // Buildable per-turn so the agent always sees the SENDER's current
 // time. Grammar reference is in cached memory-instructions.md;
@@ -186,6 +188,26 @@ export function buildMemoryPreamble(params: {
     hour12: false,
   }).format(new Date())
   instructions.push(buildSchedulingReminder(nowLocal, senderTz))
+
+  // Threads — AI-curated relevance watchlist. Off by default; turn on
+  // via config.threads.enabled. Loads up to N hottest live threads
+  // for this chat (default 5) plus a terse pointer to the grammar
+  // (full docs are in cached memory-instructions.md).
+  if (config.threads?.enabled) {
+    const cap = config.threads.preamblePerChat ?? 5
+    const live = listLiveThreads(params.jid, cap)
+    if (live.length > 0) {
+      const now = Math.floor(Date.now() / 1000)
+      const lines = ['[Live threads — bring up if naturally relevant; don\'t force]']
+      for (const t of live) {
+        const age = formatAge(Math.max(0, now - t.openedAt))
+        lines.push(`- #${t.id} (hot ${t.hotness}, ${age} ago): ${t.title}`)
+        lines.push(`    ${t.summary}`)
+      }
+      sections.push(lines.join('\n'))
+      instructions.push(THREADS_REMINDER)
+    }
+  }
 
   // Async tasks in progress for this chat — so the agent doesn't re-promise
   // or contradict work already running. Don't emit another [ASYNC:] for

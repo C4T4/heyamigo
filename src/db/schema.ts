@@ -156,6 +156,63 @@ export const crons = sqliteTable('crons', {
 }))
 
 // ──────────────────────────────────────────────────────────────────
+// Threads — AI-curated relevance watchlist
+// ──────────────────────────────────────────────────────────────────
+//
+// A "thread" is an open loop the AI is tracking on behalf of the user
+// — the layer between cold memory (journals/profiles/buckets) and
+// live conversation. Each row is "this is currently load-bearing for
+// this chat." The AI promotes things here, updates hotness as signals
+// arrive, brings them up naturally during conversation, and either
+// resolves them (answer found), drops them (stale), or compresses
+// them into cold memory (stabilized into a fact).
+//
+// Hotness (0-100) is the AI's running judgment of how relevant a
+// thread is right now. The user's voice always wins — explicit
+// resolves/drops + manual /threads commands override anything the
+// AI inferred. Implicit signals (user touching the topic, ignoring
+// surfaced threads) nudge the score by smaller amounts.
+//
+// Status: live (active), resolved (answer arrived), dropped (stale),
+// compressed (moved into a journal/profile/bucket).
+export const threads = sqliteTable('threads', {
+  id:               integer('id').primaryKey({ autoIncrement: true }),
+  targetJid:        text('target_jid').notNull(),       // WA JID this thread lives in
+  title:            text('title').notNull(),            // short label, AI-written
+  summary:          text('summary').notNull(),          // 1-2 line context
+  hotness:          integer('hotness').notNull().default(50),  // 0-100
+  status:           text('status').notNull().default('live'),  // live|resolved|dropped|compressed
+  linkedMemory:     text('linked_memory'),              // optional path to cold memory anchor
+  openedAt:         integer('opened_at').notNull(),
+  lastTouchedAt:    integer('last_touched_at').notNull(),
+  nextReviewAt:     integer('next_review_at').notNull(),
+  resolutionNote:   text('resolution_note'),
+  // Token cost attribution — when a thread review burns AI inferences
+  // (proactive tick, future feature) the cost lands here. Visible via
+  // /threads so the user can see which threads are expensive.
+  totalInputTokens:  integer('total_input_tokens').notNull().default(0),
+  totalOutputTokens: integer('total_output_tokens').notNull().default(0),
+  enabled:          integer('enabled').notNull().default(1),
+  createdAt:        integer('created_at').notNull(),
+}, t => ({
+  byJidHot: index('threads_by_jid_hot').on(t.targetJid, t.status, t.hotness),
+  byDue:    index('threads_by_due').on(t.enabled, t.status, t.nextReviewAt),
+}))
+
+// Owner-global learned weights per category. A thread's category is
+// derived from its linked_memory or title (e.g. "health", "jana",
+// "work"). The weight is the AI's prior for "how much does the user
+// care about this category" — used as the starting hotness when
+// creating new threads in the same category, and nudged up/down by
+// implicit signals (user engaging with / dropping threads).
+export const threadCategoryWeights = sqliteTable('thread_category_weights', {
+  category:  text('category').primaryKey(),     // e.g. 'health', 'jana', 'work-dms'
+  weight:    integer('weight').notNull().default(50),  // 0-100
+  samples:   integer('samples').notNull().default(0),  // signal count, for confidence
+  updatedAt: integer('updated_at').notNull(),
+})
+
+// ──────────────────────────────────────────────────────────────────
 // Inbound queue (Phase 4)
 // ──────────────────────────────────────────────────────────────────
 

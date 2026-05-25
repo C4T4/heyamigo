@@ -119,6 +119,27 @@ const ConfigSchema = z.object({
     level: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']),
     promptRetentionDays: z.number(),
   }),
+  // Threads — AI-curated relevance watchlist. See src/queue/threads.ts.
+  // Off by default; flip enabled=true to allow the AI to open/track
+  // loops via [THREAD-*:] tags. Reactive surface only in v1 — proactive
+  // review tick (silent-chat check-ins) deferred.
+  threads: z
+    .object({
+      enabled: z.boolean().default(false),
+      preamblePerChat: z.number().int().positive().default(5),
+      // Soft caps used by future cleanup jobs; the worker doesn't read
+      // these yet but they're here so config.json can be authored once.
+      maxActivePerChat: z.number().int().positive().default(10),
+      hotnessCapOnCreate: z.number().int().min(0).max(100).default(70),
+      decayPerDay: z.number().int().min(0).default(2),
+    })
+    .default({
+      enabled: false,
+      preamblePerChat: 5,
+      maxActivePerChat: 10,
+      hotnessCapOnCreate: 70,
+      decayPerDay: 2,
+    }),
 })
 
 export type Config = z.infer<typeof ConfigSchema>

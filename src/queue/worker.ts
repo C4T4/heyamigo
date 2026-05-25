@@ -15,6 +15,16 @@ import { extractFlags, filterFlagsByRole } from '../memory/digest-flag.js'
 import { isValidSlug } from '../memory/journals.js'
 import { enqueueAsyncTask, enqueueBrowserTask } from './async-tasks.js'
 import { addCronUsage, enqueueCron, type CronTarget } from './crons.js'
+import {
+  compressThread,
+  coolThread,
+  createThread,
+  dropThread,
+  resolveThread,
+  touchThread,
+  updateThread,
+} from './threads.js'
+import { setCategoryWeight } from './thread-weights.js'
 import { enqueueMemoryWrite } from './memory-writes.js'
 import { enqueueOutbound } from './outbound.js'
 import { formatLocalTime, resolveTimeExpression } from './time-expr.js'
@@ -143,6 +153,14 @@ async function callClaude(job: Job): Promise<Result> {
     sendTexts,
     crons,
     reminds,
+    threadNews,
+    threadUpdates,
+    threadTouches,
+    threadCools,
+    threadResolves,
+    threadDrops,
+    threadCompresses,
+    threadWeights,
   } = filterFlagsByRole(rawFlags, job.allowedTags)
   // Detect any stripped tags so we can log + nudge the role config
   // if a user is repeatedly hitting the gate.
@@ -155,6 +173,19 @@ async function callClaude(job: Job): Promise<Result> {
   if (rawFlags.asyncBrowserTasks.length !== asyncBrowserTasks.length)
     stripped.push('ASYNC-BROWSER')
   if (rawFlags.sendTexts.length !== sendTexts.length) stripped.push('SEND-TEXT')
+  // Lump all THREAD-* into a single 'THREAD' bucket for the stripped
+  // log since they all share the 'THREAD' allowedTag.
+  const rawThreadCount =
+    rawFlags.threadNews.length + rawFlags.threadUpdates.length +
+    rawFlags.threadTouches.length + rawFlags.threadCools.length +
+    rawFlags.threadResolves.length + rawFlags.threadDrops.length +
+    rawFlags.threadCompresses.length + rawFlags.threadWeights.length
+  const filteredThreadCount =
+    threadNews.length + threadUpdates.length +
+    threadTouches.length + threadCools.length +
+    threadResolves.length + threadDrops.length +
+    threadCompresses.length + threadWeights.length
+  if (rawThreadCount !== filteredThreadCount) stripped.push('THREAD')
   if (stripped.length > 0) {
     logger.warn(
       { jid: job.jid, senderNumber: job.senderNumber, stripped },
@@ -395,6 +426,78 @@ async function callClaude(job: Job): Promise<Result> {
     )
   }
 
+  // THREAD-* tag side effects. Each shape lands on its matching
+  // CRUD helper in queue/threads.ts. Errors per-tag are logged but
+  // don't abort the rest of the reply pipeline.
+  if (config.threads?.enabled) {
+    for (const t of threadNews) {
+      try {
+        createThread({
+          targetJid:    job.jid,
+          title:        t.title,
+          summary:      t.summary,
+          hotness:      t.hotness,
+          linkedMemory: t.linkedMemory ?? null,
+          category:     t.category,
+        })
+      } catch (err) {
+        logger.warn({ err, jid: job.jid, title: t.title }, 'THREAD-NEW failed')
+      }
+    }
+    for (const t of threadUpdates) {
+      try {
+        updateThread({
+          id:           t.id,
+          title:        t.title,
+          summary:      t.summary,
+          hotness:      t.hotness,
+          linkedMemory: t.linkedMemory ?? undefined,
+        })
+      } catch (err) {
+        logger.warn({ err, jid: job.jid, id: t.id }, 'THREAD-UPDATE failed')
+      }
+    }
+    for (const t of threadTouches) {
+      try { touchThread(t.id) } catch (err) {
+        logger.warn({ err, jid: job.jid, id: t.id }, 'THREAD-TOUCH failed')
+      }
+    }
+    for (const t of threadCools) {
+      try { coolThread(t.id, t.deferDays) } catch (err) {
+        logger.warn({ err, jid: job.jid, id: t.id }, 'THREAD-COOL failed')
+      }
+    }
+    for (const t of threadResolves) {
+      try { resolveThread(t.id, t.note) } catch (err) {
+        logger.warn({ err, jid: job.jid, id: t.id }, 'THREAD-RESOLVE failed')
+      }
+    }
+    for (const t of threadDrops) {
+      try { dropThread(t.id, t.note) } catch (err) {
+        logger.warn({ err, jid: job.jid, id: t.id }, 'THREAD-DROP failed')
+      }
+    }
+    for (const t of threadCompresses) {
+      try { compressThread(t.id, t.note) } catch (err) {
+        logger.warn({ err, jid: job.jid, id: t.id }, 'THREAD-COMPRESS failed')
+      }
+    }
+    for (const w of threadWeights) {
+      try { setCategoryWeight(w.category, w.weight) } catch (err) {
+        logger.warn({ err, jid: job.jid, category: w.category }, 'THREAD-WEIGHT failed')
+      }
+    }
+  } else if (
+    threadNews.length + threadUpdates.length + threadTouches.length +
+    threadCools.length + threadResolves.length + threadDrops.length +
+    threadCompresses.length + threadWeights.length > 0
+  ) {
+    logger.warn(
+      { jid: job.jid },
+      'THREAD-* tags emitted but threads feature disabled — ignored',
+    )
+  }
+
   return {
     reply: clean,
     stats: {
@@ -415,6 +518,11 @@ async function callClaude(job: Job): Promise<Result> {
       remindCount: reminds.length,
       cronCount: crons.length,
       sendTextCount: sendTexts.length,
+      threadNewCount:      threadNews.length,
+      threadResolveCount:  threadResolves.length,
+      threadDropCount:     threadDrops.length,
+      threadCompressCount: threadCompresses.length,
+      threadTouchCount:    threadTouches.length,
     },
     jobCards: jobCards.length > 0 ? jobCards : undefined,
   }

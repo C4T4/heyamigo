@@ -68,10 +68,6 @@ function journalObserverStatePath(slug: string): string {
   return resolve(journalDir(slug), 'observer-state.json')
 }
 
-function journalNudgeStatePath(slug: string): string {
-  return resolve(journalDir(slug), 'nudge-state.json')
-}
-
 // ---------- low-level fs ----------
 
 function ensureDirFor(path: string): void {
@@ -387,33 +383,7 @@ export function setLastScannedTs(
   saveObserverState(slug, state)
 }
 
-// ---------- nudge state ----------
-
-export type NudgeState = {
-  lastCheckinTs: number
-  lastSilentNudgeTs: number
-  snoozedUntilTs: number
-}
-
-export function loadNudgeState(slug: string): NudgeState {
-  const raw = readIfExists(journalNudgeStatePath(slug))
-  if (!raw)
-    return { lastCheckinTs: 0, lastSilentNudgeTs: 0, snoozedUntilTs: 0 }
-  try {
-    const parsed = JSON.parse(raw) as Partial<NudgeState>
-    return {
-      lastCheckinTs: parsed.lastCheckinTs ?? 0,
-      lastSilentNudgeTs: parsed.lastSilentNudgeTs ?? 0,
-      snoozedUntilTs: parsed.snoozedUntilTs ?? 0,
-    }
-  } catch {
-    return { lastCheckinTs: 0, lastSilentNudgeTs: 0, snoozedUntilTs: 0 }
-  }
-}
-
-export function saveNudgeState(slug: string, state: NudgeState): void {
-  const path = journalNudgeStatePath(slug)
-  ensureDirFor(path)
-  writeFileSync(path, JSON.stringify(state, null, 2) + '\n', 'utf-8')
-}
+// Nudge-state APIs removed — replaced by the threads watchlist
+// (see src/queue/threads.ts). Existing storage/memory/journals/*/
+// nudge-state.json files become orphaned and can be safely deleted.
 

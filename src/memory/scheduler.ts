@@ -111,7 +111,6 @@ async function sweep(): Promise<void> {
   }
 }
 
-const NUDGE_TICK_MS = 5 * 60 * 1000 // 5 minutes
 let started = false
 
 export function startScheduler(): void {
@@ -148,34 +147,16 @@ export function startScheduler(): void {
     recurrence:  `@every ${Math.floor(config.memory.sweepIntervalMs / 1000)}s`,
   })
 
-  // Proactive journal nudges (check-ins, silent-nudges). Migrated from
-  // setInterval to a cron row → orchestrator. Same cadence, same body;
-  // benefits are: survives restarts, visible in `crons` table, can be
-  // paused via control row without code change.
-  registerInternalCronHandler('journal-nudge-tick', runNudgeTickSafe)
-  enqueueCron({
-    name:        'journal-nudge-tick',
-    enqueueInto: 'internal',
-    payload:     { handler: 'journal-nudge-tick' },
-    recurrence:  `@every ${Math.floor(NUDGE_TICK_MS / 1000)}s`,
-  })
+  // Drop the legacy journal-nudge-tick cron row if it survives from a
+  // pre-threads install. The handler is no longer registered, so any
+  // row left in the table would log warnings every tick. Safe to call
+  // even if the row doesn't exist.
+  deleteCron('journal-nudge-tick')
 
   logger.info(
-    {
-      intervalMs: config.memory.sweepIntervalMs,
-      nudgeTickMs: NUDGE_TICK_MS,
-    },
+    { intervalMs: config.memory.sweepIntervalMs },
     'memory scheduler started',
   )
-}
-
-async function runNudgeTickSafe(): Promise<void> {
-  try {
-    const { runNudgeTick } = await import('./journal-nudger.js')
-    await runNudgeTick()
-  } catch (err) {
-    logger.error({ err }, 'nudge tick failed')
-  }
 }
 
 export function stopScheduler(): void {
@@ -187,10 +168,3 @@ export function stopScheduler(): void {
   started = false
 }
 
-// Exported for callers (CLI, /nudge command) that want to surgically
-// disable nudges without editing config. Use `setCronEnabled` from
-// crons.ts for the on/off switch; this is a hard delete (regenerated
-// on next startScheduler call).
-export function deleteNudgeCron(): boolean {
-  return deleteCron('journal-nudge-tick')
-}

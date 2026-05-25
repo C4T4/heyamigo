@@ -35,6 +35,15 @@ export type ReplyStats = {
   remindCount: number
   cronCount: number
   sendTextCount: number
+  // Thread-watchlist signals. The four loud lifecycle events show in
+  // the footer; quiet ops (touch/cool/update/weight) don't (would
+  // clutter). touch is exposed because it tells the user "I brought
+  // up an open thread this turn".
+  threadNewCount:      number
+  threadResolveCount:  number
+  threadDropCount:     number
+  threadCompressCount: number
+  threadTouchCount:    number
 }
 
 // A user-facing "this is in flight" message the chat track adds to

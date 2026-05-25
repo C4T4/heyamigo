@@ -21,6 +21,14 @@ const KINDS = [
   'SEND-TEXT',
   'CRON',
   'REMIND',
+  'THREAD-NEW',
+  'THREAD-UPDATE',
+  'THREAD-TOUCH',
+  'THREAD-COOL',
+  'THREAD-RESOLVE',
+  'THREAD-DROP',
+  'THREAD-COMPRESS',
+  'THREAD-WEIGHT',
 ] as const
 
 export type JournalFlag = { slug: string; note: string }
@@ -51,6 +59,28 @@ export type CronFlag = { recurrence: string; variant: CronVariant; body: string 
 // time, because the parser doesn't know whose tz to use.
 export type RemindFlag = { when: import('../queue/time-expr.js').TimeExpression; body: string }
 
+// Threads — AI-curated relevance watchlist. See queue/threads.ts.
+// All operations land here; the worker dispatches each to the
+// matching threads.ts function.
+export type ThreadNewFlag = {
+  title: string
+  summary: string
+  hotness?: number              // optional override; clamped + capped
+  linkedMemory?: string
+  category?: string             // optional; else derived from linked_memory or title
+}
+export type ThreadUpdateFlag = {
+  id: number
+  title?: string
+  summary?: string
+  hotness?: number
+  linkedMemory?: string
+}
+export type ThreadIdFlag = { id: number }                          // TOUCH
+export type ThreadIdNoteFlag = { id: number; note: string }        // RESOLVE, DROP, COMPRESS
+export type ThreadCoolFlag = { id: number; deferDays?: number }    // COOL
+export type ThreadWeightFlag = { category: string; weight: number } // WEIGHT
+
 export type FlagResult = {
   clean: string
   digest: string | null
@@ -61,6 +91,14 @@ export type FlagResult = {
   sendTexts: SendTextFlag[]
   crons: CronFlag[]
   reminds: RemindFlag[]
+  threadNews: ThreadNewFlag[]
+  threadUpdates: ThreadUpdateFlag[]
+  threadTouches: ThreadIdFlag[]
+  threadCools: ThreadCoolFlag[]
+  threadResolves: ThreadIdNoteFlag[]
+  threadDrops: ThreadIdNoteFlag[]
+  threadCompresses: ThreadIdNoteFlag[]
+  threadWeights: ThreadWeightFlag[]
 }
 
 // Backward-compat type alias for older imports
@@ -133,6 +171,14 @@ export function extractFlags(reply: string): FlagResult {
   const sendTexts: SendTextFlag[] = []
   const crons: CronFlag[] = []
   const reminds: RemindFlag[] = []
+  const threadNews: ThreadNewFlag[] = []
+  const threadUpdates: ThreadUpdateFlag[] = []
+  const threadTouches: ThreadIdFlag[] = []
+  const threadCools: ThreadCoolFlag[] = []
+  const threadResolves: ThreadIdNoteFlag[] = []
+  const threadDrops: ThreadIdNoteFlag[] = []
+  const threadCompresses: ThreadIdNoteFlag[] = []
+  const threadWeights: ThreadWeightFlag[] = []
 
   while (true) {
     const peeled = peelTrailingTag(current)
@@ -170,6 +216,38 @@ export function extractFlags(reply: string): FlagResult {
       const parsed = parseRemindPayload(payload)
       if (parsed) reminds.unshift(parsed)
       else logger.warn({ payload }, 'REMIND tag dropped: unparseable payload')
+    } else if (kind === 'THREAD-NEW') {
+      const parsed = parseThreadNewPayload(payload)
+      if (parsed) threadNews.unshift(parsed)
+      else logger.warn({ payload }, 'THREAD-NEW tag dropped: unparseable payload')
+    } else if (kind === 'THREAD-UPDATE') {
+      const parsed = parseThreadUpdatePayload(payload)
+      if (parsed) threadUpdates.unshift(parsed)
+      else logger.warn({ payload }, 'THREAD-UPDATE tag dropped: unparseable payload')
+    } else if (kind === 'THREAD-TOUCH') {
+      const id = parseThreadId(payload)
+      if (id !== null) threadTouches.unshift({ id })
+      else logger.warn({ payload }, 'THREAD-TOUCH tag dropped: unparseable id')
+    } else if (kind === 'THREAD-COOL') {
+      const parsed = parseThreadCoolPayload(payload)
+      if (parsed) threadCools.unshift(parsed)
+      else logger.warn({ payload }, 'THREAD-COOL tag dropped: unparseable payload')
+    } else if (kind === 'THREAD-RESOLVE') {
+      const parsed = parseThreadIdNotePayload(payload)
+      if (parsed) threadResolves.unshift(parsed)
+      else logger.warn({ payload }, 'THREAD-RESOLVE tag dropped: unparseable payload')
+    } else if (kind === 'THREAD-DROP') {
+      const parsed = parseThreadIdNotePayload(payload)
+      if (parsed) threadDrops.unshift(parsed)
+      else logger.warn({ payload }, 'THREAD-DROP tag dropped: unparseable payload')
+    } else if (kind === 'THREAD-COMPRESS') {
+      const parsed = parseThreadIdNotePayload(payload)
+      if (parsed) threadCompresses.unshift(parsed)
+      else logger.warn({ payload }, 'THREAD-COMPRESS tag dropped: unparseable payload')
+    } else if (kind === 'THREAD-WEIGHT') {
+      const parsed = parseThreadWeightPayload(payload)
+      if (parsed) threadWeights.unshift(parsed)
+      else logger.warn({ payload }, 'THREAD-WEIGHT tag dropped: unparseable payload')
     }
   }
 
@@ -183,6 +261,14 @@ export function extractFlags(reply: string): FlagResult {
     sendTexts,
     crons,
     reminds,
+    threadNews,
+    threadUpdates,
+    threadTouches,
+    threadCools,
+    threadResolves,
+    threadDrops,
+    threadCompresses,
+    threadWeights,
   }
 }
 
@@ -195,6 +281,9 @@ export function filterFlagsByRole(
 ): FlagResult {
   if (allowedTags === 'all' || allowedTags === undefined) return flags
   const allowed = new Set(allowedTags)
+  // 'THREAD' acts as a single allow-all-thread-ops bucket so role
+  // configs don't have to list all 8 THREAD-* variants individually.
+  const threadOk = allowed.has('THREAD')
   return {
     clean:             flags.clean,
     digest:            allowed.has('DIGEST') ? flags.digest : null,
@@ -205,6 +294,14 @@ export function filterFlagsByRole(
     sendTexts:         allowed.has('SEND-TEXT') ? flags.sendTexts : [],
     crons:             allowed.has('CRON') ? flags.crons : [],
     reminds:           allowed.has('REMIND') ? flags.reminds : [],
+    threadNews:        threadOk ? flags.threadNews : [],
+    threadUpdates:     threadOk ? flags.threadUpdates : [],
+    threadTouches:     threadOk ? flags.threadTouches : [],
+    threadCools:       threadOk ? flags.threadCools : [],
+    threadResolves:    threadOk ? flags.threadResolves : [],
+    threadDrops:       threadOk ? flags.threadDrops : [],
+    threadCompresses:  threadOk ? flags.threadCompresses : [],
+    threadWeights:     threadOk ? flags.threadWeights : [],
   }
 }
 
@@ -289,4 +386,121 @@ function parseJournalPayload(payload: string): JournalFlag | null {
   const note = rest.slice(sepMatch[0].length).trim()
   if (!note) return null
   return { slug, note }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// THREAD-* payload parsers
+// ──────────────────────────────────────────────────────────────────
+//
+// Two payload shapes:
+//   [THREAD-NEW: key="quoted" key=value]          key/value form
+//   [THREAD-RESOLVE:42 — note]                    id-and-note form
+
+// Pull `key="quoted-value"` and `key=word-value` pairs out of a
+// payload. Returns a map. Supports backslash-escaped quotes inside
+// quoted values.
+function parseKeyValuePayload(payload: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  // Quoted values first (greedy enough to capture spaces, escaped quotes)
+  const quotedRe = /\b([a-z_]+)\s*=\s*"((?:[^"\\]|\\.)*)"/gi
+  let rest = payload
+  for (const m of payload.matchAll(quotedRe)) {
+    const key = m[1]!.toLowerCase()
+    const val = m[2]!.replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+    out[key] = val
+    rest = rest.replace(m[0], '')
+  }
+  // Then unquoted single-word values
+  const wordRe = /\b([a-z_]+)\s*=\s*(\S+)/gi
+  for (const m of rest.matchAll(wordRe)) {
+    const key = m[1]!.toLowerCase()
+    if (key in out) continue
+    out[key] = m[2]!
+  }
+  return out
+}
+
+function parseThreadNewPayload(payload: string): ThreadNewFlag | null {
+  const kv = parseKeyValuePayload(payload)
+  const title = kv['title']?.trim()
+  const summary = kv['summary']?.trim()
+  if (!title || !summary) return null
+  const out: ThreadNewFlag = { title, summary }
+  if (kv['hotness'] !== undefined) {
+    const n = parseInt(kv['hotness'], 10)
+    if (Number.isFinite(n)) out.hotness = n
+  }
+  if (kv['linked_memory']) out.linkedMemory = kv['linked_memory']
+  if (kv['category']) out.category = kv['category'].toLowerCase()
+  return out
+}
+
+function parseThreadUpdatePayload(payload: string): ThreadUpdateFlag | null {
+  // Leading id, then key=value pairs
+  const idMatch = payload.match(/^\s*(\d+)\b/)
+  if (!idMatch) return null
+  const id = parseInt(idMatch[1]!, 10)
+  if (!Number.isFinite(id) || id <= 0) return null
+  const rest = payload.slice(idMatch[0].length)
+  const kv = parseKeyValuePayload(rest)
+  const out: ThreadUpdateFlag = { id }
+  if (kv['title']) out.title = kv['title'].trim()
+  if (kv['summary']) out.summary = kv['summary'].trim()
+  if (kv['hotness'] !== undefined) {
+    const n = parseInt(kv['hotness'], 10)
+    if (Number.isFinite(n)) out.hotness = n
+  }
+  if (kv['linked_memory']) out.linkedMemory = kv['linked_memory']
+  return out
+}
+
+// `<id>` alone — for TOUCH.
+function parseThreadId(payload: string): number | null {
+  const m = payload.match(/^\s*(\d+)\s*$/)
+  if (!m) return null
+  const id = parseInt(m[1]!, 10)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+// `<id> — <note>` shape used by RESOLVE / DROP / COMPRESS. Note is
+// the rest of the payload after the first em/en/hyphen separator.
+const ID_NOTE_SEP_RE = /\s+[—–-]\s+/
+function parseThreadIdNotePayload(payload: string): ThreadIdNoteFlag | null {
+  const idMatch = payload.match(/^\s*(\d+)\b/)
+  if (!idMatch) return null
+  const id = parseInt(idMatch[1]!, 10)
+  if (!Number.isFinite(id) || id <= 0) return null
+  const rest = payload.slice(idMatch[0].length)
+  const sep = rest.match(ID_NOTE_SEP_RE)
+  if (!sep || sep.index === undefined) return { id, note: '' }
+  const note = rest.slice(sep.index + sep[0].length).trim()
+  return { id, note }
+}
+
+// `<id>` or `<id> — wait Nd|Nh` for COOL.
+function parseThreadCoolPayload(payload: string): ThreadCoolFlag | null {
+  const idMatch = payload.match(/^\s*(\d+)\b/)
+  if (!idMatch) return null
+  const id = parseInt(idMatch[1]!, 10)
+  if (!Number.isFinite(id) || id <= 0) return null
+  const rest = payload.slice(idMatch[0].length).trim()
+  if (!rest) return { id }
+  // Look for "wait <N><d|h>" anywhere in the rest
+  const waitMatch = rest.match(/wait\s+(\d+)\s*([dh])/i)
+  if (!waitMatch) return { id }
+  const n = parseInt(waitMatch[1]!, 10)
+  const unit = waitMatch[2]!.toLowerCase()
+  if (!Number.isFinite(n) || n <= 0) return { id }
+  const deferDays = unit === 'h' ? n / 24 : n
+  return { id, deferDays }
+}
+
+// `<category> <weight>` for WEIGHT.
+function parseThreadWeightPayload(payload: string): ThreadWeightFlag | null {
+  const m = payload.match(/^\s*([a-z0-9][a-z0-9_-]*)\s+(\d+)\s*$/i)
+  if (!m) return null
+  const category = m[1]!.toLowerCase()
+  const weight = parseInt(m[2]!, 10)
+  if (!Number.isFinite(weight)) return null
+  return { category, weight }
 }
