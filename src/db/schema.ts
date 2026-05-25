@@ -129,13 +129,21 @@ export const crons = sqliteTable('crons', {
   enqueueInto: text('enqueue_into').notNull(), // 'inbound'|'async'|'outbound'|'memory_writes'
   payload:     text('payload').notNull(),      // JSON passed to the target queue
   recurrence:  text('recurrence'),             // null = one-shot
-  // IANA timezone for resolving @daily HH:MM / @weekly DOW HH:MM
-  // recurrences. Set to the sender's local tz when an agent emits a
-  // [CRON:] tag; nullable for system crons that prefer owner tz.
+  // IANA timezone for resolving the recurrence. Set to the sender's
+  // local tz when an agent emits a [CRON:] tag; nullable for system
+  // crons that prefer owner tz.
   timezone:    text('timezone'),
   nextRunAt:   integer('next_run_at').notNull(),
   lastRunAt:   integer('last_run_at'),
   enabled:     integer('enabled').notNull().default(1), // SQLite bool = int
+  // Cost-attribution columns. fireCount increments every dispatch.
+  // tokens accumulate only for PROMPT/ASYNC/BROWSER variants that run
+  // through the AI; SAY variants don't bump them. Lets /crons output
+  // show "fired N times, ~Mk tokens consumed" so the user sees what
+  // their recurring schedules cost.
+  fireCount:         integer('fire_count').notNull().default(0),
+  totalInputTokens:  integer('total_input_tokens').notNull().default(0),
+  totalOutputTokens: integer('total_output_tokens').notNull().default(0),
   createdAt:   integer('created_at').notNull(),
 }, t => ({
   byDue:    index('crons_by_due').on(t.enabled, t.nextRunAt),
