@@ -832,3 +832,38 @@ Migration to durable browser queue (the "real" Phase 4 browser pool
 per refactor.md) is now well-scoped: copy the inbound queue pattern,
 make a browser_tasks table, swap fastq for claim/done. Deferred until
 in-flight crash resilience for browser tasks becomes a felt need.
+
+## 2026-05-24  Phase 3  Reframed as "media ack" not "always async"
+
+Original Phase 3 in refactor.md: "route media-bearing inbound to
+async + send inline ack." The premise was the chat lane was a
+bottleneck for image-heavy chats.
+
+After Phase 4's chat worker pool, that premise no longer holds:
+- Different chats are fully parallel (5 workers)
+- Per-chat reply ordering is the right invariant (don't let reply N+1
+  arrive before reply N)
+- Per-chat serialization IS the desired behavior — re-routing images
+  through the async lane would break ordering for that chat
+
+The actual UX gap left over from Phase 4 is the typing indicator
+regression: users get no immediate feedback that the bot received
+their message, especially painful for image messages that take 5-30s
+to analyze.
+
+Shipped a smaller, better-targeted fix: on media-bearing inbound,
+send a quick "looking…" text via outbound IMMEDIATELY (sub-second,
+microseconds to enqueue + ~1s for sender worker to push). Chat
+worker then processes the actual reply normally. User gets one ack
++ one reply.
+
+Configurable via reply.ackOnMedia (default true) and
+reply.mediaAckText (default 'looking…'). Owner-bot-friendly default
+behavior, easy to disable.
+
+Idempotency on the ack: `media-ack-<msg-id>` so a Baileys retransmit
+of the same incoming message doesn't double-ack.
+
+Long-term: ChannelAdapter.sendTyping() would let us bring back the
+genuine typing indicator across channels (Telegram has its own
+typing API). That's a separate small commit.

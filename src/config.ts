@@ -92,6 +92,12 @@ const ConfigSchema = z.object({
     // Default 25MB matches WhatsApp's published per-message media limit
     // for most kinds. Set to null to disable the check.
     maxOutboundMediaBytes: z.number().int().positive().nullable().default(25 * 1024 * 1024),
+    // Send a quick acknowledgement when an incoming message has media.
+    // Bridge for the typing-indicator regression in Phase 4 — without
+    // this, users wait silently while the chat worker processes the
+    // image. Set false to disable.
+    ackOnMedia: z.boolean().default(true),
+    mediaAckText: z.string().default('looking…'),
   }),
   storage: z.object({
     messagesDir: z.string(),

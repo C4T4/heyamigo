@@ -15,6 +15,7 @@ import { config } from '../config.js'
 import { logger } from '../logger.js'
 import { buildMemoryPreamble } from '../memory/preamble.js'
 import { enqueueInbound } from '../queue/inbound.js'
+import { enqueueOutbound } from '../queue/outbound.js'
 import type { Job } from '../queue/types.js'
 import {
   detectMediaType,
@@ -308,6 +309,20 @@ async function processMessages(
       const actorPersonId = senderAddress
         ? personIdForAddress(senderAddress)
         : null
+
+      // For media-bearing messages, send an immediate "looking…" ack
+      // via outbound so the user isn't left wondering whether the bot
+      // saw the image (typing indicator was dropped in Phase 4 —
+      // followup commit will reinstate via ChannelAdapter.sendTyping).
+      // The chat worker still processes the actual reply normally.
+      if (media && config.reply.ackOnMedia !== false) {
+        enqueueOutbound({
+          address: chatAddress,
+          kind:    'text',
+          text:    config.reply.mediaAckText,
+          idempotencyKey: `media-ack-${msg.key.id}`,
+        })
+      }
 
       enqueueInbound({
         address:        chatAddress,
