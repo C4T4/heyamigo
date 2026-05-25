@@ -85,5 +85,14 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
     return true
   }
 
+  if (cmd === 'queues') {
+    const { takeQueuesSnapshot, formatQueuesSnapshot } = await import(
+      '../queue/observability.js'
+    )
+    const snap = takeQueuesSnapshot()
+    await sendText(ctx.sock, ctx.jid, formatQueuesSnapshot(snap), ctx.quoted)
+    return true
+  }
+
   return false
 }

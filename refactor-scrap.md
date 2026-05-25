@@ -680,3 +680,41 @@ Validated by booting the bot to QR-code-display, observing all
 expected log lines (backup → migrate → identity sync → orchestrator →
 sender → chat pool of 5 → scheduler → socket), confirming all 8
 expected tables exist in the fresh DB.
+
+## 2026-05-24  Phase 7  /queues snapshot format
+
+Shipped the `/queues` chat command early (refactor.md says Phase 7
+"optional") because with 5 parallel chat workers + sender + cron
+firings, the bot now has a lot more moving parts. Without
+observability, "is something stuck?" is unanswerable from chat.
+
+Output format chosen for **mobile WhatsApp readability**: bold section
+headers, 2-space indented detail lines, `·` separator between fields.
+~10-15 lines typical. Fits on a phone without scrolling. The
+markdown bold (`*foo*`) renders natively in WA.
+
+Sections:
+- queues: pending / in-flight / failed / dlq per table
+- workers: counts by kind × status, surfaces stale (>30s no
+  heartbeat) and dead workers
+- stuck: claims past their TTL (outbound 60s, inbound 360s) — these
+  are about to be reclaimed by the orchestrator
+- failures: top 5 recent rows with attempts > 0
+- crons: next 5 due, with relative time
+
+One bug found in writing: stuck-claim query checked
+`status='claimed'`, but outbound transitions through 'sending' during
+the adapter call. Fixed to match either. Detection of stale outbound
+claims now works.
+
+## 2026-05-24  Phase 7  Slash command via late dynamic import
+
+`/queues` handler in commands.ts uses `await import(
+'../queue/observability.js')` instead of a static import. Reason:
+commands.ts is already loaded early (before DB init for some paths)
+and importing observability.ts would transitively load the singleton
+DB handle module. Lazy import means the command only pulls the module
+on first invocation, after the DB is definitely initialized.
+
+Pattern worth repeating for other DB-touching commands that get
+wired up later.
