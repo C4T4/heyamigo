@@ -131,8 +131,27 @@ export async function handleReply(
     }
   }
 
+  // Job cards (ETAs for delegated async/browser tasks) go LAST so
+  // they arrive after the agent's reply chunks in chat. Each card
+  // has its own producer-supplied idempotencyKey; we don't slot them
+  // into the piece-numbered key space.
+  for (const card of result.jobCards ?? []) {
+    enqueueOutbound({
+      address,
+      kind: 'text',
+      text: card.text,
+      idempotencyKey: card.idempotencyKey,
+    })
+  }
+
   logger.info(
-    { jid: job.jid, files: files.length, chars: text.length, pieces: pieceIdx },
+    {
+      jid: job.jid,
+      files: files.length,
+      chars: text.length,
+      pieces: pieceIdx,
+      cards: result.jobCards?.length ?? 0,
+    },
     'reply enqueued for outbound',
   )
 }

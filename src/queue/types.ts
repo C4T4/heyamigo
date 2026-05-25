@@ -25,7 +25,18 @@ export type ReplyStats = {
   asyncCount: number
 }
 
+// A user-facing "this is in flight" message the chat track adds to
+// the reply queue after the agent's response chunks, so the user
+// sees an ETA for delegated async/browser work. Sent through the
+// normal outbound path (idempotency, retry, channel adapter all
+// reused).
+export type JobCard = {
+  text: string                  // pre-formatted, includes ETA + truncated description
+  idempotencyKey: string
+}
+
 export type Result = {
   reply: string
   stats?: ReplyStats
+  jobCards?: JobCard[]
 }

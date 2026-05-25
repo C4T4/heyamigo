@@ -7,8 +7,14 @@
 // Adding a new kind = drop a file alongside image-gen.ts and import
 // it below. No other code in the codebase needs to change.
 
+// Order matters: more-specific estimators register first so they win
+// classify() over the catch-all task estimators. image-gen and other
+// user-input matchers can run first because they explicitly DON'T
+// match when ctx.taskKind is set.
 import './image-gen.js'
-// future: import './browser-ig.js'
+import './browser-task.js'   // catches all [ASYNC-BROWSER:] tasks
+import './async-task.js'      // catches all [ASYNC:] tasks
+// future: import './browser-ig.js'   // more specific than browser-task
 // future: import './voice-gen.js'
 
 export {

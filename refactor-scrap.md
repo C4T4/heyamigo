@@ -1093,3 +1093,63 @@ Three files changed:
 
 No new behavior — just larger caps. /goal traffic now survives long
 enough to complete.
+
+## 2026-05-25  Estimates  Job cards for async/browser delegations
+
+User identified a real gap in the estimate UX: the estimator I wired
+at ingest fires for direct user input (image-gen happy path), but
+agent-delegated [ASYNC:] / [ASYNC-BROWSER:] tasks were silent — no
+ETA visible to the user unless the agent manually wrote one inline
+in its reply text.
+
+Three changes:
+
+### 1. EstimationContext.taskKind discriminator
+Optional 'async' | 'async-browser'. Lets estimators say "I only
+match agent-delegated work" or "I only match direct user input."
+Prevents an agent's "[ASYNC-BROWSER: generate marketing image of X]"
+from being routed to image-gen.
+
+ImageGenEstimator: matches() returns false when taskKind is set.
+BrowserTaskEstimator: matches only when taskKind=='async-browser'.
+AsyncTaskEstimator: matches only when taskKind=='async'.
+
+### 2. JobKindEstimator.querySamples()
+Optional per-estimator override of the sample source. Default
+remains "query inbound by kind." BrowserTaskEstimator overrides to
+query browser_tasks (the durable table). AsyncTaskEstimator returns
+[] (general async lane is still in-memory fastq; no durable
+samples). Cleaner than forcing a 'sourceTable' enum.
+
+### 3. JobCard pipeline
+- queue/types.ts: Result.jobCards?: JobCard[] (text + idempotencyKey)
+- worker.ts processJob: for each asyncTasks/asyncBrowserTasks entry,
+  calls estimate(ctx with taskKind) and appends a card. Format:
+    "🔄 browser task, ~3min\n<truncated description>"
+- gateway/outgoing.ts handleReply: enqueues cards LAST (after the
+  agent's reply chunks) so the user sees:
+    1) agent's text response
+    2) one card per delegated task
+    3) (later) the actual async result via initiate()
+
+Why this design over the alternatives:
+- Could have edited messages live; deferred — Baileys supports it
+  but Telegram does it differently and the channel-adapter
+  abstraction would need an edit method. Not worth in MVP.
+- Could have separate "card" outbound kind; deferred — text kind
+  works and a card column would mainly help with future
+  edit-in-place support.
+
+Validated end-to-end:
+- 3 estimators registered (image-gen, browser-task, async-task)
+- User saying "generate image of cat" → image-gen
+- Agent emitting [ASYNC-BROWSER: generate marketing image] → routed
+  to browser-task (NOT image-gen, because taskKind is set)
+- browser-task 0 samples → "~5min" default
+- browser-task with 3 real samples (120/180/240s) → "~3min" mean
+- async-task → "~3min" default (no durable samples)
+
+Next step if more polish needed: live status updates via Baileys
+message edits. Card row stores msg_id; periodic cron fires "still
+working, ~Xmin elapsed of ~Ymin" updates. Half-day of work, channel-
+specific complexity. Defer until felt need.

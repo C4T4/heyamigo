@@ -83,7 +83,10 @@ export function estimate(
 ): { kind: string; result: EstimateResult; text: string } | null {
   const e = classify(ctx)
   if (!e) return null
-  const samples = querySamplesForKind(e.kind)
+  // Estimator's own querySamples (if provided) takes precedence —
+  // browser/async estimators pull from their dedicated tables. Otherwise
+  // fall back to the inbound-by-kind default.
+  const samples = e.querySamples ? e.querySamples() : querySamplesForKind(e.kind)
   const result = e.estimate(samples)
   const text = (e.format ?? formatEstimateDefault)(result)
   return { kind: e.kind, result, text }

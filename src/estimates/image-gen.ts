@@ -27,6 +27,12 @@ class ImageGenEstimator implements JobKindEstimator {
   readonly defaultMs = 30_000
 
   matches(ctx: EstimationContext): boolean {
+    // Only match direct user input. When taskKind is set, the context
+    // is an agent-delegated task — those go through the browser/async
+    // estimators below, not here. Prevents an agent's
+    // "[ASYNC-BROWSER: generate marketing image of X]" from being
+    // mis-classified as a user-typed image-gen request.
+    if (ctx.taskKind) return false
     return IMAGE_GEN_RE.test(ctx.description)
   }
 

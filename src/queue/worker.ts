@@ -9,13 +9,14 @@ import { config } from '../config.js'
 import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
 import { addDailyTokens } from '../store/usage.js'
+import { estimate as estimateJob } from '../estimates/index.js'
 import { extractFlags, filterFlagsByRole } from '../memory/digest-flag.js'
 import { isValidSlug } from '../memory/journals.js'
 import { enqueueAsyncTask, enqueueBrowserTask } from './async-tasks.js'
 import { enqueueCron } from './crons.js'
 import { enqueueMemoryWrite } from './memory-writes.js'
 import { enqueueOutbound } from './outbound.js'
-import type { Job, Result } from './types.js'
+import type { Job, JobCard, Result } from './types.js'
 
 function isStaleSessionError(err: unknown): boolean {
   return (
@@ -208,7 +209,15 @@ async function callClaude(job: Job): Promise<Result> {
   //   [ASYNC:...] → general lane, stateless, concurrency 3, non-browser work
   //   [ASYNC-BROWSER:...] → browser lane, persistent session, concurrency 1
   // Both report back via initiate() when done.
-  for (const t of asyncTasks) {
+  //
+  // For each delegation, we also build a "job card" — a short ETA
+  // message that handleReply will emit after the agent's reply
+  // chunks. Gives the user a visible "doing X, ~Y min" instead of
+  // wondering whether anything's happening.
+  const jobCards: JobCard[] = []
+  const cardBase = `card-${job.jid}-${Date.now()}`
+  for (let i = 0; i < asyncTasks.length; i++) {
+    const t = asyncTasks[i]!
     enqueueAsyncTask({
       jid: job.jid,
       senderNumber: job.senderNumber,
@@ -216,8 +225,19 @@ async function callClaude(job: Job): Promise<Result> {
       originatingMessage: job.text,
       allowedTools: job.allowedTools ?? 'all',
     })
+    const est = estimateJob({
+      description: t.description,
+      taskKind: 'async',
+    })
+    if (est) {
+      jobCards.push({
+        text: formatJobCard(est.text, t.description),
+        idempotencyKey: `${cardBase}-async-${i}`,
+      })
+    }
   }
-  for (const t of asyncBrowserTasks) {
+  for (let i = 0; i < asyncBrowserTasks.length; i++) {
+    const t = asyncBrowserTasks[i]!
     enqueueBrowserTask({
       jid: job.jid,
       senderNumber: job.senderNumber,
@@ -225,6 +245,16 @@ async function callClaude(job: Job): Promise<Result> {
       originatingMessage: job.text,
       allowedTools: job.allowedTools ?? 'all',
     })
+    const est = estimateJob({
+      description: t.description,
+      taskKind: 'async-browser',
+    })
+    if (est) {
+      jobCards.push({
+        text: formatJobCard(est.text, t.description),
+        idempotencyKey: `${cardBase}-browser-${i}`,
+      })
+    }
   }
   // SEND-TEXT: cross-chat text send. Agent specified the destination
   // address explicitly. Just drops a row in outbound; sender worker
@@ -300,7 +330,18 @@ async function callClaude(job: Job): Promise<Result> {
       journalSlugs: journals.map((j) => j.slug),
       asyncCount: asyncTasks.length + asyncBrowserTasks.length,
     },
+    jobCards: jobCards.length > 0 ? jobCards : undefined,
   }
+}
+
+// Compact card text. Emoji + ETA + a brief excerpt of what the agent
+// delegated, so the user knows which job each card refers to when
+// multiple are running.
+function formatJobCard(etaText: string, description: string): string {
+  const excerpt = description.length > 100
+    ? description.slice(0, 97) + '...'
+    : description
+  return `🔄 ${etaText}\n${excerpt}`
 }
 
 function titleCase(slug: string): string {

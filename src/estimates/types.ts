@@ -14,6 +14,15 @@ export type EstimationContext = {
   // Resolved person id, when available. Estimators that want
   // per-user calibration can read this.
   senderPersonId?: string
+  // Discriminator for "where is this estimate happening?":
+  //   undefined        — direct user input (ingest from gateway)
+  //   'async'          — agent-delegated background task ([ASYNC:])
+  //   'async-browser'  — agent-delegated browser task ([ASYNC-BROWSER:])
+  // User-input estimators (image-gen) match only when this is unset.
+  // Task estimators (browser/async) match only when it's set.
+  // Prevents image-gen from matching agent-generated [ASYNC-BROWSER:
+  // generate marketing image] descriptions and confusing kinds.
+  taskKind?: 'async' | 'async-browser'
 }
 
 export type DurationSample = {
@@ -52,6 +61,13 @@ export interface JobKindEstimator {
   // match" over "wrong match" — a misclassified sample poisons the
   // average.
   matches(ctx: EstimationContext): boolean
+
+  // Optional custom sample source. Default (when omitted) is to query
+  // `inbound` rows tagged with this kind. Browser-task and async-task
+  // estimators override this to query their own respective tables
+  // (browser_tasks for the durable browser queue; in-memory async
+  // tasks have no samples so the async estimator returns []).
+  querySamples?(limit?: number): DurationSample[]
 
   // Given the last N samples for this kind, produce an estimate.
   // ALWAYS returns a value: 0 samples → use defaultMs; 1+ samples →
