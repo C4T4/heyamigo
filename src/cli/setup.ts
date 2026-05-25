@@ -554,7 +554,10 @@ export async function runSetup(): Promise<void> {
   }
 
   // ── Storage ──────────────────────────────────────────────────
-  run('mkdir -p storage/auth storage/messages storage/queue storage/prompts storage/media storage/outbox')
+  // storage/queue (the old fastq persistence dir) removed in Phase 4
+  // — inbound queue lives in SQLite now. storage/backups holds
+  // pre-migration snapshots; created on demand by the migration runner.
+  run('mkdir -p storage/auth storage/messages storage/prompts storage/media storage/outbox')
   run('mkdir -p storage/memory/buckets storage/memory/persons storage/memory/chats')
   p.log.success('Storage directories ready')
 
