@@ -162,3 +162,57 @@ Pattern to remember: anything the bot needs at runtime that ships with
 the package (migration SQL, config templates, personalities,
 knowledge files) must (a) be in the `files` array, (b) be resolved
 relative to the package root, not cwd.
+
+## 2026-05-24  Phase 0  Reversed plan on access.json transform
+
+refactor.md said Phase 0 would "transform access.json from JID-keyed
+to person-keyed format, preserving original as .bak". After actually
+reading the existing schema in `src/wa/whitelist.ts`, I'm reversing
+that decision.
+
+The existing access.json is richer than the doc captured: it has
+`roles` (with description/memory/tools/rules/maxFileBytes/dailyTokenLimit),
+`users` (number→{role,name}), `defaults` (groupRole/dmRole), `groups`
+(array with allowedSenders/proactive/mode), and `dms` (defaultMode +
+allowed array). There's no benefit to restructuring it just for
+multi-channel readiness — the file works.
+
+**New decision: don't touch access.json at all in Phase 0.** Instead,
+derive `persons` + `identities` rows from the existing file via a
+sync function. The file stays authoritative; DB rows are a derived
+view so future queue rows can JOIN against `person_id` cheaply.
+
+Mapping logic in `src/db/identity-sync.ts`:
+- `config.owner.number` → `person-owner` (with display name from
+  matching access.users entry if any).
+- Each entry in `access.users` → `person-<digits-only>` (unless it
+  matches the owner number, in which case it collapses into
+  `person-owner`).
+- Each entry in `access.dms.allowed` → ensure person exists (might
+  already from `users`).
+- Groups are addresses, not persons — skipped.
+- Idempotent: re-running upserts display_name and adds new
+  identities, never deletes.
+
+Cost of the reversal: refactor.md is now slightly out of date. The
+broader access-control-stays-file-based posture (already in the doc)
+absorbs this neatly though — the doc says "DB tables are populated
+from access.json on boot, not the reverse" which is exactly what's
+implemented. No doc edit needed; this scrap entry captures the
+narrower decision.
+
+## 2026-05-24  Phase 0  Person ID format
+
+`person-<digits-only>` derived from the phone number. Stable +
+deterministic + human-readable. Tradeoffs:
+- Predictable: a new sync of the same access.json always produces the
+  same person IDs, so re-running can't accidentally fork identity.
+- Not anonymous: the number is in the ID. For a single-owner bot this
+  is fine; for any multi-tenant future, we'd want opaque UUIDs.
+- The owner gets the special id `person-owner` instead of
+  `person-<their-number>`. Makes owner-specific code paths
+  self-documenting.
+
+If we ever want to merge two persons (`[MERGE-PERSONS:]` marker in
+refactor.md), we use the merge_persons op in memory_writes to point
+all identities at the surviving person_id and delete the dead one.

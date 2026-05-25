@@ -1,4 +1,5 @@
 import { closeDb, initDb } from './db/index.js'
+import { syncIdentitiesFromAccess } from './db/identity-sync.js'
 import { attachIncoming } from './gateway/incoming.js'
 import { handleReply } from './gateway/outgoing.js'
 import { logger } from './logger.js'
@@ -12,6 +13,9 @@ async function main(): Promise<void> {
   // Additive — flat-file storage (sessions.json, memory files,
   // access.json) still authoritative until later phases swap them.
   initDb()
+  // Derived view: populate persons + identities from access.json.
+  // Idempotent; never deletes; safe to re-run on every boot.
+  syncIdentitiesFromAccess()
   startScheduler()
   await startSocket((sock) => {
     attachIncoming(sock)
