@@ -1,11 +1,13 @@
 import { getProvider } from '../ai/providers.js'
 import { clearSession, setSession, setUsage } from '../ai/sessions.js'
 import { config } from '../config.js'
+import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
 import { addDailyTokens } from '../store/usage.js'
 import { extractFlags, filterFlagsByRole } from '../memory/digest-flag.js'
 import { isValidSlug } from '../memory/journals.js'
 import { enqueueAsyncTask, enqueueBrowserTask } from './async-tasks.js'
+import { enqueueCron } from './crons.js'
 import { enqueueMemoryWrite } from './memory-writes.js'
 import { enqueueOutbound } from './outbound.js'
 import type { Job, Result } from './types.js'
@@ -59,6 +61,8 @@ async function callClaude(job: Job): Promise<Result> {
     asyncTasks,
     asyncBrowserTasks,
     sendTexts,
+    crons,
+    reminds,
   } = filterFlagsByRole(rawFlags, job.allowedTags)
   // Detect any stripped tags so we can log + nudge the role config
   // if a user is repeatedly hitting the gate.
@@ -166,6 +170,47 @@ async function callClaude(job: Job): Promise<Result> {
     logger.info(
       { from: job.jid, to: t.address, chars: t.body.length },
       'SEND-TEXT enqueued',
+    )
+  }
+
+  // [CRON: @every X — body] and [REMIND: in Nu — body] create cron
+  // rows that fire into outbound at their scheduled time. The
+  // originating chat (job.jid) is the destination for both.
+  const chatAddress = formatAddress(jidToAddress(job.jid))
+  const cronBase = `chat-cron-${job.jid}-${Date.now()}`
+  for (let i = 0; i < crons.length; i++) {
+    const c = crons[i]!
+    try {
+      enqueueCron({
+        name:        `${cronBase}-${i}`,
+        enqueueInto: 'outbound',
+        payload:     { address: chatAddress, kind: 'text', text: c.body },
+        recurrence:  c.recurrence,
+      })
+      logger.info(
+        { jid: job.jid, recurrence: c.recurrence, chars: c.body.length },
+        'CRON tag scheduled',
+      )
+    } catch (err) {
+      logger.warn(
+        { err, jid: job.jid, recurrence: c.recurrence },
+        'CRON tag failed (bad recurrence?)',
+      )
+    }
+  }
+  const remindBase = `chat-remind-${job.jid}-${Date.now()}`
+  for (let i = 0; i < reminds.length; i++) {
+    const r = reminds[i]!
+    enqueueCron({
+      name:        `${remindBase}-${i}`,
+      enqueueInto: 'outbound',
+      payload:     { address: chatAddress, kind: 'text', text: r.body },
+      recurrence:  null,
+      firstRunAt:  Math.floor(Date.now() / 1000) + r.whenSecondsFromNow,
+    })
+    logger.info(
+      { jid: job.jid, inSeconds: r.whenSecondsFromNow, chars: r.body.length },
+      'REMIND tag scheduled',
     )
   }
 

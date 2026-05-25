@@ -22,6 +22,8 @@ const TAG_NAMES = [
   'ASYNC',
   'ASYNC-BROWSER',
   'SEND-TEXT',
+  'CRON',
+  'REMIND',
 ] as const
 export type TagName = (typeof TAG_NAMES)[number]
 

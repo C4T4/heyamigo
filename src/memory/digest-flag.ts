@@ -16,6 +16,8 @@ const KINDS = [
   'ASYNC',
   'ASYNC-BROWSER',
   'SEND-TEXT',
+  'CRON',
+  'REMIND',
 ] as const
 
 export type JournalFlag = { slug: string; note: string }
@@ -28,6 +30,15 @@ export type AsyncTaskFlag = { description: string }
 // group conversation, or vice versa.
 export type SendTextFlag = { address: string; body: string }
 
+// Recurring schedule. Recurrence in cron.ts's canonical format
+// (`@every Nu`, `@daily HH:MM`, `@weekly DOW HH:MM`). Body is the
+// text to send back to the originating chat at each firing.
+export type CronFlag = { recurrence: string; body: string }
+
+// One-shot future send. whenSecondsFromNow is parsed by the
+// `in Nu` shorthand. Body is the reminder text.
+export type RemindFlag = { whenSecondsFromNow: number; body: string }
+
 export type FlagResult = {
   clean: string
   digest: string | null
@@ -36,6 +47,8 @@ export type FlagResult = {
   asyncTasks: AsyncTaskFlag[]
   asyncBrowserTasks: AsyncTaskFlag[]
   sendTexts: SendTextFlag[]
+  crons: CronFlag[]
+  reminds: RemindFlag[]
 }
 
 // Backward-compat type alias for older imports
@@ -106,6 +119,8 @@ export function extractFlags(reply: string): FlagResult {
   const asyncTasks: AsyncTaskFlag[] = []
   const asyncBrowserTasks: AsyncTaskFlag[] = []
   const sendTexts: SendTextFlag[] = []
+  const crons: CronFlag[] = []
+  const reminds: RemindFlag[] = []
 
   while (true) {
     const peeled = peelTrailingTag(current)
@@ -134,6 +149,12 @@ export function extractFlags(reply: string): FlagResult {
     } else if (kind === 'SEND-TEXT') {
       const parsed = parseSendTextPayload(payload)
       if (parsed) sendTexts.unshift(parsed)
+    } else if (kind === 'CRON') {
+      const parsed = parseCronPayload(payload)
+      if (parsed) crons.unshift(parsed)
+    } else if (kind === 'REMIND') {
+      const parsed = parseRemindPayload(payload)
+      if (parsed) reminds.unshift(parsed)
     }
   }
 
@@ -145,6 +166,8 @@ export function extractFlags(reply: string): FlagResult {
     asyncTasks,
     asyncBrowserTasks,
     sendTexts,
+    crons,
+    reminds,
   }
 }
 
@@ -165,6 +188,8 @@ export function filterFlagsByRole(
     asyncTasks:        allowed.has('ASYNC') ? flags.asyncTasks : [],
     asyncBrowserTasks: allowed.has('ASYNC-BROWSER') ? flags.asyncBrowserTasks : [],
     sendTexts:         allowed.has('SEND-TEXT') ? flags.sendTexts : [],
+    crons:             allowed.has('CRON') ? flags.crons : [],
+    reminds:           allowed.has('REMIND') ? flags.reminds : [],
   }
 }
 
@@ -175,6 +200,34 @@ export function extractDigestFlag(reply: string): LegacyFlagResult {
 }
 
 const JOURNAL_SEP_RE = /\s*(?:[—\-–]|:)\s*/
+
+// Parse `<recurrence> — <body>` payload. recurrence must start with
+// '@' to match cron.ts's grammar (@every / @daily / @weekly).
+function parseCronPayload(payload: string): CronFlag | null {
+  const sepMatch = payload.match(/\s+[—–-]\s+/)
+  if (!sepMatch || sepMatch.index === undefined) return null
+  const recurrence = payload.slice(0, sepMatch.index).trim()
+  const body = payload.slice(sepMatch.index + sepMatch[0].length).trim()
+  if (!recurrence || !body) return null
+  if (!recurrence.startsWith('@')) return null
+  return { recurrence, body }
+}
+
+// Parse `in <n><unit> — <body>` payload. Supported units: s,m,h,d.
+function parseRemindPayload(payload: string): RemindFlag | null {
+  const sepMatch = payload.match(/\s+[—–-]\s+/)
+  if (!sepMatch || sepMatch.index === undefined) return null
+  const timeSpec = payload.slice(0, sepMatch.index).trim()
+  const body = payload.slice(sepMatch.index + sepMatch[0].length).trim()
+  if (!timeSpec || !body) return null
+  const m = timeSpec.match(/^in\s+(\d+)\s*([smhd])$/i)
+  if (!m) return null
+  const n = parseInt(m[1]!, 10)
+  const unit = m[2]!.toLowerCase()
+  const mult = unit === 's' ? 1 : unit === 'm' ? 60 : unit === 'h' ? 3600 : 86400
+  if (n <= 0) return null
+  return { whenSecondsFromNow: n * mult, body }
+}
 
 // Parse `address=<addr> body="..."` style key=value payload.
 // Body is delimited by double quotes; everything else by whitespace.
