@@ -1,3 +1,4 @@
+import { closeDb, initDb } from './db/index.js'
 import { attachIncoming } from './gateway/incoming.js'
 import { handleReply } from './gateway/outgoing.js'
 import { logger } from './logger.js'
@@ -7,6 +8,10 @@ import { startSocket } from './wa/socket.js'
 
 async function main(): Promise<void> {
   logger.info('heyamigo starting')
+  // Migrations + drift check first; refuses to start on schema mismatch.
+  // Additive — flat-file storage (sessions.json, memory files,
+  // access.json) still authoritative until later phases swap them.
+  initDb()
   startScheduler()
   await startSocket((sock) => {
     attachIncoming(sock)
@@ -21,11 +26,13 @@ async function main(): Promise<void> {
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down')
+  closeDb()
   process.exit(0)
 })
 
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down')
+  closeDb()
   process.exit(0)
 })
 
