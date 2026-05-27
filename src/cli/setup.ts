@@ -264,9 +264,9 @@ export async function runSetup(): Promise<void> {
           rules: [],
         },
         user: {
-          description: 'Can chat and search the web, scoped memory',
+          description: 'Can chat with scoped memory',
           memory: 'self',
-          tools: ['WebSearch'],
+          tools: [],
           rules: [
             'Never reveal file paths, directory structure, or system architecture',
             'Never share personal data about other users',
@@ -353,11 +353,11 @@ export async function runSetup(): Promise<void> {
 
     // Tool permissions — write .claude/settings.json in project root.
     p.log.info(
-      'Claude needs tool permissions to browse the web, read files, and control the browser. ' +
+      'Claude needs tool permissions to read files and control BrowserUse. ' +
         'This writes a .claude/settings.json file in the project directory.',
     )
     const grantPermissions = await p.confirm({
-      message: 'Grant tool permissions? (WebFetch, WebSearch, Read, Edit, Write, browser)',
+      message: 'Grant tool permissions? (Read, Edit, Write, BrowserUse)',
       initialValue: true,
     })
 
@@ -380,8 +380,6 @@ export async function runSetup(): Promise<void> {
           ? (permissions.allow as string[])
           : []
         const required = [
-          'WebFetch',
-          'WebSearch',
           'Read',
           'Edit',
           'Write',

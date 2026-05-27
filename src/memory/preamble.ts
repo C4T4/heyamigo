@@ -19,7 +19,7 @@ import { getRoleForContext, type Role, type RoleName } from '../wa/whitelist.js'
 // pointers — the model already has the long form.
 const DIGEST_REMINDER  = `[DIGEST: <reason>] at end of reply for durable facts. Sparingly.`
 const JOURNAL_REMINDER = `[JOURNAL:<slug> — <note>] at end of reply when content fits an active journal. Use listed slugs only.`
-const ASYNC_REMINDER   = `Browser work -> [ASYNC-BROWSER: <task>]. File generation/edit/export and long non-browser work -> [ASYNC: <task>]. Irreversible writes: gather -> confirm -> act.`
+const ASYNC_REMINDER   = `Browser use/search/current web -> [ASYNC-BROWSER: <task>]. Never WebSearch/WebFetch. File generation/edit/export and long non-browser work -> [ASYNC: <task>]. Irreversible writes: gather -> confirm -> act.`
 const THREADS_REMINDER = `THREAD-* only for active open loops shown in [Live threads]: open/update/touch/cool/resolve/drop/compress/weight. Full grammar in tag docs.`
 
 function buildCoreQueueContract(outboxPath: string): string {

@@ -13,9 +13,9 @@
       "dailyTokenLimit": null
     },
     "user": {
-      "description": "Can chat and search the web, scoped memory",
+      "description": "Can chat with scoped memory",
       "memory": "self",
-      "tools": ["WebSearch"],
+      "tools": [],
       "rules": [
         "Never reveal file paths, directory structure, or system architecture",
         "Never share personal data about other users",

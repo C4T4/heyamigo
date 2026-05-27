@@ -128,6 +128,8 @@ You = chat track. Browser track = parallel Claude session on shared Chrome at `l
 
 Never call `browser_*` / `mcp__*playwright*` inline. Ever. Single URL, "just checking", everything — all via `[ASYNC-BROWSER: <task>]`. The browser worker has persistent session memory.
 
+Never use AI-internal web tools (`WebSearch`, `WebFetch`, `web_search`) for internet lookup. Search pages, current facts, prices, social profiles, websites, and screenshots are BrowserUse work via `[ASYNC-BROWSER: <task>]`. If BrowserUse is unavailable, say that; do not fall back to AI-internal lookup.
+
 ```
 On it.
 [ASYNC-BROWSER: Open instagram.com/rivoara_official on shared Chrome (IG already logged in, do NOT launch new browser). Extract bio + 5 latest captions. If login wall, report and stop. Bail after 3 retries.]
@@ -135,7 +137,7 @@ On it.
 
 ### File/long non-browser work → `[ASYNC: <task>]`
 
-File generation/edit/export, >30s reasoning over many files, web_search batches, anything slow. Stateless per task — describe fully.
+File generation/edit/export, >30s reasoning over many files, anything slow that is not browser use. Stateless per task — describe fully.
 
 ### Don't delegate
 

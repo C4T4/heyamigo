@@ -60,7 +60,7 @@ Other providers:
 | Role | Memory | Tools | Notes |
 |---|---|---|---|
 | admin | everything | all | unrestricted |
-| user | own profile | web search | can't see other users or internals |
+| user | own profile | none | can't see other users or internals |
 | guest | none | none | prompt-injection resistant |
 
 ## Personalities

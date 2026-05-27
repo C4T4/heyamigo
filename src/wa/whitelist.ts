@@ -100,9 +100,9 @@ const DEFAULT_ROLES: Record<string, Role> = {
     dailyTokenLimit: null,
   },
   user: {
-    description: 'Chat + web search, scoped memory',
+    description: 'Chat + scoped memory',
     memory: 'self',
-    tools: ['WebSearch'],
+    tools: [],
     // Users can flag memory observations and trigger digests on
     // themselves, but can't delegate background work or cross-chat
     // sends (those are owner-only).
