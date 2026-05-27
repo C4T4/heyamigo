@@ -125,6 +125,7 @@ Claude, Codex, and Grok Build implement the same `AiProvider` interface. Swap vi
 
 ## Defaults that bias toward not-broken
 
+- **Chat triggers default to off.** Groups and DMs only answer when their own `triggerMode` is set in `access.json` (`mention`, `all`, or `command`). Missing means `off`.
 - **Proactive messaging defaults to off.** Groups stay silent unless `proactive: true` is explicitly set in `access.json`. The bot never volunteers a message into a group it wasn't invited into the conversation of.
 - **Per-role token quotas.** Each user role has a daily token cap. Once exceeded, replies are dropped silently (logged, not announced).
 - **Per-role file-size caps.** Inbound media over the role's MB limit is rejected before download.

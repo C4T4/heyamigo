@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 import { jidDecode, type WASocket } from 'baileys'
 import { z } from 'zod'
-import { config } from '../config.js'
+import { config, TriggerModeSchema, type TriggerMode } from '../config.js'
 import { actorKeyFromAddress, parseAddress } from '../db/address.js'
 import { logger } from '../logger.js'
 
@@ -53,12 +53,14 @@ const GroupEntrySchema = z.object({
   name: z.string(),
   mode: AccessModeSchema,
   allowedSenders: z.union([z.literal('*'), z.array(z.string())]),
+  triggerMode: TriggerModeSchema.default('off'),
   proactive: z.boolean().default(false),
 })
 
 const DmEntrySchema = z.object({
   number: z.string(),
   mode: AccessModeSchema,
+  triggerMode: TriggerModeSchema.default('off'),
   proactive: z.boolean().default(false),
 })
 
@@ -303,18 +305,29 @@ export function getLimitsForUser(
 export type AccessDecision = {
   store: boolean
   respond: boolean
+  triggerMode: TriggerMode
   reason: string
 }
 
-const DROP: AccessDecision = { store: false, respond: false, reason: 'drop' }
+const DROP: AccessDecision = {
+  store: false,
+  respond: false,
+  triggerMode: 'off',
+  reason: 'drop',
+}
 const storeOnly = (reason: string): AccessDecision => ({
   store: true,
   respond: false,
+  triggerMode: 'off',
   reason,
 })
-const storeAndRespond = (reason: string): AccessDecision => ({
+const storeAndRespond = (
+  reason: string,
+  triggerMode: TriggerMode = 'off',
+): AccessDecision => ({
   store: true,
   respond: true,
+  triggerMode,
   reason,
 })
 
@@ -333,10 +346,14 @@ export function checkAccess(params: {
     if (!group) return DROP
     if (group.mode === 'off') return DROP
     if (group.mode === 'silent') return storeOnly('group silent')
-    if (ownerAllowed) return storeAndRespond('owner fromMe in group')
-    if (group.allowedSenders === '*') return storeAndRespond('group wildcard')
+    if (ownerAllowed) {
+      return storeAndRespond('owner fromMe in group', group.triggerMode)
+    }
+    if (group.allowedSenders === '*') {
+      return storeAndRespond('group wildcard', group.triggerMode)
+    }
     if (group.allowedSenders.includes(senderNumber)) {
-      return storeAndRespond('group sender allowed')
+      return storeAndRespond('group sender allowed', group.triggerMode)
     }
     return storeOnly('group sender not in allowedSenders')
   }
@@ -357,7 +374,7 @@ export function checkAccess(params: {
   const mode = dmEntry?.mode ?? current.dms.defaultMode
   if (mode === 'off') return DROP
   if (mode === 'silent') return storeOnly('dm silent')
-  return storeAndRespond('dm active')
+  return storeAndRespond('dm active', dmEntry?.triggerMode ?? 'off')
 }
 
 export async function discoverAddressGroupIfNew(params: {
@@ -374,6 +391,7 @@ export async function discoverAddressGroupIfNew(params: {
     name: params.name || 'Unknown group',
     mode: 'off',
     allowedSenders: params.ownerSender ? [params.ownerSender] : [],
+    triggerMode: 'off',
     proactive: false,
   }
   save({ ...current, groups: [...current.groups, entry] })
@@ -404,6 +422,7 @@ export async function discoverGroupIfNew(
     name,
     mode: 'off',
     allowedSenders: config.owner.number ? [config.owner.number] : [],
+    triggerMode: 'off',
     proactive: false,
   }
   save({ ...current, groups: [...current.groups, entry] })

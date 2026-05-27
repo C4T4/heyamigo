@@ -1,4 +1,5 @@
 import { config } from '../config.js'
+import type { TriggerMode } from '../config.js'
 
 export type TriggerResult = {
   triggered: boolean
@@ -21,15 +22,12 @@ function aliasMatches(text: string, aliases: string[]): string | null {
 }
 
 export function checkTrigger(params: {
-  isGroup: boolean
+  mode: TriggerMode
   text: string
   mentionedBot?: boolean
   replyToBot?: boolean
 }): TriggerResult {
-  const { isGroup, text } = params
-  const mode = isGroup
-    ? config.triggers.groupMode
-    : config.triggers.dmMode
+  const { mode, text } = params
 
   if (mode === 'off') return { triggered: false, reason: 'mode=off' }
   if (mode === 'all') return { triggered: true, reason: 'mode=all' }

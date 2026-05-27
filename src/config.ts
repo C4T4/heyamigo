@@ -2,7 +2,8 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { z } from 'zod'
 
-const TriggerModeSchema = z.enum(['all', 'mention', 'command', 'off'])
+export const TriggerModeSchema = z.enum(['all', 'mention', 'command', 'off'])
+export type TriggerMode = z.infer<typeof TriggerModeSchema>
 
 const ConfigSchema = z.object({
   whatsapp: z.object({
@@ -27,8 +28,6 @@ const ConfigSchema = z.object({
   }),
   triggers: z.object({
     aliases: z.array(z.string()),
-    groupMode: TriggerModeSchema,
-    dmMode: TriggerModeSchema,
     replyToBotCounts: z.boolean(),
   }),
   commands: z.object({

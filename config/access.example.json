@@ -1,5 +1,5 @@
 {
-  "_readme": "Access rules. Copy this to access.json and customize. Groups auto-discover with mode=off when the bot sees them. WhatsApp users are phone numbers; Telegram users are tg_<user_id>.",
+  "_readme": "Access rules. Copy this to access.json and customize. Groups auto-discover with mode=off and triggerMode=off when the bot sees them. triggerMode is per group/DM: off, mention, command, or all. WhatsApp users are phone numbers; Telegram users are tg_<user_id>.",
 
   "_limits_readme": "maxFileBytes caps the size of media/documents sent to Claude (null = unlimited). dailyTokenLimit caps Claude tokens (input+output) per user per day in the owner's timezone (null = unlimited). The bot owner is always unlimited regardless of role.",
 
@@ -62,6 +62,7 @@
       "name": "Family Chat",
       "mode": "active",
       "allowedSenders": "*",
+      "triggerMode": "mention",
       "proactive": false
     },
     {
@@ -70,6 +71,7 @@
       "name": "Work Team",
       "mode": "active",
       "allowedSenders": ["17861234567", "491701234567"],
+      "triggerMode": "all",
       "proactive": true
     },
     {
@@ -78,6 +80,7 @@
       "name": "Telegram Team",
       "mode": "active",
       "allowedSenders": ["tg_123456789"],
+      "triggerMode": "mention",
       "proactive": false
     },
     {
@@ -85,24 +88,26 @@
       "jid": "120363zzzzz@g.us",
       "name": "Announcements",
       "mode": "silent",
-      "allowedSenders": "*"
+      "allowedSenders": "*",
+      "triggerMode": "off"
     },
     {
       "_note": "Disabled group: completely ignored",
       "jid": "120363aaaaa@g.us",
       "name": "Muted Group",
       "mode": "off",
-      "allowedSenders": "*"
+      "allowedSenders": "*",
+      "triggerMode": "off"
     }
   ],
 
   "dms": {
-    "_readme": "Matched by chat partner number/key, not sender. Telegram DMs use tg_<user_id>. Owner messages in WhatsApp DMs are always silent.",
+    "_readme": "Matched by chat partner number/key, not sender. Telegram DMs use tg_<user_id>. Owner messages in WhatsApp DMs are always silent. triggerMode defaults to off when omitted.",
     "defaultMode": "off",
     "allowed": [
-      { "_note": "friend can DM the bot, and bot can proactively message them", "number": "491701234567", "mode": "active", "proactive": true },
-      { "_note": "Telegram friend can DM the bot", "number": "tg_123456789", "mode": "active", "proactive": true },
-      { "_note": "colleague, store messages but don't respond", "number": "5511987654321", "mode": "silent", "proactive": false }
+      { "_note": "friend can DM the bot, and bot can proactively message them", "number": "491701234567", "mode": "active", "triggerMode": "all", "proactive": true },
+      { "_note": "Telegram friend can DM the bot", "number": "tg_123456789", "mode": "active", "triggerMode": "all", "proactive": true },
+      { "_note": "colleague, store messages but don't respond", "number": "5511987654321", "mode": "silent", "triggerMode": "off", "proactive": false }
     ]
   }
 }

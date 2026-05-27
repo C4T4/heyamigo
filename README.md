@@ -20,7 +20,7 @@ WhatsApp / Telegram ─► inbound ─► chat workers ─► outbound ─► Wh
 - **Scheduling in the sender's timezone.** Natural language → `[REMIND: 2026-05-26 09:00 — ...]` or `[CRON: 0 9 * * 1 PROMPT — ...]`. Fires at the user's wall-clock 9am, not the server's. Cron variants: deliver text, run AI, kick off async work, or drive a browser.
 - **A real Chrome.** Browser delegation via `[ASYNC-BROWSER: ...]` to a parallel provider session on a shared logged-in Chrome over CDP. TikTok, Instagram, anywhere the owner is logged in. SSH-tunneled noVNC for setup.
 - **Per-reply footer with confirmation tags.** Every side effect from the turn is visible: `_9.9s · 465k↑ 169↓ · +remind · +thread-new · +digest_`. No guessing whether a schedule actually got created.
-- **Default-deny proactive messaging.** Groups stay silent unless explicitly opted in. Per-role token quotas, file-size caps, tool restrictions.
+- **Default-deny chat activation.** Groups and DMs only answer when their own `triggerMode` is set in `config/access.json`; missing means `off`. Per-role token quotas, file-size caps, tool restrictions.
 
 For the why behind these — claim primitives, tag-as-side-effect channel, per-category learning, provider abstraction, the trade-offs that didn't survive the first revision — see [`docs/architecture.md`](docs/architecture.md).
 

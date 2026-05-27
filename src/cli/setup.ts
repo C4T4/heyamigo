@@ -849,7 +849,7 @@ export async function runSetup(): Promise<void> {
 
   // ── Name your amigo ───────────────────────────────────────────
   p.log.info(
-    'Give your amigo a name. People mention this name in a message to get a reply. ' +
+    'Give your amigo a name. In chats with triggerMode: "mention", people mention this name to get a reply. ' +
       'You can add multiple names separated by commas.',
   )
 
@@ -875,7 +875,7 @@ export async function runSetup(): Promise<void> {
           `"aliases": ${JSON.stringify(aliases)}`,
         )
         writeFileSync(cfgPath, cfg)
-        p.log.success(`Your amigo responds to: ${names.join(', ')}`)
+        p.log.success(`Mention names: ${names.join(', ')}`)
       }
     }
   }
@@ -888,7 +888,9 @@ export async function runSetup(): Promise<void> {
       '  2. New groups start with mode: "off" (bot stays silent).\n' +
       '     To activate: edit config/access.json, change mode to "active".\n\n' +
       '  3. Set allowedSenders to "*" (everyone) or specific numbers.\n\n' +
-      '  4. Once active, mention the bot\'s name in a message to get a reply.\n\n' +
+      '  4. Set triggerMode per chat: "mention", "all", "command", or "off".\n' +
+      '     Missing triggerMode means "off".\n\n' +
+      '  5. With triggerMode "mention", mention the bot\'s name to get a reply.\n\n' +
       'DMs work the same way — add numbers to dms.allowed in access.json.',
   )
 
@@ -1001,8 +1003,8 @@ export async function runSetup(): Promise<void> {
       '  npx @c4t4/heyamigo stop / restart / status',
       '',
       'Configuration:',
-      '  config/config.json   — triggers, model',
-      '  config/access.json   — groups, DMs, roles',
+      '  config/config.json   — bot name, model',
+      '  config/access.json   — groups, DMs, roles, per-chat triggerMode',
     ].join('\n'),
     'Setup complete!',
   )
@@ -1017,9 +1019,10 @@ export async function runSetup(): Promise<void> {
       '    nano config/access.json\n' +
       '    - Find the group, change mode from "off" to "active"\n' +
       '    - Set allowedSenders to "*" for everyone\n\n' +
+      '    - Set triggerMode to "mention" or "all"\n\n' +
       '  Step 4 — Restart the bot:\n' +
       '    npx @c4t4/heyamigo restart\n\n' +
-      '  Step 5 — Mention the bot\'s name in the group to get a reply.\n\n' +
+      '  Step 5 — If triggerMode is "mention", mention the bot\'s name in the group to get a reply.\n\n' +
       '  Debugging:\n' +
       '    npx @c4t4/heyamigo logs',
   )

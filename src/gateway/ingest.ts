@@ -199,7 +199,7 @@ export async function processIncomingMessage(
   let triggerReason = incoming.selfChat ? 'self-chat' : ''
   if (!incoming.selfChat) {
     const trigger = checkTrigger({
-      isGroup: incoming.isGroup,
+      mode: decision.triggerMode,
       text: stored.text,
       mentionedBot: incoming.triggerHints?.mentionedBot,
       replyToBot: incoming.triggerHints?.replyToBot,
