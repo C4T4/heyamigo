@@ -33,6 +33,7 @@ function buildCoreQueueContract(outboxPath: string): string {
     `Media: [IMAGE|VIDEO|AUDIO|DOCUMENT: /absolute/path] from ${outboxPath}/`,
     'Memory: [DIGEST: reason], [JOURNAL:slug - note], [JOURNAL-NEW:slug - purpose]',
     'Time: [REMIND: YYYY-MM-DD HH:MM - text], [CRON: expr SAY|PROMPT|ASYNC|BROWSER - body]',
+    'Jobs: check jobs/<name>/job.json first; run/create self-contained jobs/<name>/job.sh installers when useful.',
     'Threads: THREAD-* for active open loops shown in [Live threads]. Full grammar in tag docs.',
   ].join('\n')
 }

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "yahoo-earnings",
+  "description": "Find today's earnings for main public companies on Yahoo Finance.",
+  "enabled": true,
+  "schedule": "0 8 * * 1-5",
+  "timezone": "America/New_York",
+  "runner": {
+    "command": "./job.sh run",
+    "agent": "claude",
+    "default_model": "sonnet",
+    "env": {
+      "IS_SANDBOX": "1"
+    },
+    "timeout_seconds": 1800
+  },
+  "browser": {
+    "enabled": true,
+    "cdp_url_env": "JOB_BROWSER_CDP_URL",
+    "default_cdp_url": "http://127.0.0.1:9222",
+    "required": true
+  },
+  "installer": {
+    "source_url": "https://raw.githubusercontent.com/C4T4/heyamigo/main/jobs/yahoo-earnings/job.sh",
+    "command": "curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/jobs/yahoo-earnings/job.sh | bash"
+  },
+  "latest": {
+    "run_id": null,
+    "status": "idle",
+    "updated_at": "2026-05-26T19:06:47Z",
+    "summary": "Installed."
+  }
+}
