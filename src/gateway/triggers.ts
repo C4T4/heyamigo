@@ -108,17 +108,6 @@ function phraseMatches(normalizedText: string, phrase: string): boolean {
   return re.test(normalizedText)
 }
 
-function wakePhraseMatches(normalizedText: string, phrase: string): boolean {
-  const normalizedPhrase = normalizeAudioText(phrase)
-  if (!normalizedPhrase) return false
-  const wake = '(hey|hi|hello|yo|ok|okay|oye|hola)'
-  const re = new RegExp(
-    `(^| )${wake} ${escapeRegex(normalizedPhrase)}($| )`,
-    'i',
-  )
-  return re.test(normalizedText)
-}
-
 function audioAliasMatches(
   transcript: string,
   aliases: string[],
@@ -136,7 +125,7 @@ function audioAliasMatches(
       ...(AUDIO_ALIAS_VARIANTS[normalizedAlias] ?? []),
     ])
     for (const variant of variants) {
-      if (wakePhraseMatches(normalizedTranscript, variant)) {
+      if (phraseMatches(normalizedTranscript, variant)) {
         return { alias, variant: normalizeAudioText(variant) }
       }
     }
