@@ -77,6 +77,14 @@ function requireFile(path: string): { buf: Buffer; bytes: number } {
   }
 }
 
+function isGeneratedVoiceReply(msg: OutboundMessage): boolean {
+  return (
+    msg.kind === 'audio' &&
+    !!msg.mediaPath &&
+    basename(msg.mediaPath).startsWith('voice-')
+  )
+}
+
 // Map a Baileys send error onto our transient/permanent classification.
 // Network/connection issues → transient. Anything else (invalid jid,
 // payload, etc.) → permanent.
@@ -155,7 +163,11 @@ async function sendOne(
       const { buf } = requireFile(msg.mediaPath)
       return sock.sendMessage(
         jid,
-        { audio: buf, mimetype: mimeFor(msg.mediaPath, msg.mediaMime) },
+        {
+          audio: buf,
+          mimetype: mimeFor(msg.mediaPath, msg.mediaMime),
+          ptt: isGeneratedVoiceReply(msg),
+        },
         quoteOpts,
       )
     }

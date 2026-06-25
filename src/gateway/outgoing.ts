@@ -6,6 +6,7 @@ import { logger } from '../logger.js'
 import { addressForJob } from '../queue/job-address.js'
 import { enqueueOutbound } from '../queue/outbound.js'
 import type { Job, ReplyStats, Result } from '../queue/types.js'
+import { synthesizeVoiceReply } from '../voice/elevenlabs.js'
 import { detectMediaType } from '../wa/sender.js'
 
 // Matches [FILE: path], [IMAGE: path], [VIDEO: path], [AUDIO: path], [DOCUMENT: path]
@@ -172,6 +173,39 @@ export async function handleReply(
   const baseKey = `reply-${job.jid}-${Date.now()}`
   const enqueuePiece = (input: Parameters<typeof enqueueOutbound>[0]) => {
     enqueueOutbound({ ...input, idempotencyKey: `${baseKey}-${pieceIdx++}` })
+  }
+
+  if (job.replyWithVoice && text && files.length === 0) {
+    const voice = await synthesizeVoiceReply(text)
+    if (voice) {
+      enqueuePiece({
+        address,
+        kind: 'audio',
+        mediaPath: voice.path,
+        mediaMime: voice.mime,
+        mediaBytes: voice.bytes,
+      })
+      for (const card of result.jobCards ?? []) {
+        enqueueOutbound({
+          address,
+          kind: 'text',
+          text: card.text,
+          idempotencyKey: card.idempotencyKey,
+        })
+      }
+      logger.info(
+        {
+          jid: job.jid,
+          files: 1,
+          chars: text.length,
+          pieces: pieceIdx,
+          cards: result.jobCards?.length ?? 0,
+          voice: true,
+        },
+        'reply enqueued for outbound',
+      )
+      return
+    }
   }
 
   // Files first. Caption goes on the single-file-with-short-text case,

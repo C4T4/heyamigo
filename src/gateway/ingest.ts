@@ -14,6 +14,7 @@ import type { Job } from '../queue/types.js'
 import { mediaPromptTag, type MediaInfo } from '../store/media.js'
 import { append, type StoredMessage } from '../store/messages.js'
 import { getDailyTokens } from '../store/usage.js'
+import { wantsVoiceReply } from '../voice/request.js'
 import {
   checkAccess,
   discoverAddressGroupIfNew,
@@ -89,6 +90,14 @@ function mergeAudioTranscript(text: string, transcript: string): string {
   if (!cleanedTranscript) return text
   if (!cleanedText) return cleanedTranscript
   return `${cleanedText}\n\n[Audio transcript]\n${cleanedTranscript}`
+}
+
+function buildVoiceReplyContract(): string {
+  return [
+    '[Voice reply requested]',
+    'The user asked for a spoken/voice reply.',
+    'Write the reply as concise natural speech. Do not mention text-to-speech or audio generation.',
+  ].join('\n')
 }
 
 export async function processIncomingMessage(
@@ -319,10 +328,14 @@ export async function processIncomingMessage(
     senderPersonId: actorPersonId ?? undefined,
   })
   const jobKind = est?.kind ?? null
+  const replyWithVoice = wantsVoiceReply(stored.text)
 
   let input = `${memoryPreamble}\n\n---\n\n${core}`
   if (est?.kind === 'image-gen') {
     input = `${input}\n\n---\n\n${buildImageGenRoutingContract()}`
+  }
+  if (replyWithVoice) {
+    input = `${input}\n\n---\n\n${buildVoiceReplyContract()}`
   }
 
   logger.info(
@@ -341,6 +354,7 @@ export async function processIncomingMessage(
     fromMe: stored.fromMe,
     allowedTools: role.tools,
     allowedTags: role.tags,
+    replyWithVoice,
   }
 
   if (est) {

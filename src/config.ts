@@ -56,6 +56,27 @@ const ConfigSchema = z.object({
         enabled: true,
       },
     }),
+  voice: z
+    .object({
+      enabled: z.boolean().default(false),
+      provider: z.enum(['elevenlabs']).default('elevenlabs'),
+      apiKeyEnv: z.string().default('ELEVENLABS_API_KEY'),
+      voiceId: z.string().default(''),
+      modelId: z.string().default('eleven_multilingual_v2'),
+      outputFormat: z.string().default('mp3_44100_128'),
+      maxChars: z.number().int().positive().default(1200),
+      timeoutMs: z.number().int().positive().default(30000),
+    })
+    .default({
+      enabled: false,
+      provider: 'elevenlabs',
+      apiKeyEnv: 'ELEVENLABS_API_KEY',
+      voiceId: '',
+      modelId: 'eleven_multilingual_v2',
+      outputFormat: 'mp3_44100_128',
+      maxChars: 1200,
+      timeoutMs: 30000,
+    }),
   claude: z.object({
     model: z.string(),
     personalityFile: z.string(),
