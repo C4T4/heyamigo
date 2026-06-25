@@ -245,6 +245,7 @@ export async function processIncomingMessage(
     const trigger = checkTrigger({
       mode: decision.triggerMode,
       text: stored.text,
+      audioTranscript: audioTranscript ?? undefined,
       mentionedBot: incoming.triggerHints?.mentionedBot,
       replyToBot: incoming.triggerHints?.replyToBot,
     })
