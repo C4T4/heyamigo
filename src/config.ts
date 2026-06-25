@@ -41,6 +41,21 @@ const ConfigSchema = z.object({
       provider: z.enum(['claude', 'codex', 'grok']).default('claude'),
     })
     .default({ provider: 'claude' }),
+  audio: z
+    .object({
+      transcription: z
+        .object({
+          enabled: z.boolean().default(true),
+        })
+        .default({
+          enabled: true,
+        }),
+    })
+    .default({
+      transcription: {
+        enabled: true,
+      },
+    }),
   claude: z.object({
     model: z.string(),
     personalityFile: z.string(),

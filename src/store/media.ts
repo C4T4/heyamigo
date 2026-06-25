@@ -132,7 +132,11 @@ export async function downloadAndSave(
   }
 }
 
-export function mediaPromptTag(info: MediaInfo, caption: string): string {
+export function mediaPromptTag(
+  info: MediaInfo,
+  caption: string,
+  transcript?: string | null,
+): string {
   const label =
     info.mediaType === 'image'
       ? 'an image'
@@ -143,11 +147,15 @@ export function mediaPromptTag(info: MediaInfo, caption: string): string {
           : info.mediaType === 'document'
             ? 'a document'
             : 'a sticker'
+  const hasTranscript = info.mediaType === 'audio' && !!transcript?.trim()
   const lines = [
     `[User sent ${label}: ${info.mediaPath}]`,
-    `Read this file to see what the user sent.`,
+    hasTranscript
+      ? 'Transcript provided below; use it as the spoken content.'
+      : 'Read this file to see what the user sent.',
   ]
-  if (caption) lines.push(`Caption: "${caption}"`)
+  if (caption.trim()) lines.push(`Caption: "${caption.trim()}"`)
+  if (hasTranscript) lines.push(`Transcript: "${transcript!.trim()}"`)
   return lines.join('\n')
 }
 

@@ -2,6 +2,7 @@ import { unlink } from 'fs/promises'
 import { resolve } from 'path'
 import { getProvider } from '../ai/providers.js'
 import { getSession } from '../ai/sessions.js'
+import { transcribeAudioFile } from '../audio/transcription.js'
 import { config } from '../config.js'
 import { personIdForAddress } from '../db/identity-sync.js'
 import { estimate as estimateJob } from '../estimates/index.js'
@@ -68,6 +69,26 @@ function buildImageGenRoutingContract(): string {
     'Do not perform file work in this foreground reply.',
     `Reply briefly and emit [ASYNC: Generate the requested image using current chat context. Save final files under ${outboxPath}/. Follow-up reply must include one [IMAGE: /absolute/path] tag per final image, or say: Image job failed before producing a file.]`,
   ].join('\n')
+}
+
+function shouldTranscribeAudio(params: {
+  media: MediaInfo | null
+  respond: boolean
+  triggerMode: string
+  selfChat?: boolean
+}): params is typeof params & { media: MediaInfo } {
+  if (params.media?.mediaType !== 'audio') return false
+  if (!params.respond) return false
+  if (params.selfChat) return true
+  return params.triggerMode !== 'off'
+}
+
+function mergeAudioTranscript(text: string, transcript: string): string {
+  const cleanedTranscript = transcript.trim()
+  const cleanedText = text.trim()
+  if (!cleanedTranscript) return text
+  if (!cleanedText) return cleanedTranscript
+  return `${cleanedText}\n\n[Audio transcript]\n${cleanedTranscript}`
 }
 
 export async function processIncomingMessage(
@@ -171,6 +192,29 @@ export async function processIncomingMessage(
     stored.mediaMime = media.mediaMime
   }
 
+  const originalMediaText = stored.text
+  let audioTranscript: string | null = null
+  const transcribeThisAudio =
+    shouldTranscribeAudio({
+      media,
+      respond: decision.respond,
+      triggerMode: decision.triggerMode,
+      selfChat: incoming.selfChat,
+    }) && media
+
+  if (transcribeThisAudio) {
+    audioTranscript = await transcribeAudioFile({
+      path: transcribeThisAudio.mediaPath,
+      mime: transcribeThisAudio.mediaMime,
+      address: incoming.address,
+      externalMsgId: incoming.externalMsgId,
+    })
+    if (audioTranscript) {
+      stored.text = mergeAudioTranscript(stored.text, audioTranscript)
+      logCtx.text = stored.text.slice(0, 80)
+    }
+  }
+
   await append(stored)
 
   if (!decision.respond) {
@@ -235,7 +279,7 @@ export async function processIncomingMessage(
   const existingSession = getSession(stored.jid, getProvider().name)
   let userContent = stored.text
   if (media) {
-    userContent = mediaPromptTag(media, stored.text)
+    userContent = mediaPromptTag(media, originalMediaText, audioTranscript)
   }
 
   const memoryPreamble = buildMemoryPreamble({

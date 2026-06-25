@@ -33,6 +33,12 @@
     "provider": "claude"
   },
 
+  "audio": {
+    "transcription": {
+      "enabled": true
+    }
+  },
+
   "claude": {
     "model": "claude-opus-4-7",
     "personalityFile": "./config/personalities/sharp.md",
