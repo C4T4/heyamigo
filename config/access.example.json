@@ -102,7 +102,7 @@
   ],
 
   "dms": {
-    "_readme": "Matched by chat partner number/key, not sender. Telegram DMs use tg_<user_id>. Owner messages in WhatsApp DMs are always silent. triggerMode defaults to off when omitted.",
+    "_readme": "Matched by chat partner number/key, not sender. Telegram DMs use tg_<user_id>. Owner messages in WhatsApp DMs are silent unless that chat partner has an explicit mode:\"active\" entry. triggerMode defaults to off when omitted.",
     "defaultMode": "off",
     "allowed": [
       { "_note": "friend can DM the bot, and bot can proactively message them", "number": "491701234567", "mode": "active", "triggerMode": "all", "proactive": true },

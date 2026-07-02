@@ -367,11 +367,14 @@ export function checkAccess(params: {
     }
   }
 
-  // Self-chat: owner messaging themselves — respond like a direct conversation with the bot
-  const isSelfChat = fromMe && partnerNumber === config.owner.number
-  if (fromMe && !isSelfChat) return storeOnly('dm owner chatting')
   const dmEntry = current.dms.allowed.find((d) => d.number === partnerNumber)
   const mode = dmEntry?.mode ?? current.dms.defaultMode
+  // Self-chat: owner messaging themselves — respond like a direct conversation with the bot.
+  // Other owner-sent DMs stay silent unless that chat partner is explicitly active.
+  const isSelfChat = fromMe && partnerNumber === config.owner.number
+  if (fromMe && !isSelfChat && dmEntry?.mode !== 'active') {
+    return storeOnly('dm owner chatting')
+  }
   if (mode === 'off') return DROP
   if (mode === 'silent') return storeOnly('dm silent')
   return storeAndRespond('dm active', dmEntry?.triggerMode ?? 'off')
