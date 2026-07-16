@@ -114,9 +114,9 @@ const ConfigSchema = z.object({
     .default({ maxWorkers: 3 }),
   codex: z
     .object({
-      // Optional model override. If unset, Codex uses its default. Passed
-      // as `-m <model>` to `codex exec`.
-      model: z.string().optional(),
+      // Explicit model used by Codex chat turns and shown in reply footers.
+      // Passed as `-m <model>` to `codex exec`.
+      model: z.string().default('gpt-5.6-sol'),
       // Default thinking depth for Codex chat turns. Individual chats can
       // override this at runtime with /thinking.
       reasoningEffort: ReasoningEffortSchema.default('xhigh'),

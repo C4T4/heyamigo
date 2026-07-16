@@ -59,6 +59,7 @@
   },
 
   "codex": {
+    "model": "gpt-5.6-sol",
     "reasoningEffort": "xhigh",
     "contextWindow": 200000,
     "yolo": true,

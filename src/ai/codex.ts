@@ -357,6 +357,7 @@ async function askCodex(params: AskParams): Promise<AskResult> {
 
 export const codexProvider: AiProvider = {
   name: 'codex',
+  model: config.codex.model,
   contextWindow: config.codex.contextWindow,
   // Codex CLI's `turn.completed.usage` reports cumulative totals for
   // the entire resume thread, not just this one turn. Worker uses

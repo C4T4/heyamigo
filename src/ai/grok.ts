@@ -382,6 +382,7 @@ async function askGrok(params: AskParams): Promise<AskResult> {
 
 export const grokProvider: AiProvider = {
   name: 'grok',
+  model: config.grok.model ?? 'grok-default',
   contextWindow: config.grok.contextWindow,
   // The current Grok Build headless JSON output does not expose reliable
   // per-turn token usage, so treat any reported counts as this invocation only.

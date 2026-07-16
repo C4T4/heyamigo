@@ -265,6 +265,7 @@ export async function runClaudeTask(
 
 export const claudeProvider: AiProvider = {
   name: 'claude',
+  model: config.claude.model,
   contextWindow: config.claude.contextWindow,
   // Claude CLI's `result` event reports per-turn usage (just the
   // tokens consumed by this single resume invocation).

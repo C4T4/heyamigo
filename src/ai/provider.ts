@@ -92,6 +92,7 @@ export type UsageReportingMode = 'per-turn' | 'cumulative'
 
 export interface AiProvider {
   readonly name: ProviderName
+  readonly model: string
   readonly usageReportingMode: UsageReportingMode
   readonly contextWindow: number
   // Conversational chat turn — opinionated defaults (always system prompt,

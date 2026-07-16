@@ -508,8 +508,14 @@ async function callClaude(job: Job): Promise<Result> {
     reply: clean,
     stats: {
       durationMs,
+      model: provider.model,
+      thinking:
+        provider.name === 'codex'
+          ? job.reasoningEffort ?? config.codex.reasoningEffort
+          : undefined,
       // All per-turn values now (delta-corrected for cumulative
-      // providers above). Footer shows these directly.
+      // providers above). Retained for accounting and /status even though
+      // the compact reply footer no longer displays raw token counts.
       inputTokens: turnInput,
       outputTokens: turnOutput,
       cacheReadTokens: turnCacheRead,

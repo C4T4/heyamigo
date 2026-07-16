@@ -31,6 +31,8 @@ export type Job = {
 
 export type ReplyStats = {
   durationMs: number
+  model: string
+  thinking?: ReasoningEffort
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number

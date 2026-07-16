@@ -353,14 +353,8 @@ export function formatStatsFooter(
   const secs = stats.durationMs / 1000
   parts.push(secs < 10 ? `${secs.toFixed(1)}s` : `${Math.round(secs)}s`)
 
-  // Tokens in / out — always. Show cache hit only when it's meaningful.
-  const inStr = compactTokens(stats.inputTokens + stats.cacheReadTokens)
-  const outStr = compactTokens(stats.outputTokens)
-  const cacheStr =
-    stats.cacheReadTokens >= 500
-      ? ` (${compactTokens(stats.cacheReadTokens)} cached)`
-      : ''
-  parts.push(`${inStr}↑${cacheStr} ${outStr}↓`)
+  parts.push(stats.model)
+  if (stats.thinking) parts.push(stats.thinking)
 
   // Context % — only when worth calling out. Skipped when pct is
   // implausible (>120%) — usually means cumulative/per-turn token
@@ -415,12 +409,6 @@ export function formatStatsFooter(
   }
 
   return `_${parts.join(' · ')}_`
-}
-
-function compactTokens(n: number): string {
-  if (n < 1000) return String(n)
-  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`
-  return `${Math.round(n / 1000)}k`
 }
 
 export function chunkText(text: string, maxChars: number): string[] {
