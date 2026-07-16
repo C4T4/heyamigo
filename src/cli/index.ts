@@ -86,10 +86,35 @@ program
   .alias('upgrade')
   .description('Update heyamigo to the latest version')
   .action(async () => {
-    const { execSync } = await import('child_process')
-    console.log('Updating @c4t4/heyamigo...')
+    const { execFileSync } = await import('child_process')
+    let latest: string
     try {
-      execSync('npm install -g @c4t4/heyamigo@latest', { stdio: 'inherit' })
+      latest = execFileSync(
+        'npm',
+        ['view', '@c4t4/heyamigo', 'version'],
+        { encoding: 'utf-8' },
+      ).trim()
+      if (!latest) throw new Error('npm returned an empty version')
+    } catch {
+      console.error('Could not check the latest npm version. Try again later.')
+      process.exit(1)
+    }
+
+    console.log(`Current version: ${pkgVersion}`)
+    console.log(`Latest version:  ${latest}`)
+
+    if (latest === pkgVersion) {
+      console.log('Already up to date.')
+      return
+    }
+
+    console.log(`Updating ${pkgVersion} → ${latest}...`)
+    try {
+      execFileSync(
+        'npm',
+        ['install', '-g', `@c4t4/heyamigo@${latest}`],
+        { stdio: 'inherit' },
+      )
       console.log('\nUpdated. Restart the bot:')
       console.log('  heyamigo restart')
     } catch {
