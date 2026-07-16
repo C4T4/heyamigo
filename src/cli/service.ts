@@ -81,7 +81,7 @@ export async function serviceCmd(
       if (child.pid) {
         writeFileSync(PID_FILE, String(child.pid))
         console.log(`Started (PID: ${child.pid})`)
-        console.log(`Logs: npx @c4t4/heyamigo logs`)
+        console.log(`Logs: heyamigo logs`)
       } else {
         console.error('Failed to start')
       }
@@ -114,7 +114,7 @@ export async function serviceCmd(
 
     case 'logs': {
       if (!existsSync(LOG_FILE)) {
-        console.log('No logs yet. Start the bot first: npx @c4t4/heyamigo start')
+        console.log('No logs yet. Start the bot first: heyamigo start')
         return
       }
       spawnSync('tail', ['-f', '-n', '50', LOG_FILE], {

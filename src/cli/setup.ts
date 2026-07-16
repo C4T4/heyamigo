@@ -345,7 +345,7 @@ export async function runSetup(): Promise<void> {
         'Claude is not logged in.\n' +
           'Run claude in your terminal and follow the login instructions:\n\n' +
           '  claude\n\n' +
-          'Once logged in, re-run: npx @c4t4/heyamigo setup',
+          'Once logged in, re-run: heyamigo setup',
       )
       process.exit(1)
     }
@@ -831,7 +831,7 @@ export async function runSetup(): Promise<void> {
 
       if (!success && !existsSync(credsPath)) {
         p.cancel(
-          'WhatsApp pairing is required. Re-run: npx @c4t4/heyamigo setup',
+          'WhatsApp pairing is required. Re-run: heyamigo setup',
         )
         process.exit(1)
       }
@@ -843,7 +843,7 @@ export async function runSetup(): Promise<void> {
         p.log.success(`Owner number set: ${pairedNumber} (from WhatsApp)`)
       }
     } else {
-      p.log.info('Skipped. Pair later: npx @c4t4/heyamigo setup')
+      p.log.info('Skipped. Pair later: heyamigo setup')
     }
   }
 
@@ -988,19 +988,19 @@ export async function runSetup(): Promise<void> {
   p.note(
     [
       'Start the bot:',
-      '  npx @c4t4/heyamigo start',
+      '  heyamigo start',
       '',
       'Check logs:',
-      '  npx @c4t4/heyamigo logs',
+      '  heyamigo logs',
       '',
       'Import existing knowledge:',
-      '  npx @c4t4/heyamigo import /path/to/folder',
+      '  heyamigo import /path/to/folder',
       '',
       'Update to latest version:',
-      '  npx @c4t4/heyamigo update',
+      '  heyamigo upgrade',
       '',
       'Other commands:',
-      '  npx @c4t4/heyamigo stop / restart / status',
+      '  heyamigo stop / restart / status',
       '',
       'Configuration:',
       '  config/config.json   — bot name, model',
@@ -1012,7 +1012,7 @@ export async function runSetup(): Promise<void> {
   p.log.warning(
     'IMPORTANT: The bot won\'t respond until you activate a group!\n\n' +
       '  Step 1 — Start the bot:\n' +
-      '    npx @c4t4/heyamigo start\n\n' +
+      '    heyamigo start\n\n' +
       '  Step 2 — Send a message in any WhatsApp group.\n' +
       '    The bot discovers the group and adds it to config/access.json.\n\n' +
       '  Step 3 — Open config/access.json and edit:\n' +
@@ -1021,10 +1021,10 @@ export async function runSetup(): Promise<void> {
       '    - Set allowedSenders to "*" for everyone\n\n' +
       '    - Set triggerMode to "mention" or "all"\n\n' +
       '  Step 4 — Restart the bot:\n' +
-      '    npx @c4t4/heyamigo restart\n\n' +
+      '    heyamigo restart\n\n' +
       '  Step 5 — If triggerMode is "mention", mention the bot\'s name in the group to get a reply.\n\n' +
       '  Debugging:\n' +
-      '    npx @c4t4/heyamigo logs',
+      '    heyamigo logs',
   )
 
   p.log.info(

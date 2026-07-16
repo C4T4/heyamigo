@@ -89,11 +89,11 @@ program
     const { execSync } = await import('child_process')
     console.log('Updating @c4t4/heyamigo...')
     try {
-      execSync('npm install @c4t4/heyamigo@latest', { stdio: 'inherit' })
+      execSync('npm install -g @c4t4/heyamigo@latest', { stdio: 'inherit' })
       console.log('\nUpdated. Restart the bot:')
-      console.log('  npx @c4t4/heyamigo restart')
+      console.log('  heyamigo restart')
     } catch {
-      console.error('Update failed. Try manually: npm install @c4t4/heyamigo@latest')
+      console.error('Update failed. Try manually: npm install -g @c4t4/heyamigo@latest')
       process.exit(1)
     }
   })

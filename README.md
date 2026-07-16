@@ -28,11 +28,12 @@ For the why behind these — claim primitives, tag-as-side-effect channel, per-c
 
 ```bash
 npm install -g @anthropic-ai/claude-code
+npm install -g @c4t4/heyamigo
 claude                                  # log in once, then exit
 
-npx @c4t4/heyamigo setup                # wizard: pair WhatsApp, pick personality
-npx @c4t4/heyamigo start                # background, auto-restart
-npx @c4t4/heyamigo logs                 # tail
+heyamigo setup                          # wizard: pair WhatsApp, pick personality
+heyamigo start                          # background, auto-restart
+heyamigo logs                           # tail
 ```
 
 Telegram is optional. Create a bot with BotFather, set `telegram.enabled: true` and `telegram.botToken` in `config/config.json`, then allow users/groups in `config/access.json`. Telegram user keys use `tg_<user_id>`; Telegram group entries use addresses like `tg:group:-1001234567890`.
