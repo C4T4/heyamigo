@@ -7,6 +7,8 @@
 // utilities may still call a specific CLI directly, but runtime work should
 // flow through this interface.
 
+import type { ReasoningEffort } from '../config.js'
+
 export type AskParams = {
   input: string
   // Provider-native session id from a prior turn, if resuming. Each provider
@@ -16,6 +18,9 @@ export type AskParams = {
   // namespace (e.g. 'Read,Edit,Bash'); providers that lack per-tool gating
   // (Codex) translate this into their coarser equivalent (sandbox mode).
   allowedTools?: string[] | 'all'
+  // Optional per-chat Codex thinking override. Providers without a matching
+  // reasoning control ignore it.
+  reasoningEffort?: ReasoningEffort
 }
 
 export type AskUsage = {
@@ -65,6 +70,7 @@ export type RunTaskParams = {
   // Per-tool allowlist. Providers translate this where their CLI has a matching
   // permission surface. Pass undefined or 'all' for no restriction.
   allowedTools?: string[] | 'all'
+  reasoningEffort?: ReasoningEffort
 }
 
 export type RunTaskResult = {

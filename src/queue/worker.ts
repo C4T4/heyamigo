@@ -51,6 +51,7 @@ async function callClaude(job: Job): Promise<Result> {
     input: job.input,
     sessionId: job.sessionId,
     allowedTools: job.allowedTools,
+    reasoningEffort: job.reasoningEffort,
   })
   const durationMs = Date.now() - startedAt
 

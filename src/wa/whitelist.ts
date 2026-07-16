@@ -2,7 +2,13 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 import { jidDecode, type WASocket } from 'baileys'
 import { z } from 'zod'
-import { config, TriggerModeSchema, type TriggerMode } from '../config.js'
+import {
+  config,
+  ReasoningEffortSchema,
+  TriggerModeSchema,
+  type ReasoningEffort,
+  type TriggerMode,
+} from '../config.js'
 import { actorKeyFromAddress, parseAddress } from '../db/address.js'
 import { logger } from '../logger.js'
 
@@ -64,6 +70,10 @@ const DmEntrySchema = z.object({
   proactive: z.boolean().default(false),
 })
 
+const ChatPreferenceSchema = z.object({
+  thinking: ReasoningEffortSchema.optional(),
+})
+
 const AccessSchema = z
   .object({
     roles: z.record(RoleNameSchema, RoleSchema).optional(),
@@ -74,6 +84,7 @@ const AccessSchema = z
         dmRole: RoleNameSchema,
       })
       .optional(),
+    chatPreferences: z.record(ChatPreferenceSchema).default({}),
     groups: z.array(GroupEntrySchema),
     dms: z.object({
       defaultMode: AccessModeSchema,
@@ -187,6 +198,31 @@ function save(next: AccessConfig): void {
 
 export function getAccess(): AccessConfig {
   return current
+}
+
+export function getChatThinking(address: string): ReasoningEffort | undefined {
+  return current.chatPreferences[address]?.thinking
+}
+
+export function setChatThinking(
+  address: string,
+  thinking: ReasoningEffort | undefined,
+): void {
+  const chatPreferences = { ...current.chatPreferences }
+  if (thinking) {
+    chatPreferences[address] = {
+      ...chatPreferences[address],
+      thinking,
+    }
+  } else {
+    const existing = chatPreferences[address]
+    if (existing) {
+      const { thinking: _thinking, ...rest } = existing
+      if (Object.keys(rest).length === 0) delete chatPreferences[address]
+      else chatPreferences[address] = rest
+    }
+  }
+  save({ ...current, chatPreferences })
 }
 
 // Guardrail for proactive (unsolicited) messaging. Default deny.

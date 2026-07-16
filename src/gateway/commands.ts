@@ -1,13 +1,19 @@
 import { clearSession, getSessionInfo } from '../ai/sessions.js'
 import { getProvider, reloadAllSystemPrompts } from '../ai/providers.js'
-import { config } from '../config.js'
+import { config, ReasoningEffortSchema } from '../config.js'
 import { runDigestNow } from '../memory/scheduler.js'
+import {
+  getChatThinking,
+  getRoleForContext,
+  setChatThinking,
+} from '../wa/whitelist.js'
 
 export type CommandContext = {
   jid: string
   address: string
   text: string
   senderNumber: string
+  isGroup: boolean
   reply(text: string): Promise<void>
 }
 
@@ -57,6 +63,50 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
       lines.push(`Turns: ${info.usage.numTurns}`)
     }
     await ctx.reply(lines.join('\n'))
+    return true
+  }
+
+  if (cmd === 'thinking') {
+    const provider = getProvider()
+    const override = getChatThinking(ctx.address)
+    const current = override ?? config.codex.reasoningEffort
+    const source = override ? 'chat override' : 'default'
+    const usage = `Use ${prefix}thinking ${ReasoningEffortSchema.options.join('|')} or ${prefix}thinking default.`
+
+    if (args.length === 0) {
+      const providerNote = provider.name === 'codex'
+        ? ''
+        : `\nActive provider is ${provider.name}; this setting applies when Codex is active.`
+      await ctx.reply(`Thinking: ${current} (${source}).\n${usage}${providerNote}`)
+      return true
+    }
+
+    const role = getRoleForContext(ctx.senderNumber, ctx.isGroup)
+    if (role.name !== 'admin') {
+      await ctx.reply('Only admins can change the thinking level.')
+      return true
+    }
+
+    const requested = args[0]?.toLowerCase()
+    if (requested === 'default') {
+      setChatThinking(ctx.address, undefined)
+      await ctx.reply(
+        `Thinking reset to ${config.codex.reasoningEffort} (default) for this chat.`,
+      )
+      return true
+    }
+
+    const parsed = ReasoningEffortSchema.safeParse(requested)
+    if (!parsed.success) {
+      await ctx.reply(`Unknown thinking level. ${usage}`)
+      return true
+    }
+
+    setChatThinking(ctx.address, parsed.data)
+    const providerNote = provider.name === 'codex'
+      ? ' Applies to the next Codex turn.'
+      : ` It will apply when Codex is active; current provider is ${provider.name}.`
+    await ctx.reply(`Thinking set to ${parsed.data} for this chat.${providerNote}`)
     return true
   }
 

@@ -55,6 +55,8 @@
     "dmRole": "guest"
   },
 
+  "chatPreferences": {},
+
   "groups": [
     {
       "_note": "Active group, anyone can trigger the bot",

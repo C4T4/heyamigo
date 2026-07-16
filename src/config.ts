@@ -5,6 +5,18 @@ import { z } from 'zod'
 export const TriggerModeSchema = z.enum(['all', 'mention', 'command', 'off'])
 export type TriggerMode = z.infer<typeof TriggerModeSchema>
 
+export const ReasoningEffortSchema = z.enum([
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra',
+])
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>
+
 const ConfigSchema = z.object({
   whatsapp: z.object({
     enabled: z.boolean().default(true),
@@ -105,6 +117,9 @@ const ConfigSchema = z.object({
       // Optional model override. If unset, Codex uses its default. Passed
       // as `-m <model>` to `codex exec`.
       model: z.string().optional(),
+      // Default thinking depth for Codex chat turns. Individual chats can
+      // override this at runtime with /thinking.
+      reasoningEffort: ReasoningEffortSchema.default('xhigh'),
       contextWindow: z.number().int().positive().default(200000),
       // Emits --yolo, which bundles no-approvals + full sandbox + skip-
       // trust-check. The narrower verbose flag does not subsume the trust

@@ -1,3 +1,5 @@
+import type { ReasoningEffort } from '../config.js'
+
 export type Job = {
   // Legacy name kept for compatibility with the existing session,
   // memory, and thread stores. For WhatsApp this is the raw JID; for
@@ -16,6 +18,7 @@ export type Job = {
   fromMe: boolean
   role?: string
   allowedTools?: string[] | 'all'
+  reasoningEffort?: ReasoningEffort
   // Tag allowlist for this sender's role. Undefined or 'all' = no
   // restriction. Set by gateway/incoming.ts from the resolved role.
   allowedTags?: string[] | 'all'

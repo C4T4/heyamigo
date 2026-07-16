@@ -18,6 +18,7 @@ import { wantsVoiceReply } from '../voice/request.js'
 import {
   checkAccess,
   discoverAddressGroupIfNew,
+  getChatThinking,
   getLimitsForUser,
   getRoleForContext,
 } from '../wa/whitelist.js'
@@ -241,6 +242,7 @@ export async function processIncomingMessage(
     address: incoming.address,
     text: stored.text,
     senderNumber: stored.senderNumber,
+    isGroup: incoming.isGroup,
     reply: async (text) =>
       enqueueTextReply(incoming, text, `command-${incoming.externalMsgId}`),
   })
@@ -353,6 +355,8 @@ export async function processIncomingMessage(
     senderNumber: stored.senderNumber,
     fromMe: stored.fromMe,
     allowedTools: role.tools,
+    reasoningEffort:
+      getChatThinking(incoming.address) ?? config.codex.reasoningEffort,
     allowedTags: role.tags,
     replyWithVoice,
   }

@@ -27,7 +27,7 @@
 
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
-import { config } from '../config.js'
+import { config, type ReasoningEffort } from '../config.js'
 import { logger } from '../logger.js'
 import { logPrompt, type PromptLogEntry } from '../promptlog.js'
 import type {
@@ -92,6 +92,7 @@ function buildExecArgs(params: {
   addDirs?: string[]
   sessionId?: string
   includeSystemPrompt?: boolean
+  reasoningEffort?: ReasoningEffort
   prompt: string
 }): { args: string[]; prompt: string } {
   const cfg = config.codex
@@ -114,6 +115,15 @@ function buildExecArgs(params: {
   }
 
   for (const extra of cfg.extraArgs) args.push(extra)
+
+  // Keep the chat-selected effort as the final config override so it wins
+  // over the global config and any profile supplied through extraArgs.
+  if (params.reasoningEffort) {
+    args.push(
+      '-c',
+      `model_reasoning_effort="${params.reasoningEffort}"`,
+    )
+  }
 
   if (params.sessionId) {
     // Resume is a subcommand of exec, not a flag: `codex exec [opts] resume
@@ -269,6 +279,7 @@ async function runCodexTask(
     addDirs: params.addDirs,
     sessionId: params.sessionId,
     includeSystemPrompt: params.includeSystemPrompt,
+    reasoningEffort: params.reasoningEffort,
     prompt: params.input,
   })
 
@@ -322,6 +333,7 @@ async function askCodex(params: AskParams): Promise<AskResult> {
     sessionId: params.sessionId,
     includeSystemPrompt: true,
     allowedTools: params.allowedTools,
+    reasoningEffort: params.reasoningEffort,
     addDirs: [
       config.memory.dir,
       config.storage.mediaDir,

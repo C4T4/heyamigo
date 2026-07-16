@@ -59,6 +59,7 @@
   },
 
   "codex": {
+    "reasoningEffort": "xhigh",
     "contextWindow": 200000,
     "yolo": true,
     "skipGitRepoCheck": true,

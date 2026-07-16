@@ -48,6 +48,7 @@ Other providers:
 |---|---|
 | `/reset` | Fresh AI session for this chat |
 | `/status` | Session info, context utilization |
+| `/thinking [level]` | Show or set this chat's Codex reasoning level; `default` clears the override |
 | `/queues` | Live queue depths |
 | `/crons` · `/reminders` | List recurring schedules + one-shots (token cost included) |
 | `/threads` | List the relevance watchlist; resolve / drop / pause / weight |
