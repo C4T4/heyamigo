@@ -16,16 +16,18 @@ import { append, type StoredMessage } from '../store/messages.js'
 import { getDailyTokens } from '../store/usage.js'
 import { wantsVoiceReply } from '../voice/request.js'
 import {
+  type AccessDecision,
   checkAccess,
   discoverAddressGroupIfNew,
   getChatThinking,
   getLimitsForUser,
   getRoleForContext,
+  type UserLimits,
 } from '../wa/whitelist.js'
 import type { IncomingMessage } from '../channels/runtime.js'
 import { buildInitPayload, buildRecentContext } from './bootstrap.js'
 import { tryCommand } from './commands.js'
-import { checkTrigger } from './triggers.js'
+import { checkTrigger, type TriggerResult } from './triggers.js'
 
 export type ProcessIncomingOptions = {
   isHistorySync?: boolean
@@ -101,6 +103,34 @@ function buildVoiceReplyContract(): string {
   ].join('\n')
 }
 
+function isKnownOversizedMedia(
+  incoming: IncomingMessage,
+  limits: UserLimits,
+): boolean {
+  return (
+    !!incoming.mediaType &&
+    limits.maxFileBytes !== null &&
+    incoming.mediaBytes !== null &&
+    incoming.mediaBytes !== undefined &&
+    incoming.mediaBytes > limits.maxFileBytes
+  )
+}
+
+function checkTriggerBeforeMediaProcessing(
+  incoming: IncomingMessage,
+  decision: AccessDecision,
+  text: string,
+): TriggerResult {
+  if (!decision.respond) return { triggered: false, reason: 'respond=false' }
+  if (incoming.selfChat) return { triggered: true, reason: 'self-chat' }
+  return checkTrigger({
+    mode: decision.triggerMode,
+    text,
+    mentionedBot: incoming.triggerHints?.mentionedBot,
+    replyToBot: incoming.triggerHints?.replyToBot,
+  })
+}
+
 export async function processIncomingMessage(
   incoming: IncomingMessage,
   opts: ProcessIncomingOptions = {},
@@ -150,22 +180,32 @@ export async function processIncomingMessage(
   }
 
   const limits = getLimitsForUser(stored.senderNumber, incoming.isGroup)
-  if (
-    incoming.mediaType &&
-    limits.maxFileBytes !== null &&
-    decision.respond &&
-    incoming.mediaBytes !== null &&
-    incoming.mediaBytes !== undefined &&
-    incoming.mediaBytes > limits.maxFileBytes
-  ) {
+  if (isKnownOversizedMedia(incoming, limits)) {
     await append(stored)
+    if (!decision.respond) {
+      logger.info(logCtx, 'message captured, silent')
+      return
+    }
+    const trigger = checkTriggerBeforeMediaProcessing(incoming, decision, stored.text)
+    if (!trigger.triggered) {
+      logger.info(
+        { ...logCtx, trigger: trigger.reason },
+        'message captured, no trigger',
+      )
+      return
+    }
     enqueueTextReply(
       incoming,
       'Could not process that, please try a smaller file.',
       `oversized-${incoming.externalMsgId}`,
     )
     logger.info(
-      { ...logCtx, size: incoming.mediaBytes, cap: limits.maxFileBytes },
+      {
+        ...logCtx,
+        size: incoming.mediaBytes,
+        cap: limits.maxFileBytes,
+        trigger: trigger.reason,
+      },
       'oversized media rejected',
     )
     return
@@ -184,13 +224,30 @@ export async function processIncomingMessage(
   ) {
     await unlink(media.mediaPath).catch(() => undefined)
     await append(stored)
+    if (!decision.respond) {
+      logger.info(logCtx, 'message captured, silent')
+      return
+    }
+    const trigger = checkTriggerBeforeMediaProcessing(incoming, decision, stored.text)
+    if (!trigger.triggered) {
+      logger.info(
+        { ...logCtx, trigger: trigger.reason },
+        'message captured, no trigger',
+      )
+      return
+    }
     enqueueTextReply(
       incoming,
       'Could not process that, please try a smaller file.',
       `oversized-downloaded-${incoming.externalMsgId}`,
     )
     logger.info(
-      { ...logCtx, bytes: media.bytes, cap: limits.maxFileBytes },
+      {
+        ...logCtx,
+        bytes: media.bytes,
+        cap: limits.maxFileBytes,
+        trigger: trigger.reason,
+      },
       'oversized media rejected (post-download)',
     )
     return
