@@ -13,19 +13,30 @@ set -euo pipefail
 #   ./scripts/start-browser.sh status    # check what's running
 #
 # Ports (configurable via env):
-#   CDP_PORT   = 9222  (Chrome remote debugging)
-#   VNC_PORT   = 5900  (x11vnc)
-#   NOVNC_PORT = 6090  (noVNC web client)
+#   CDP_PORT           = 9222  (Chrome remote debugging)
+#   VNC_PORT           = 5900  (x11vnc)
+#   NOVNC_PORT         = 6090  (noVNC frontend / SSH tunnel)
+#   NOVNC_BACKEND_PORT = auto  (6080 when nginx owns the frontend)
 
 CDP_PORT="${CDP_PORT:-9222}"
 VNC_PORT="${VNC_PORT:-5900}"
 NOVNC_PORT="${NOVNC_PORT:-6090}"
+NOVNC_BACKEND_PORT="${NOVNC_BACKEND_PORT:-}"
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 RESOLUTION="${RESOLUTION:-1920x1080x24}"
 VNC_PROFILE="${HOME}/.config/google-chrome-novnc"
 CHROME_LOG="${CHROME_LOG:-${PWD}/storage/logs/chrome.log}"
 CHROME_BIN="${CHROME_BIN:-}"
 CHROME_START_URL="${CHROME_START_URL:-about:blank}"
+NOVNC_LOG="${NOVNC_LOG:-${PWD}/storage/logs/novnc.log}"
+
+if [ -z "${NOVNC_BACKEND_PORT}" ]; then
+  NOVNC_BACKEND_PORT="${NOVNC_PORT}"
+  if command -v ss &>/dev/null &&
+     ss -ltnp "( sport = :${NOVNC_PORT} )" 2>/dev/null | grep -q '"nginx"'; then
+    NOVNC_BACKEND_PORT=6080
+  fi
+fi
 
 export DISPLAY=":${DISPLAY_NUM}"
 
@@ -61,6 +72,10 @@ find_novnc_proxy() {
 }
 
 is_running() { pgrep -f "$1" &>/dev/null; }
+
+port_listening() {
+  ss -ltn "( sport = :$1 )" 2>/dev/null | grep -q LISTEN
+}
 
 cmdline_has_arg() {
   local cmdline="$1" name="$2" expected="$3"
@@ -101,7 +116,7 @@ do_stop() {
       kill "${pid}" 2>/dev/null || true
     done <<<"${chrome_pids}"
   fi
-  pkill -f "websockify.*${NOVNC_PORT}" 2>/dev/null || true
+  pkill -f "websockify.*${NOVNC_BACKEND_PORT}" 2>/dev/null || true
   pkill -f "x11vnc.*rfbport.*${VNC_PORT}" 2>/dev/null || true
   pkill -f "Xvfb :${DISPLAY_NUM}" 2>/dev/null || true
   sleep 1
@@ -114,7 +129,12 @@ do_status() {
   is_running "Xvfb :${DISPLAY_NUM}"                && ok "Xvfb :${DISPLAY_NUM}"       || fail "Xvfb"
   [ -n "$(managed_chrome_pids)" ]                  && ok "VNC Chrome CDP :${CDP_PORT}" || fail "VNC Chrome"
   is_running "x11vnc.*rfbport.*${VNC_PORT}"         && ok "x11vnc :${VNC_PORT}"        || fail "x11vnc"
-  is_running "websockify.*${NOVNC_PORT}"              && ok "noVNC :${NOVNC_PORT}"       || fail "noVNC"
+  is_running "websockify.*${NOVNC_BACKEND_PORT}" && port_listening "${NOVNC_BACKEND_PORT}" \
+    && ok "noVNC backend :${NOVNC_BACKEND_PORT}" || fail "noVNC backend"
+  if [ "${NOVNC_BACKEND_PORT}" != "${NOVNC_PORT}" ]; then
+    port_listening "${NOVNC_PORT}" \
+      && ok "noVNC frontend :${NOVNC_PORT}" || fail "noVNC frontend"
+  fi
   echo ""
   if curl -s "http://localhost:${CDP_PORT}/json/version" &>/dev/null; then
     ok "CDP reachable at http://localhost:${CDP_PORT}"
@@ -125,6 +145,7 @@ do_status() {
 
 # ─── Start ──────────────────────────────────────────────────────
 do_start() {
+  local stack_failed=0
   # Stop anything already running
   do_stop
 
@@ -178,24 +199,50 @@ do_start() {
       -localhost \
       &>/dev/null &
     sleep 1
-    is_running "x11vnc" && ok "x11vnc started (localhost:${VNC_PORT})" || fail "x11vnc failed"
+    if is_running "x11vnc.*rfbport.*${VNC_PORT}"; then
+      ok "x11vnc started (localhost:${VNC_PORT})"
+    else
+      fail "x11vnc failed"
+      stack_failed=1
+    fi
   else
     fail "x11vnc not installed, skipping (apt install x11vnc)"
+    stack_failed=1
   fi
 
   # noVNC (via websockify, same as openclaw)
   if command -v websockify &>/dev/null; then
-    websockify --web=/usr/share/novnc "127.0.0.1:${NOVNC_PORT}" "localhost:${VNC_PORT}" &>/dev/null &
+    mkdir -p "$(dirname "${NOVNC_LOG}")"
+    websockify --web=/usr/share/novnc "127.0.0.1:${NOVNC_BACKEND_PORT}" "localhost:${VNC_PORT}" >>"${NOVNC_LOG}" 2>&1 &
     sleep 1
-    is_running "websockify.*${NOVNC_PORT}" && ok "noVNC started (localhost:${NOVNC_PORT})" || fail "noVNC failed"
+    if is_running "websockify.*${NOVNC_BACKEND_PORT}" && port_listening "${NOVNC_BACKEND_PORT}"; then
+      ok "noVNC backend started (localhost:${NOVNC_BACKEND_PORT})"
+    else
+      fail "noVNC backend failed (see ${NOVNC_LOG})"
+      stack_failed=1
+    fi
   else
     fail "websockify not found, skipping (apt install novnc)"
+    stack_failed=1
+  fi
+
+  if [ "${NOVNC_BACKEND_PORT}" != "${NOVNC_PORT}" ]; then
+    if port_listening "${NOVNC_PORT}"; then
+      ok "noVNC frontend ready (localhost:${NOVNC_PORT})"
+    else
+      fail "noVNC frontend is not listening on localhost:${NOVNC_PORT}"
+      stack_failed=1
+    fi
   fi
 
   echo ""
   echo "View browser (SSH tunnel, localhost only):"
   echo "  ssh -L ${NOVNC_PORT}:127.0.0.1:${NOVNC_PORT} $(whoami)@$(hostname -I 2>/dev/null | awk '{print $1}' || echo '<server-ip>')"
   echo "  Then open: http://localhost:${NOVNC_PORT}/vnc.html"
+
+  if [ "${stack_failed}" -ne 0 ]; then
+    return 1
+  fi
 }
 
 # ─── Main ───────────────────────────────────────────────────────
