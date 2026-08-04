@@ -126,6 +126,7 @@ do_stop() {
 # ─── Status ─────────────────────────────────────────────────────
 do_status() {
   echo "Browser stack status:"
+  echo "Profile: ${VNC_PROFILE}"
   is_running "Xvfb :${DISPLAY_NUM}"                && ok "Xvfb :${DISPLAY_NUM}"       || fail "Xvfb"
   [ -n "$(managed_chrome_pids)" ]                  && ok "VNC Chrome CDP :${CDP_PORT}" || fail "VNC Chrome"
   is_running "x11vnc.*rfbport.*${VNC_PORT}"         && ok "x11vnc :${VNC_PORT}"        || fail "x11vnc"
@@ -183,6 +184,7 @@ do_start() {
   if curl -s "http://localhost:${CDP_PORT}/json/version" &>/dev/null &&
      [ -n "$(managed_chrome_pids)" ]; then
     ok "Chrome started (CDP: localhost:${CDP_PORT}, localhost only)"
+    ok "Chrome profile: ${VNC_PROFILE}"
   else
     fail "Chrome failed to start"
     exit 1
@@ -238,7 +240,7 @@ do_start() {
   echo ""
   echo "View browser (SSH tunnel, localhost only):"
   echo "  ssh -L ${NOVNC_PORT}:127.0.0.1:${NOVNC_PORT} $(whoami)@$(hostname -I 2>/dev/null | awk '{print $1}' || echo '<server-ip>')"
-  echo "  Then open: http://localhost:${NOVNC_PORT}/vnc.html"
+  echo "  Then open: http://localhost:${NOVNC_PORT}/vnc.html?autoconnect=true&resize=scale"
 
   if [ "${stack_failed}" -ne 0 ]; then
     return 1

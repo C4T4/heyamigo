@@ -573,7 +573,7 @@ export async function runSetup(): Promise<void> {
         p.log.info(
           'View browser (SSH tunnel):\n' +
             `  ssh -L 6090:127.0.0.1:6090 ${process.env.USER || 'root'}@<server-ip>\n` +
-            '  Then open: http://localhost:6090/vnc.html',
+            '  Then open: http://localhost:6090/vnc.html?autoconnect=true&resize=scale',
         )
       } else {
         // ── Chrome ───────────────────────────────────────────────
@@ -711,7 +711,7 @@ export async function runSetup(): Promise<void> {
               p.log.info(
                 'Watch the browser (localhost only, via SSH tunnel):\n' +
                   `  ssh -L 6090:127.0.0.1:6090 ${process.env.USER || 'root'}@<server-ip>\n` +
-                  '  Then open: http://localhost:6090/vnc.html',
+                  '  Then open: http://localhost:6090/vnc.html?autoconnect=true&resize=scale',
               )
             }
           } else {
