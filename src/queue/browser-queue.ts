@@ -116,6 +116,26 @@ export function claimNextBrowserTask(workerId: string): BrowserTaskRow | null {
   return claimed
 }
 
+export function hasReadyBrowserTask(): boolean {
+  const db = getDb()
+  const now = Math.floor(Date.now() / 1000)
+  const row = db
+    .select({ id: browserTasks.id })
+    .from(browserTasks)
+    .where(
+      and(
+        eq(browserTasks.status, 'pending'),
+        or(
+          isNull(browserTasks.nextAttemptAt),
+          lte(browserTasks.nextAttemptAt, now),
+        ),
+      ),
+    )
+    .limit(1)
+    .get()
+  return !!row
+}
+
 export function markBrowserTaskDone(id: number, workerId: string): boolean {
   const db = getDb()
   const now = Math.floor(Date.now() / 1000)

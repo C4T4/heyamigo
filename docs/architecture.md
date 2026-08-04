@@ -87,6 +87,8 @@ chat reply ──── [ASYNC-BROWSER: ...] ────► browser_tasks (sqli
 
 The shared-Chrome model means the bot doesn't have to re-authenticate to social sites every task. The owner logs in once via noVNC over an SSH tunnel; sessions persist on disk. Browser tasks land back in the originating chat through the same outbound queue, with idempotency keys so retries don't double-post.
 
+Browser selection fails closed. Before a task is claimed, the worker validates `browser.cdpUrl` with `/json/version`, opens its browser-level WebSocket, and executes `Browser.getVersion`. Claude and Codex then receive an invocation-scoped Playwright MCP configured with that exact endpoint; ambient MCP configuration and Chrome integrations are excluded. A stale global Playwright entry therefore cannot launch a fresh unauthenticated browser. Providers without equivalent invocation-scoped isolation cannot run browser jobs.
+
 The split is enforced in the system prompt + tag grammar. The agent never has direct browser tool access; if it tries, the tool call simply isn't available. The `[ASYNC-BROWSER:]` tag is the only path.
 
 ## Threads — relevance between cold memory and conversation

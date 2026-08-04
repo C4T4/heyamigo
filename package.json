@@ -1,6 +1,6 @@
 {
   "name": "@c4t4/heyamigo",
-  "version": "0.12.6",
+  "version": "0.12.7",
   "description": "WhatsApp and Telegram AI bot powered by Claude, Codex, or Grok with long-term memory, browser control, and role-based access",
   "type": "module",
   "main": "dist/index.js",
@@ -61,12 +61,14 @@
     "fastq": "^1.17.1",
     "pino": "^9.3.2",
     "qrcode": "^1.5.4",
+    "ws": "^8.21.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.14.10",
     "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3"

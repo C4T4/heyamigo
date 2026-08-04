@@ -27,38 +27,66 @@ function which(bin: string): string | null {
   return r.ok ? r.output : null
 }
 
-// Idempotently add the Playwright MCP entry to ~/.codex/config.toml so the
-// Codex CLI auto-launches the same MCP server Claude uses. We don't have a
-// TOML parser available; the entry has a fixed, simple shape so a text-level
-// presence check + append is safe enough here. Returns true if the entry was
-// added or already present, false on write failure.
+// Ensure Codex's global Playwright entry points at the shared Chrome. An older
+// version only checked whether the TOML section existed; a stale entry without
+// --cdp-endpoint was therefore accepted and launched the wrong browser.
 function addPlaywrightToCodexConfig(cdpUrl: string): boolean {
-  const codexDir = resolve(homedir(), '.codex')
-  const configPath = resolve(codexDir, 'config.toml')
-
-  const block = [
-    '',
-    '[mcp_servers.playwright]',
-    'command = "npx"',
-    `args = ["@playwright/mcp@latest", "--cdp-endpoint", "${cdpUrl}"]`,
-    '',
-  ].join('\n')
-
   try {
-    mkdirSync(codexDir, { recursive: true })
-    let existing = ''
-    if (existsSync(configPath)) {
-      existing = readFileSync(configPath, 'utf-8')
-      // Match both [mcp_servers.playwright] and [mcp_servers."playwright"].
-      if (/\[mcp_servers\.(?:"?)playwright(?:"?)\]/.test(existing)) {
-        return true
-      }
+    const getResult = spawnSync(
+      'codex',
+      ['mcp', 'get', 'playwright', '--json'],
+      { stdio: 'pipe', encoding: 'utf-8' },
+    )
+    let priorCommand: string[] | null = null
+    if (getResult.status === 0) {
+      try {
+        const current = JSON.parse(getResult.stdout) as {
+          transport?: { type?: string; command?: string; args?: string[] }
+        }
+        if (
+          current.transport?.type === 'stdio' &&
+          typeof current.transport.command === 'string' &&
+          Array.isArray(current.transport.args)
+        ) {
+          priorCommand = [current.transport.command, ...current.transport.args]
+          if (
+            current.transport.command === 'npx' &&
+            current.transport.args.includes('@playwright/mcp@latest') &&
+            current.transport.args.some(
+              (arg, index, args) => arg === '--cdp-endpoint' && args[index + 1] === cdpUrl,
+            )
+          ) {
+            return true
+          }
+        }
+      } catch {}
     }
-    const next = existing.endsWith('\n') || existing === ''
-      ? existing + block
-      : existing + '\n' + block
-    writeFileSync(configPath, next, 'utf-8')
-    return true
+
+    spawnSync('codex', ['mcp', 'remove', 'playwright'], { stdio: 'pipe' })
+    const desired = [
+      'npx',
+      '-y',
+      '@playwright/mcp@latest',
+      '--cdp-endpoint',
+      cdpUrl,
+    ]
+    const result = spawnSync(
+      'codex',
+      ['mcp', 'add', 'playwright', '--', ...desired],
+      { stdio: 'pipe' },
+    )
+    if (result.status === 0) return true
+
+    // Do not leave the operator worse off if an older Codex rejects the new
+    // syntax. Best-effort restore of the exact prior stdio command.
+    if (priorCommand) {
+      spawnSync(
+        'codex',
+        ['mcp', 'add', 'playwright', '--', ...priorCommand],
+        { stdio: 'pipe' },
+      )
+    }
+    return false
   } catch {
     return false
   }

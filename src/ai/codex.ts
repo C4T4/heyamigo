@@ -23,7 +23,8 @@
 //
 // What's deliberately coarse:
 //   - allowedTools is ignored on this provider. Codex has no per-tool
-//     allowlist; the sandbox mode is the only knob.
+//     allowlist; browser tasks instead ignore ambient config and inject one
+//     invocation-scoped Playwright MCP at the configured CDP endpoint.
 
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
@@ -93,6 +94,7 @@ function buildExecArgs(params: {
   sessionId?: string
   includeSystemPrompt?: boolean
   reasoningEffort?: ReasoningEffort
+  browserCdpUrl?: string
   prompt: string
 }): { args: string[]; prompt: string } {
   const cfg = config.codex
@@ -115,6 +117,25 @@ function buildExecArgs(params: {
   }
 
   for (const extra of cfg.extraArgs) args.push(extra)
+
+  if (params.browserCdpUrl) {
+    // Browser jobs must not inherit an arbitrary global MCP (the common
+    // failure is an existing `playwright` entry without --cdp-endpoint,
+    // which silently launches a fresh unauthenticated browser). Ignore the
+    // ambient config and define the sole MCP explicitly for this invocation.
+    args.push(
+      '--ignore-user-config',
+      '-c',
+      'mcp_servers.playwright.command="npx"',
+      '-c',
+      `mcp_servers.playwright.args=${JSON.stringify([
+        '-y',
+        '@playwright/mcp@latest',
+        '--cdp-endpoint',
+        params.browserCdpUrl,
+      ])}`,
+    )
+  }
 
   // Keep the chat-selected effort as the final config override so it wins
   // over the global config and any profile supplied through extraArgs.
@@ -280,6 +301,7 @@ async function runCodexTask(
     sessionId: params.sessionId,
     includeSystemPrompt: params.includeSystemPrompt,
     reasoningEffort: params.reasoningEffort,
+    browserCdpUrl: params.browserCdpUrl,
     prompt: params.input,
   })
 

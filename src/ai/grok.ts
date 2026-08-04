@@ -290,6 +290,14 @@ function removePromptFile(tmp: { dir: string; path: string }): void {
 }
 
 async function runGrokTask(params: RunTaskParams): Promise<RunTaskResult> {
+  if (params.browserCdpUrl) {
+    // Grok currently has no invocation-scoped/strict MCP configuration flag.
+    // Falling back to its ambient MCPs could select a different browser, so
+    // browser jobs fail closed until the CLI exposes equivalent isolation.
+    throw new Error(
+      'Grok browser lane disabled: cannot enforce the configured CDP endpoint with invocation-scoped MCP isolation',
+    )
+  }
   const tmp = createPromptFile(params.input)
   let args: string[] = []
   let promptForFile = params.input

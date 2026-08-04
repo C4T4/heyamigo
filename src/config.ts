@@ -110,8 +110,22 @@ const ConfigSchema = z.object({
       // Chrome. Each worker drives its own tab. Persistent agent
       // session was dropped in Phase 4; every task is fresh.
       maxWorkers: z.number().int().positive().default(3),
+      // The one browser-lane agents are allowed to control. Runtime
+      // provider invocations receive an isolated Playwright MCP configured
+      // from this value instead of inheriting ambient browser integrations.
+      cdpUrl: z.string().url().default('http://127.0.0.1:9222'),
+      // Fail fast before claiming a queued task if a real CDP command cannot
+      // complete against the shared browser.
+      connectTimeoutMs: z.number().int().positive().default(3000),
+      // Shared breaker delay after an unhealthy probe. Tasks remain pending.
+      unavailableRetryMs: z.number().int().positive().default(30000),
     })
-    .default({ maxWorkers: 3 }),
+    .default({
+      maxWorkers: 3,
+      cdpUrl: 'http://127.0.0.1:9222',
+      connectTimeoutMs: 3000,
+      unavailableRetryMs: 30000,
+    }),
   codex: z
     .object({
       // Explicit model used by Codex chat turns and shown in reply footers.

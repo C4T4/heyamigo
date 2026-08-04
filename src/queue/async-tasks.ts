@@ -361,7 +361,7 @@ function buildBrowserPrompt(task: AsyncTask): string {
   // tasks may be running in parallel on the same Chrome, each in its
   // own tab.
   const lines = [
-    `You are the BROWSER WORKER. The chat already got its ack; your output IS the follow-up chat reply the owner is waiting for. Use the shared Chrome at localhost:9222 via Playwright MCP (already authenticated with the owner's sessions — TikTok, Instagram, etc. — do NOT log out, do NOT launch a new browser).`,
+    `You are the BROWSER WORKER. The chat already got its ack; your output IS the follow-up chat reply the owner is waiting for. Use ONLY the invocation-scoped Playwright MCP connected to ${config.browser.cdpUrl}. That is the shared VNC Chrome with the owner's authenticated sessions. Do NOT use a Chrome extension, in-app browser, system Chrome, WebFetch, or launch any browser/profile.`,
     ``,
     `TAB OWNERSHIP: Other browser workers may be running concurrently on the SAME Chrome instance, each driving its own tab. Your FIRST action is to open a new tab for this task (browser_tabs with action=new). Operate ONLY on that tab for the rest of the task. Do NOT switch to or interact with tabs you didn't open — they belong to other workers. Close your tab when you finish.`,
     ``,
@@ -434,6 +434,7 @@ export async function runBrowserTask(task: AsyncTask): Promise<void> {
       includeSystemPrompt: true,
       addDirs: browserAddDirs(),
       allowedTools: task.allowedTools,
+      browserCdpUrl: config.browser.cdpUrl,
     })
     reply = result.reply
   } catch (err) {
@@ -441,15 +442,9 @@ export async function runBrowserTask(task: AsyncTask): Promise<void> {
       { err, id: task.id, jid: task.jid, elapsed: elapsedLog() },
       'browser task provider call failed',
     )
-    await initiate({
-      jid: task.jid,
-      address: task.address,
-      text: `Heads up: the browser task "${truncate(
-        task.description,
-        80,
-      )}" failed. Ask me again and I'll retry.`,
-    })
-    return
+    // Let the durable browser queue apply its retry/backoff policy. Swallowing
+    // this error used to mark provider/CDP failures as successful work.
+    throw err
   }
 
   // Route markers the same way the general async lane does.

@@ -15,8 +15,10 @@ import { getDb } from '../db/index.js'
 import { addressToChatKey } from '../db/address.js'
 import { workers } from '../db/schema.js'
 import { logger } from '../logger.js'
+import { assertBrowserCdpReady } from '../browser/cdp.js'
 import {
   claimNextBrowserTask,
+  hasReadyBrowserTask,
   markBrowserTaskDone,
   markBrowserTaskRetryOrDlq,
   type BrowserTaskRow,
@@ -28,10 +30,59 @@ import type { AsyncTask } from './async-tasks.js'
 const HEARTBEAT_INTERVAL_MS = 5_000
 const IDLE_POLL_INTERVAL_MS = 500
 const BUSY_POLL_INTERVAL_MS = 0
+const HEALTH_SUCCESS_CACHE_MS = 5_000
 
 const activeWorkers: string[] = []
 let stopping = false
 let heartbeatTimer: NodeJS.Timeout | null = null
+let healthProbe: Promise<boolean> | null = null
+let healthyUntil = 0
+let unavailableUntil = 0
+let lastHealthError = ''
+
+async function browserReady(): Promise<boolean> {
+  const now = Date.now()
+  if (now < healthyUntil) return true
+  if (now < unavailableUntil) return false
+  if (healthProbe) return healthProbe
+
+  healthProbe = (async () => {
+    try {
+      const identity = await assertBrowserCdpReady(
+        config.browser.cdpUrl,
+        config.browser.connectTimeoutMs,
+      )
+      healthyUntil = Date.now() + HEALTH_SUCCESS_CACHE_MS
+      unavailableUntil = 0
+      if (lastHealthError) {
+        logger.info(
+          { cdpUrl: config.browser.cdpUrl, browser: identity.browser },
+          'shared browser CDP recovered; browser queue resumed',
+        )
+        lastHealthError = ''
+      }
+      return true
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      unavailableUntil = Date.now() + config.browser.unavailableRetryMs
+      if (message !== lastHealthError) {
+        logger.error(
+          {
+            err,
+            cdpUrl: config.browser.cdpUrl,
+            retryMs: config.browser.unavailableRetryMs,
+          },
+          'shared browser CDP unavailable; leaving browser tasks pending',
+        )
+        lastHealthError = message
+      }
+      return false
+    } finally {
+      healthProbe = null
+    }
+  })()
+  return healthProbe
+}
 
 function newWorkerId(slot: number): string {
   return `${hostname()}-${process.pid}-browser-${slot}`
@@ -154,6 +205,14 @@ async function loop(workerId: string): Promise<void> {
   while (!stopping) {
     let processed = false
     try {
+      if (!hasReadyBrowserTask()) {
+        await new Promise<void>((res) => setTimeout(res, IDLE_POLL_INTERVAL_MS))
+        continue
+      }
+      if (!(await browserReady())) {
+        await new Promise<void>((res) => setTimeout(res, IDLE_POLL_INTERVAL_MS))
+        continue
+      }
       const row = claimNextBrowserTask(workerId)
       if (row) {
         await processOne(workerId, row)

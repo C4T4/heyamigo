@@ -70,6 +70,10 @@ export type RunTaskParams = {
   // Per-tool allowlist. Providers translate this where their CLI has a matching
   // permission surface. Pass undefined or 'all' for no restriction.
   allowedTools?: string[] | 'all'
+  // Browser tasks set this to force an invocation-scoped Playwright MCP that
+  // attaches to exactly this CDP endpoint. Providers must fail closed when
+  // they cannot isolate the browser connection from ambient/global tools.
+  browserCdpUrl?: string
   reasoningEffort?: ReasoningEffort
 }
 

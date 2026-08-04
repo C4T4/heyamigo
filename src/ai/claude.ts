@@ -177,6 +177,32 @@ function buildTaskArgs(params: RunTaskParams): string[] {
     permissionModeFor(params.mode),
   ]
 
+  if (params.browserCdpUrl) {
+    const mcpConfig = JSON.stringify({
+      mcpServers: {
+        playwright: {
+          command: 'npx',
+          args: [
+            '-y',
+            '@playwright/mcp@latest',
+            '--cdp-endpoint',
+            params.browserCdpUrl,
+          ],
+        },
+      },
+    })
+    // Ignore every global/project MCP plus Claude's Chrome extension. The
+    // browser lane gets one browser implementation and one CDP destination.
+    args.push(
+      '--no-chrome',
+      '--strict-mcp-config',
+      '--mcp-config',
+      mcpConfig,
+      '--tools',
+      '',
+    )
+  }
+
   if (params.sessionId) {
     args.push('--resume', params.sessionId)
   } else if (params.includeSystemPrompt) {
@@ -195,8 +221,9 @@ function buildTaskArgs(params: RunTaskParams): string[] {
     args.push('--add-dir', resolve(process.cwd(), dir))
   }
 
-  const allowedTools =
-    params.allowedTools && params.allowedTools !== 'all'
+  const allowedTools = params.browserCdpUrl
+    ? ['mcp__playwright__*']
+    : params.allowedTools && params.allowedTools !== 'all'
       ? params.allowedTools
       : defaultAllowedToolsFor(params.mode)
   if (allowedTools && allowedTools.length > 0) {

@@ -41,7 +41,9 @@ Telegram is optional. Create a bot with BotFather, set `telegram.enabled: true` 
 Other providers:
 
 - Codex: install `@openai/codex` and set `ai.provider: "codex"` in `config/config.json`.
-- Grok Build: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, run `grok login`, and set `ai.provider: "grok"`.
+- Grok Build: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, run `grok login`, and set `ai.provider: "grok"`. Chat and non-browser async work are supported; browser jobs fail closed because Grok does not currently expose invocation-scoped MCP isolation.
+
+Browser jobs use `browser.cdpUrl` (default `http://127.0.0.1:9222`). Claude and Codex receive an invocation-scoped Playwright MCP pointing only at that endpoint; ambient Chrome integrations and stale global Playwright entries are not available to the browser worker. Before work is claimed, heyamigo also opens the browser-level CDP WebSocket and runs `Browser.getVersion`. If that check fails, the job stays pending instead of falling back to another browser.
 
 ## In-chat commands
 

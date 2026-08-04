@@ -67,6 +67,13 @@
     "extraArgs": []
   },
 
+  "browser": {
+    "maxWorkers": 3,
+    "cdpUrl": "http://127.0.0.1:9222",
+    "connectTimeoutMs": 3000,
+    "unavailableRetryMs": 30000
+  },
+
   "grok": {
     "bin": "grok",
     "contextWindow": 1000000,
