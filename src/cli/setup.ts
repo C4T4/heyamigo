@@ -506,7 +506,7 @@ export async function runSetup(): Promise<void> {
 
   const wantBrowser = await p.confirm({
     message: 'Enable browser control?',
-    initialValue: false,
+    initialValue: true,
   })
 
   if (!p.isCancel(wantBrowser) && wantBrowser) {
