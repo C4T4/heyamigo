@@ -24,6 +24,7 @@
   "scripts": {
     "dev": "tsx watch src/cli/index.ts dev",
     "setup": "tsx src/cli/index.ts setup",
+    "test": "tsx --test test/*.test.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
@@ -53,6 +54,8 @@
   "dependencies": {
     "@clack/prompts": "^1.2.0",
     "@hapi/boom": "^10.0.1",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@playwright/mcp": "0.0.76",
     "baileys": "7.0.0-rc.9",
     "better-sqlite3": "^12.10.0",
     "commander": "^14.0.3",
@@ -60,6 +63,7 @@
     "drizzle-orm": "^0.45.2",
     "fastq": "^1.17.1",
     "pino": "^9.3.2",
+    "playwright-core": "1.61.0-alpha-1781023400000",
     "qrcode": "^1.5.4",
     "ws": "^8.21.2",
     "zod": "^3.23.8"

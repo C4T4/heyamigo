@@ -174,6 +174,9 @@ do_start() {
     --disable-gpu \
     --disable-software-rasterizer \
     --disable-dev-shm-usage \
+    --disable-background-timer-throttling \
+    --disable-backgrounding-occluded-windows \
+    --disable-renderer-backgrounding \
     --window-size=1920,1080 \
     --user-data-dir="${VNC_PROFILE}" \
     --display=":${DISPLAY_NUM}" \

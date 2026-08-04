@@ -1,7 +1,7 @@
 // Browser worker pool. N workers (config.browser.maxWorkers, default
 // 3) drain the browser_tasks SQLite table. Each task runs as a fresh
-// agent with its own tab on the shared Chrome — same model as before
-// the durability change, just claimable from the DB now.
+// agent with its own leased set of stable CDP tabs on the shared Chrome —
+// same durable queue model, with tab ownership enforced by the task MCP.
 //
 // Differences vs in-memory fastq:
 // - Tasks survive process crashes (durable rows).

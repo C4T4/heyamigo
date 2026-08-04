@@ -323,8 +323,8 @@ export const memoryWrites = sqliteTable('memory_writes', {
 // survive process crashes and reclaim via TTL.
 //
 // Browser worker pool (config.browser.maxWorkers) drains; each task
-// runs as a fresh agent (no persistent session — Phase 4) and opens
-// its own tab on the shared Chrome.
+// runs as a fresh agent (no persistent session — Phase 4) with a leased set
+// of stable CDP tabs on the shared Chrome.
 export const browserTasks = sqliteTable('browser_tasks', {
   id:                  integer('id').primaryKey({ autoIncrement: true }),
   address:             text('address').notNull(),
@@ -346,4 +346,24 @@ export const browserTasks = sqliteTable('browser_tasks', {
   updatedAt:           integer('updated_at').notNull(),
 }, t => ({
   byStatusNext: index('btasks_by_status_next').on(t.status, t.nextAttemptAt),
+}))
+
+// Stable CDP target ownership for the shared VNC Chrome. Browser workers run
+// in separate provider/MCP processes, so prompt instructions are not enough
+// to keep them from selecting each other's tabs. A task-scoped MCP server
+// acquires and heartbeats these leases before exposing pages to Playwright.
+export const browserTabLeases = sqliteTable('browser_tab_leases', {
+  targetId:        text('target_id').primaryKey(),
+  ownerTaskId:     text('owner_task_id').notNull(),
+  browserContextId: text('browser_context_id'),
+  openerTargetId:  text('opener_target_id'),
+  url:             text('url').notNull(),
+  title:           text('title').notNull(),
+  createdByTask:   integer('created_by_task', { mode: 'boolean' }).notNull().default(false),
+  claimedAt:       integer('claimed_at').notNull(),
+  heartbeatAt:     integer('heartbeat_at').notNull(),
+  leaseExpiresAt:  integer('lease_expires_at').notNull(),
+}, t => ({
+  byOwner:   index('btab_leases_by_owner').on(t.ownerTaskId),
+  byExpiry:  index('btab_leases_by_expiry').on(t.leaseExpiresAt),
 }))

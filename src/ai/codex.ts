@@ -28,7 +28,9 @@
 
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
 import { config, type ReasoningEffort } from '../config.js'
+import { dbPath } from '../db/index.js'
 import { logger } from '../logger.js'
 import { logPrompt, type PromptLogEntry } from '../promptlog.js'
 import type {
@@ -95,6 +97,7 @@ function buildExecArgs(params: {
   includeSystemPrompt?: boolean
   reasoningEffort?: ReasoningEffort
   browserCdpUrl?: string
+  browserTaskId?: string
   prompt: string
 }): { args: string[]; prompt: string } {
   const cfg = config.codex
@@ -119,21 +122,24 @@ function buildExecArgs(params: {
   for (const extra of cfg.extraArgs) args.push(extra)
 
   if (params.browserCdpUrl) {
+    if (!params.browserTaskId) {
+      throw new Error('browserTaskId is required for task-scoped browser MCP')
+    }
+    const mcp = browserTaskMcpSpec({
+      cdpEndpoint: params.browserCdpUrl,
+      taskId: params.browserTaskId,
+      databasePath: dbPath(),
+    })
     // Browser jobs must not inherit an arbitrary global MCP (the common
     // failure is an existing `playwright` entry without --cdp-endpoint,
-    // which silently launches a fresh unauthenticated browser). Ignore the
-    // ambient config and define the sole MCP explicitly for this invocation.
+    // which silently launches a fresh unauthenticated browser). The packaged
+    // MCP also filters the canonical context to this task's leased CDP tabs.
     args.push(
       '--ignore-user-config',
       '-c',
-      'mcp_servers.playwright.command="npx"',
+      `mcp_servers.playwright.command=${JSON.stringify(mcp.command)}`,
       '-c',
-      `mcp_servers.playwright.args=${JSON.stringify([
-        '-y',
-        '@playwright/mcp@latest',
-        '--cdp-endpoint',
-        params.browserCdpUrl,
-      ])}`,
+      `mcp_servers.playwright.args=${JSON.stringify(mcp.args)}`,
     )
   }
 
@@ -302,6 +308,7 @@ async function runCodexTask(
     includeSystemPrompt: params.includeSystemPrompt,
     reasoningEffort: params.reasoningEffort,
     browserCdpUrl: params.browserCdpUrl,
+    browserTaskId: params.browserTaskId,
     prompt: params.input,
   })
 

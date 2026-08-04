@@ -106,9 +106,10 @@ const ConfigSchema = z.object({
     .default({ size: 5 }),
   browser: z
     .object({
-      // How many browser tasks can run in parallel on the shared
-      // Chrome. Each worker drives its own tab. Persistent agent
-      // session was dropped in Phase 4; every task is fresh.
+      // How many browser tasks can run in parallel on the shared Chrome.
+      // Each task gets a code-enforced set of leased CDP targets and may own
+      // several tabs. Persistent agent session was dropped in Phase 4;
+      // every task is fresh.
       maxWorkers: z.number().int().positive().default(3),
       // The one browser-lane agents are allowed to control. Runtime
       // provider invocations receive an isolated Playwright MCP configured

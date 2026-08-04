@@ -1,4 +1,5 @@
 import { resolve } from 'path'
+import { randomUUID } from 'crypto'
 import { getProvider } from '../ai/providers.js'
 import { formatAddress, jidToAddress } from '../db/address.js'
 import { config } from '../config.js'
@@ -311,15 +312,12 @@ function truncate(s: string, n: number): string {
 // A second async lane dedicated to browser work. Key differences vs the
 // general async lane above:
 //
-// - Concurrency is 1. Serialized against itself because (a) the shared
-//   Playwright MCP + Chrome is one physical resource, (b) the session below
-//   is one physical resource.
-// - Persistent agent session DROPPED in Phase 4 — multiple browser
-//   tasks now run concurrently, each in its own Chrome tab, each as
-//   a fresh agent. Cross-task agent memory was rarely load-bearing
-//   (the chat-track agent writes self-contained task descriptions).
-//   Per-task tab isolation is enforced by the prompt instructions
-//   below.
+// - Up to browser.maxWorkers tasks run concurrently against one shared
+//   Chrome. Each invocation receives a task-scoped MCP whose stable CDP tab
+//   leases are enforced below the model.
+// - Persistent agent session DROPPED in Phase 4 — every browser task is a
+//   fresh agent. Cross-task agent memory was rarely load-bearing (the
+//   chat-track agent writes self-contained task descriptions).
 
 // Browser tasks now go into the durable browser_tasks SQLite table.
 // The browser worker pool (src/queue/browser-worker.ts) drains it.
@@ -363,7 +361,7 @@ function buildBrowserPrompt(task: AsyncTask): string {
   const lines = [
     `You are the BROWSER WORKER. The chat already got its ack; your output IS the follow-up chat reply the owner is waiting for. Use ONLY the invocation-scoped Playwright MCP connected to ${config.browser.cdpUrl}. That is the shared VNC Chrome with the owner's authenticated sessions. Do NOT use a Chrome extension, in-app browser, system Chrome, WebFetch, or launch any browser/profile.`,
     ``,
-    `TAB OWNERSHIP: Other browser workers may be running concurrently on the SAME Chrome instance, each driving its own tab. Your FIRST action is to open a new tab for this task (browser_tabs with action=new). Operate ONLY on that tab for the rest of the task. Do NOT switch to or interact with tabs you didn't open — they belong to other workers. Close your tab when you finish.`,
+    `TAB OWNERSHIP: Other browser workers may be running concurrently on the SAME Chrome instance. Ownership is enforced in code with stable CDP tab leases: browser_tabs shows ONLY tabs owned by this task, and its indexes are private to this task. Start with browser_tabs action=list; if the task owns no tab, the broker creates one. You may create and switch among multiple owned tabs, and popups opened by an owned tab are adopted automatically. When the task explicitly requires an already-open user tab, call browser_tab_candidates, then browser_tab_claim with its stable tabId. Never claim unrelated tabs. Close task-created tabs when finished; leave claimed user tabs open.`,
     ``,
     `TASK:`,
     task.description,
@@ -416,6 +414,10 @@ function browserAddDirs(): string[] {
 // version — just rehomed for direct invocation by the pool.
 export async function runBrowserTask(task: AsyncTask): Promise<void> {
   const provider = getProvider()
+  // A durable queue row keeps the same task ID across retries. The lease
+  // owner must be unique per execution so a slow/stuck prior attempt can
+  // never share its tabs with the retry.
+  const browserTaskId = `${task.id}:${randomUUID()}`
   // Each task is fresh (Phase 4 browser parallelism). No persistent
   // session — would force serialization on concurrent tasks.
   // Chat-track agent writes self-contained task descriptions, so the
@@ -435,6 +437,7 @@ export async function runBrowserTask(task: AsyncTask): Promise<void> {
       addDirs: browserAddDirs(),
       allowedTools: task.allowedTools,
       browserCdpUrl: config.browser.cdpUrl,
+      browserTaskId,
     })
     reply = result.reply
   } catch (err) {

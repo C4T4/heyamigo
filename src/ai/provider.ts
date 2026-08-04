@@ -74,6 +74,9 @@ export type RunTaskParams = {
   // attaches to exactly this CDP endpoint. Providers must fail closed when
   // they cannot isolate the browser connection from ambient/global tools.
   browserCdpUrl?: string
+  // Execution-unique owner ID passed to the task-scoped MCP tab broker.
+  // Required with browserCdpUrl so every action has a code-enforced lease.
+  browserTaskId?: string
   reasoningEffort?: ReasoningEffort
 }
 

@@ -1,6 +1,8 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
 import { config } from '../config.js'
+import { dbPath } from '../db/index.js'
 import { logger } from '../logger.js'
 import { logPrompt, type PromptLogEntry } from '../promptlog.js'
 import type {
@@ -178,16 +180,19 @@ function buildTaskArgs(params: RunTaskParams): string[] {
   ]
 
   if (params.browserCdpUrl) {
+    if (!params.browserTaskId) {
+      throw new Error('browserTaskId is required for task-scoped browser MCP')
+    }
+    const mcp = browserTaskMcpSpec({
+      cdpEndpoint: params.browserCdpUrl,
+      taskId: params.browserTaskId,
+      databasePath: dbPath(),
+    })
     const mcpConfig = JSON.stringify({
       mcpServers: {
         playwright: {
-          command: 'npx',
-          args: [
-            '-y',
-            '@playwright/mcp@latest',
-            '--cdp-endpoint',
-            params.browserCdpUrl,
-          ],
+          command: mcp.command,
+          args: mcp.args,
         },
       },
     })
