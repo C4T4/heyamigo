@@ -8,6 +8,7 @@ import {
 } from 'fs'
 import { homedir } from 'os'
 import { dirname, isAbsolute, resolve } from 'path'
+import { fileURLToPath } from 'url'
 import { assertBrowserCdpReady } from '../browser/cdp.js'
 import {
   chromePidsForProfile,
@@ -15,6 +16,8 @@ import {
   vncChromeProfileDir,
 } from '../browser/chrome-profile.js'
 import { config } from '../config.js'
+
+const __pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 export type ChromeAction = 'start' | 'stop' | 'restart' | 'status'
 
@@ -128,6 +131,12 @@ function assertDisplay(chrome: ManagedChrome): void {
       `X display ${chrome.display} is not running (${socket} missing). Refusing to launch a different browser stack.`,
     )
   }
+}
+
+function displayNumber(chrome: ManagedChrome): string {
+  const match = /^:(\d+)$/.exec(chrome.display)
+  if (!match) throw new Error(`Invalid browser.display: ${chrome.display}`)
+  return match[1]!
 }
 
 async function terminateChromePids(pids: number[]): Promise<void> {
@@ -248,6 +257,44 @@ async function startManagedChrome(chrome: ManagedChrome): Promise<void> {
   )
 }
 
+async function restartBrowserStack(chrome: ManagedChrome): Promise<void> {
+  assertProfile(chrome)
+  const binary = resolveBinary(chrome.binary)
+  const scriptPath = resolve(__pkgRoot, 'scripts', 'start-browser.sh')
+  if (!existsSync(scriptPath)) {
+    throw new Error(`Browser stack recovery script not found: ${scriptPath}`)
+  }
+
+  const displayNum = displayNumber(chrome)
+  await stopManagedChrome(chrome)
+
+  console.log('Checking and restarting Xvfb, Chrome, x11vnc, and noVNC...')
+  const result = spawnSync('bash', [scriptPath, 'start'], {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      CDP_PORT: String(chrome.port),
+      DISPLAY_NUM: displayNum,
+      CHROME_BIN: binary,
+      CHROME_LOG: chrome.logFile,
+      CHROME_START_URL: chrome.startUrl,
+    },
+  })
+  if (result.error) {
+    throw new Error(`Browser stack restart failed: ${result.error.message}`)
+  }
+  if (result.status !== 0) {
+    throw new Error(`Browser stack restart failed with exit code ${result.status ?? 'unknown'}`)
+  }
+
+  if (!(await cdpReady(chrome)) || managedChromePids(chrome).length === 0) {
+    throw new Error(
+      `Browser stack reported success, but ${chrome.cdpUrl} is not the canonical VNC Chrome`,
+    )
+  }
+  console.log('Browser stack ready')
+}
+
 async function statusManagedChrome(chrome: ManagedChrome): Promise<void> {
   const pids = managedChromePids(chrome)
   const legacyPids = legacyChromePids(chrome)
@@ -289,8 +336,7 @@ export async function chromeCmd(action: ChromeAction): Promise<void> {
       await stopManagedChrome(chrome)
       break
     case 'restart':
-      await stopManagedChrome(chrome)
-      await startManagedChrome(chrome)
+      await restartBrowserStack(chrome)
       break
     case 'status':
       await statusManagedChrome(chrome)

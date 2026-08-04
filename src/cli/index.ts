@@ -72,9 +72,12 @@ const chrome = program
   .description('Manage the configured authenticated VNC Chrome')
 
 for (const action of ['start', 'stop', 'restart', 'status'] as const) {
+  const description = action === 'restart'
+    ? 'Restart Chrome and recover the Xvfb/noVNC browser stack'
+    : `${action[0]!.toUpperCase()}${action.slice(1)} the configured VNC Chrome`
   chrome
     .command(action)
-    .description(`${action[0]!.toUpperCase()}${action.slice(1)} the configured VNC Chrome`)
+    .description(description)
     .action(async () => {
       const { findProjectDir } = await import('./service.js')
       process.chdir(findProjectDir())

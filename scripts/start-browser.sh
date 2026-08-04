@@ -24,6 +24,8 @@ DISPLAY_NUM="${DISPLAY_NUM:-99}"
 RESOLUTION="${RESOLUTION:-1920x1080x24}"
 VNC_PROFILE="${HOME}/.config/google-chrome-novnc"
 CHROME_LOG="${CHROME_LOG:-${PWD}/storage/logs/chrome.log}"
+CHROME_BIN="${CHROME_BIN:-}"
+CHROME_START_URL="${CHROME_START_URL:-about:blank}"
 
 export DISPLAY=":${DISPLAY_NUM}"
 
@@ -35,6 +37,13 @@ ok()   { echo -e "${GREEN}[ok]${NC}    $*"; }
 fail() { echo -e "${RED}[fail]${NC}  $*"; }
 
 find_chrome() {
+  if [ -n "${CHROME_BIN}" ]; then
+    if command -v "${CHROME_BIN}" &>/dev/null; then
+      command -v "${CHROME_BIN}"
+      return
+    fi
+    return 1
+  fi
   for bin in google-chrome google-chrome-stable chromium-browser chromium; do
     if command -v "$bin" &>/dev/null; then
       echo "$bin"
@@ -138,6 +147,7 @@ do_start() {
     --window-size=1920,1080 \
     --user-data-dir="${VNC_PROFILE}" \
     --display=":${DISPLAY_NUM}" \
+    "${CHROME_START_URL}" \
     >>"${CHROME_LOG}" 2>&1 &
   sleep 2
 
