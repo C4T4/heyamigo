@@ -22,6 +22,8 @@ VNC_PORT="${VNC_PORT:-5900}"
 NOVNC_PORT="${NOVNC_PORT:-6090}"
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 RESOLUTION="${RESOLUTION:-1920x1080x24}"
+VNC_PROFILE="${HOME}/.config/google-chrome-novnc"
+CHROME_LOG="${CHROME_LOG:-${PWD}/storage/logs/chrome.log}"
 
 export DISPLAY=":${DISPLAY_NUM}"
 
@@ -33,7 +35,7 @@ ok()   { echo -e "${GREEN}[ok]${NC}    $*"; }
 fail() { echo -e "${RED}[fail]${NC}  $*"; }
 
 find_chrome() {
-  for bin in chromium chromium-browser google-chrome google-chrome-stable; do
+  for bin in google-chrome google-chrome-stable chromium-browser chromium; do
     if command -v "$bin" &>/dev/null; then
       echo "$bin"
       return
@@ -51,12 +53,39 @@ find_novnc_proxy() {
 
 is_running() { pgrep -f "$1" &>/dev/null; }
 
+managed_chrome_pids() {
+  local proc_dir exe cmdline
+  for proc_dir in /proc/[0-9]*; do
+    [ -r "${proc_dir}/cmdline" ] || continue
+    exe="$(readlink "${proc_dir}/exe" 2>/dev/null || true)"
+    case "${exe##*/}" in
+      *chrome*|*chromium*) ;;
+      *) continue ;;
+    esac
+    cmdline="$(tr '\0' '\n' < "${proc_dir}/cmdline" 2>/dev/null || true)"
+    if grep -Fqx -- "--remote-debugging-port=${CDP_PORT}" <<<"${cmdline}" &&
+       grep -Fqx -- "--user-data-dir=${VNC_PROFILE}" <<<"${cmdline}"; then
+      echo "${proc_dir##*/}"
+    fi
+  done
+}
+
 # ─── Stop ───────────────────────────────────────────────────────
 do_stop() {
   echo "Stopping browser stack..."
+  local chrome_pids
+  chrome_pids="$(managed_chrome_pids)"
+  if curl -s "http://localhost:${CDP_PORT}/json/version" &>/dev/null && [ -z "${chrome_pids}" ]; then
+    fail "CDP :${CDP_PORT} belongs to an unknown Chrome profile; refusing to stop it"
+    return 1
+  fi
+  if [ -n "${chrome_pids}" ]; then
+    while IFS= read -r pid; do
+      kill "${pid}" 2>/dev/null || true
+    done <<<"${chrome_pids}"
+  fi
   pkill -f "websockify.*${NOVNC_PORT}" 2>/dev/null || true
   pkill -f "x11vnc.*rfbport.*${VNC_PORT}" 2>/dev/null || true
-  pkill -f "remote-debugging-port=${CDP_PORT}" 2>/dev/null || true
   pkill -f "Xvfb :${DISPLAY_NUM}" 2>/dev/null || true
   sleep 1
   echo "Stopped."
@@ -66,7 +95,7 @@ do_stop() {
 do_status() {
   echo "Browser stack status:"
   is_running "Xvfb :${DISPLAY_NUM}"                && ok "Xvfb :${DISPLAY_NUM}"       || fail "Xvfb"
-  is_running "remote-debugging-port=${CDP_PORT}"    && ok "Chrome CDP :${CDP_PORT}"    || fail "Chrome"
+  [ -n "$(managed_chrome_pids)" ]                  && ok "VNC Chrome CDP :${CDP_PORT}" || fail "VNC Chrome"
   is_running "x11vnc.*rfbport.*${VNC_PORT}"         && ok "x11vnc :${VNC_PORT}"        || fail "x11vnc"
   is_running "websockify.*${NOVNC_PORT}"              && ok "noVNC :${NOVNC_PORT}"       || fail "noVNC"
   echo ""
@@ -80,7 +109,7 @@ do_status() {
 # ─── Start ──────────────────────────────────────────────────────
 do_start() {
   # Stop anything already running
-  do_stop 2>/dev/null
+  do_stop
 
   # Xvfb
   if ! command -v Xvfb &>/dev/null; then
@@ -97,6 +126,7 @@ do_start() {
     fail "Chrome/Chromium not found (apt install chromium)"
     exit 1
   fi
+  mkdir -p "${VNC_PROFILE}" "$(dirname "${CHROME_LOG}")"
   "$CHROME" \
     --remote-debugging-port="${CDP_PORT}" \
     --remote-debugging-address=127.0.0.1 \
@@ -106,12 +136,13 @@ do_start() {
     --disable-software-rasterizer \
     --disable-dev-shm-usage \
     --window-size=1920,1080 \
-    --user-data-dir="${HOME}/.chrome-shared" \
+    --user-data-dir="${VNC_PROFILE}" \
     --display=":${DISPLAY_NUM}" \
-    &>/dev/null &
+    >>"${CHROME_LOG}" 2>&1 &
   sleep 2
 
-  if curl -s "http://localhost:${CDP_PORT}/json/version" &>/dev/null; then
+  if curl -s "http://localhost:${CDP_PORT}/json/version" &>/dev/null &&
+     [ -n "$(managed_chrome_pids)" ]; then
     ok "Chrome started (CDP: localhost:${CDP_PORT}, localhost only)"
   else
     fail "Chrome failed to start"

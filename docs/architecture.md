@@ -89,7 +89,7 @@ The shared-Chrome model means the bot doesn't have to re-authenticate to social 
 
 Browser selection fails closed. Before a task is claimed, the worker validates `browser.cdpUrl` with `/json/version`, opens its browser-level WebSocket, and executes `Browser.getVersion`. Claude and Codex then receive an invocation-scoped Playwright MCP configured with that exact endpoint; ambient MCP configuration and Chrome integrations are excluded. A stale global Playwright entry therefore cannot launch a fresh unauthenticated browser. Providers without equivalent invocation-scoped isolation cannot run browser jobs.
 
-The bot and Chrome lifecycles are separate. `heyamigo restart` restarts the Node supervisor only; `heyamigo chrome restart` manages the explicitly configured browser. Chrome management requires `browser.userDataDir`, checks the real Linux process executable plus its CDP port/profile arguments, and refuses to act when a different browser owns the endpoint.
+The bot and Chrome lifecycles are separate. `heyamigo restart` restarts the Node supervisor only; `heyamigo chrome restart` manages the single VNC browser. Every automatic path derives the same profile at `~/.config/google-chrome-novnc`; there is no configurable alternate profile. Chrome management checks the real Linux process executable plus its CDP port/profile arguments and refuses to act when an unknown browser owns the endpoint.
 
 The split is enforced in the system prompt + tag grammar. The agent never has direct browser tool access; if it tries, the tool call simply isn't available. The `[ASYNC-BROWSER:]` tag is the only path.
 

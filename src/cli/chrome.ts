@@ -4,14 +4,16 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
   statSync,
 } from 'fs'
 import { homedir } from 'os'
-import { basename, dirname, isAbsolute, resolve } from 'path'
+import { dirname, isAbsolute, resolve } from 'path'
 import { assertBrowserCdpReady } from '../browser/cdp.js'
+import {
+  chromePidsForProfile,
+  legacyChromeProfileDir,
+  vncChromeProfileDir,
+} from '../browser/chrome-profile.js'
 import { config } from '../config.js'
 
 export type ChromeAction = 'start' | 'stop' | 'restart' | 'status'
@@ -34,13 +36,6 @@ function expandPath(input: string): string {
 }
 
 function managedChrome(): ManagedChrome {
-  const userDataDir = config.browser.userDataDir
-  if (!userDataDir) {
-    throw new Error(
-      'Chrome management is not configured. Set browser.userDataDir in config/config.json to the exact authenticated VNC profile path.',
-    )
-  }
-
   const endpoint = new URL(config.browser.cdpUrl)
   if (
     endpoint.protocol !== 'http:' ||
@@ -60,7 +55,7 @@ function managedChrome(): ManagedChrome {
     cdpUrl: config.browser.cdpUrl,
     port,
     display: config.browser.display,
-    userDataDir: expandPath(userDataDir),
+    userDataDir: vncChromeProfileDir(),
     startUrl: config.browser.startUrl,
     logFile: expandPath(config.browser.logFile),
     connectTimeoutMs: config.browser.connectTimeoutMs,
@@ -87,37 +82,12 @@ function resolveBinary(configured: string): string {
   )
 }
 
-function hasArg(args: string[], name: string, expected: string): boolean {
-  return args.some(
-    (arg, index) =>
-      arg === `${name}=${expected}` ||
-      (arg === name && args[index + 1] === expected),
-  )
+function managedChromePids(chrome: ManagedChrome): number[] {
+  return chromePidsForProfile(chrome.port, chrome.userDataDir)
 }
 
-function managedChromePids(chrome: ManagedChrome): number[] {
-  if (process.platform !== 'linux' || !existsSync('/proc')) return []
-  const result: number[] = []
-  for (const entry of readdirSync('/proc')) {
-    if (!/^\d+$/.test(entry)) continue
-    const pid = Number(entry)
-    try {
-      const exe = basename(readlinkSync(`/proc/${entry}/exe`)).toLowerCase()
-      if (!exe.includes('chrome') && !exe.includes('chromium')) continue
-      const args = readFileSync(`/proc/${entry}/cmdline`, 'utf-8')
-        .split('\0')
-        .filter(Boolean)
-      if (
-        hasArg(args, '--remote-debugging-port', String(chrome.port)) &&
-        hasArg(args, '--user-data-dir', chrome.userDataDir)
-      ) {
-        result.push(pid)
-      }
-    } catch {
-      // Process exited or /proc entry became unreadable while scanning.
-    }
-  }
-  return result
+function legacyChromePids(chrome: ManagedChrome): number[] {
+  return chromePidsForProfile(chrome.port, legacyChromeProfileDir())
 }
 
 function isAlive(pid: number): boolean {
@@ -160,18 +130,7 @@ function assertDisplay(chrome: ManagedChrome): void {
   }
 }
 
-async function stopManagedChrome(chrome: ManagedChrome): Promise<void> {
-  const pids = managedChromePids(chrome)
-  if (pids.length === 0) {
-    if (await cdpReady(chrome)) {
-      throw new Error(
-        `CDP ${chrome.cdpUrl} belongs to a browser that does not match ${chrome.userDataDir}; refusing to stop it.`,
-      )
-    }
-    console.log('Chrome already stopped')
-    return
-  }
-
+async function terminateChromePids(pids: number[]): Promise<void> {
   for (const pid of pids) process.kill(pid, 'SIGTERM')
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline && pids.some(isAlive)) {
@@ -183,7 +142,30 @@ async function stopManagedChrome(chrome: ManagedChrome): Promise<void> {
       `Chrome did not stop cleanly (PID${remaining.length === 1 ? '' : 's'} ${remaining.join(', ')}). Refusing to force-kill it.`,
     )
   }
-  console.log('Chrome stopped')
+}
+
+async function stopManagedChrome(chrome: ManagedChrome): Promise<void> {
+  const pids = managedChromePids(chrome)
+  if (pids.length > 0) {
+    await terminateChromePids(pids)
+    console.log('Chrome stopped')
+    return
+  }
+
+  const legacyPids = legacyChromePids(chrome)
+  if (legacyPids.length > 0) {
+    await terminateChromePids(legacyPids)
+    console.log('Legacy Chrome stopped; it will not be used again')
+    return
+  }
+
+  if (await cdpReady(chrome)) {
+    throw new Error(
+      `CDP ${chrome.cdpUrl} belongs to an unknown browser; refusing to stop it.`,
+    )
+  }
+
+  console.log('Chrome already stopped')
 }
 
 async function startManagedChrome(chrome: ManagedChrome): Promise<void> {
@@ -191,6 +173,12 @@ async function startManagedChrome(chrome: ManagedChrome): Promise<void> {
   assertDisplay(chrome)
 
   const pids = managedChromePids(chrome)
+  const legacyPids = legacyChromePids(chrome)
+  if (legacyPids.length > 0) {
+    throw new Error(
+      `Legacy Chrome profile is still running (PID${legacyPids.length === 1 ? '' : 's'} ${legacyPids.join(', ')}). Run: heyamigo chrome restart`,
+    )
+  }
   if (await cdpReady(chrome)) {
     if (pids.length === 0) {
       throw new Error(
@@ -262,6 +250,7 @@ async function startManagedChrome(chrome: ManagedChrome): Promise<void> {
 
 async function statusManagedChrome(chrome: ManagedChrome): Promise<void> {
   const pids = managedChromePids(chrome)
+  const legacyPids = legacyChromePids(chrome)
   const ready = await cdpReady(chrome)
   console.log(`Profile: ${chrome.userDataDir}`)
   console.log(`CDP:     ${chrome.cdpUrl}`)
@@ -270,7 +259,17 @@ async function statusManagedChrome(chrome: ManagedChrome): Promise<void> {
     return
   }
   if (ready) {
+    if (legacyPids.length > 0) {
+      throw new Error(
+        `Status: legacy Chrome profile is running (PID${legacyPids.length === 1 ? '' : 's'} ${legacyPids.join(', ')}); run: heyamigo chrome restart`,
+      )
+    }
     throw new Error('Status: CDP is ready, but it belongs to a different browser identity')
+  }
+  if (legacyPids.length > 0) {
+    throw new Error(
+      `Status: legacy Chrome profile process exists but CDP is unavailable (PID${legacyPids.length === 1 ? '' : 's'} ${legacyPids.join(', ')})`,
+    )
   }
   if (pids.length > 0) {
     throw new Error(

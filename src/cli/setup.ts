@@ -10,6 +10,11 @@ import {
 import { homedir } from 'os'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import {
+  chromePidsForProfile,
+  legacyChromeProfileDir,
+  vncChromeProfileDir,
+} from '../browser/chrome-profile.js'
 
 const __pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -522,14 +527,31 @@ export async function runSetup(): Promise<void> {
     } else {
       // ── Check if already running ─────────────────────────────
       const cdpUrl = 'http://localhost:9222'
+      const cdpPort = 9222
+      const vncProfile = vncChromeProfileDir()
       const alreadyRunning = run(`curl -s '${cdpUrl}/json/version'`)
+      const matchingPids = chromePidsForProfile(cdpPort, vncProfile)
+      const legacyPids = chromePidsForProfile(cdpPort, legacyChromeProfileDir())
       const hasClaude = !!which('claude')
       const mcpConfigured =
         hasClaude && run('claude mcp list 2>/dev/null').output.includes('playwright')
       const hasCodex = !!which('codex')
       const hasGrok = !!which('grok')
 
-      if (alreadyRunning.ok && alreadyRunning.output.includes('Browser')) {
+      p.log.info(`Using the only supported Chrome profile: ${vncProfile}`)
+
+      if (
+        (alreadyRunning.ok && alreadyRunning.output.includes('Browser')) ||
+        legacyPids.length > 0
+      ) {
+        if (matchingPids.length === 0) {
+          p.cancel(
+            legacyPids.length > 0
+              ? 'The retired ~/.chrome-shared browser is still running. Run:\n\n  heyamigo chrome restart\n\nThen re-run setup.'
+              : `CDP ${cdpUrl} belongs to a browser that is not using ${vncProfile}. Refusing to attach to it.`,
+          )
+          process.exit(1)
+        }
         p.log.success('Chrome already running (localhost:9222)')
         if (hasClaude && mcpConfigured) {
           p.log.success('Claude already connected to Chrome')
@@ -557,10 +579,10 @@ export async function runSetup(): Promise<void> {
         // ── Chrome ───────────────────────────────────────────────
         let chromeFound = false
         for (const bin of [
-          'chromium',
-          'chromium-browser',
           'google-chrome',
           'google-chrome-stable',
+          'chromium-browser',
+          'chromium',
         ]) {
           if (run(`which ${bin}`).ok) {
             p.log.success(`Chrome found: ${bin}`)
@@ -626,7 +648,10 @@ export async function runSetup(): Promise<void> {
         // ── Start browser ────────────────────────────────────────
         if (chromeFound) {
           p.log.step('Starting Chrome' + (vncInstalled ? ' + noVNC' : '') + '...')
-          const scriptPath = resolve(cwd, 'scripts/start-browser.sh')
+          const packagedScriptPath = resolve(__pkgRoot, 'scripts/start-browser.sh')
+          const scriptPath = existsSync(packagedScriptPath)
+            ? packagedScriptPath
+            : resolve(cwd, 'scripts/start-browser.sh')
           if (!runLive(`bash "${scriptPath}"`)) {
             p.log.warning(
               'You can start manually: bash scripts/start-browser.sh',
@@ -636,7 +661,12 @@ export async function runSetup(): Promise<void> {
           // Verify CDP
           const cdpUrl = 'http://localhost:9222'
           const cdpCheck = run(`curl -s '${cdpUrl}/json/version'`)
-          if (cdpCheck.ok && cdpCheck.output.includes('Browser')) {
+          const startedPids = chromePidsForProfile(cdpPort, vncProfile)
+          if (
+            cdpCheck.ok &&
+            cdpCheck.output.includes('Browser') &&
+            startedPids.length > 0
+          ) {
             p.log.success('Chrome running (localhost:9222, not public)')
 
             if (hasClaude) {
