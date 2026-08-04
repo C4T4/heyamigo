@@ -1029,6 +1029,7 @@ export async function runSetup(): Promise<void> {
       '',
       'Other commands:',
       '  heyamigo stop / restart / status',
+      '  heyamigo chrome status / start / stop / restart',
       '',
       'Configuration:',
       '  config/config.json   — bot name, model',

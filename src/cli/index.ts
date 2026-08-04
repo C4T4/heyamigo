@@ -67,6 +67,27 @@ program
     await serviceCmd('status')
   })
 
+const chrome = program
+  .command('chrome')
+  .description('Manage the configured authenticated VNC Chrome')
+
+for (const action of ['start', 'stop', 'restart', 'status'] as const) {
+  chrome
+    .command(action)
+    .description(`${action[0]!.toUpperCase()}${action.slice(1)} the configured VNC Chrome`)
+    .action(async () => {
+      const { findProjectDir } = await import('./service.js')
+      process.chdir(findProjectDir())
+      const { chromeCmd } = await import('./chrome.js')
+      try {
+        await chromeCmd(action)
+      } catch (err) {
+        console.error((err as Error).message)
+        process.exitCode = 1
+      }
+    })
+}
+
 program
   .command('import <path>')
   .description('Import external knowledge folder into memory')

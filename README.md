@@ -45,6 +45,8 @@ Other providers:
 
 Browser jobs use `browser.cdpUrl` (default `http://127.0.0.1:9222`). Claude and Codex receive an invocation-scoped Playwright MCP pointing only at that endpoint; ambient Chrome integrations and stale global Playwright entries are not available to the browser worker. Before work is claimed, heyamigo also opens the browser-level CDP WebSocket and runs `Browser.getVersion`. If that check fails, the job stays pending instead of falling back to another browser.
 
+Chrome has its own lifecycle, separate from the bot. Configure `browser.userDataDir` with the exact authenticated VNC profile, then use `heyamigo chrome status|start|stop|restart`. The command matches both CDP port and profile path before operating and refuses to create a missing profile or touch a different browser. `heyamigo restart` continues to restart only the Node bot.
+
 ## In-chat commands
 
 | Command | What it does |

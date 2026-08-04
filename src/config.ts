@@ -119,12 +119,24 @@ const ConfigSchema = z.object({
       connectTimeoutMs: z.number().int().positive().default(3000),
       // Shared breaker delay after an unhealthy probe. Tasks remain pending.
       unavailableRetryMs: z.number().int().positive().default(30000),
+      // Managed Chrome lifecycle. userDataDir is intentionally optional at
+      // schema level for backwards compatibility, but the CLI refuses to
+      // start/stop Chrome until it is explicitly set to the authenticated VNC
+      // profile. This prevents an accidental fresh/wrong profile launch.
+      chromeBinary: z.string().min(1).optional(),
+      userDataDir: z.string().min(1).optional(),
+      display: z.string().regex(/^:\d+$/).default(':99'),
+      startUrl: z.string().min(1).default('about:blank'),
+      logFile: z.string().min(1).default('./storage/logs/chrome.log'),
     })
     .default({
       maxWorkers: 3,
       cdpUrl: 'http://127.0.0.1:9222',
       connectTimeoutMs: 3000,
       unavailableRetryMs: 30000,
+      display: ':99',
+      startUrl: 'about:blank',
+      logFile: './storage/logs/chrome.log',
     }),
   codex: z
     .object({

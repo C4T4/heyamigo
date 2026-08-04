@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url'
 
 const __distCli = dirname(fileURLToPath(import.meta.url))
 
-function findProjectDir(): string {
+export function findProjectDir(): string {
   // Check cwd first, then common locations
   const candidates = [
     process.cwd(),

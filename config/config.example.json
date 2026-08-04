@@ -71,7 +71,12 @@
     "maxWorkers": 3,
     "cdpUrl": "http://127.0.0.1:9222",
     "connectTimeoutMs": 3000,
-    "unavailableRetryMs": 30000
+    "unavailableRetryMs": 30000,
+    "chromeBinary": "auto",
+    "userDataDir": "~/.chrome-shared",
+    "display": ":99",
+    "startUrl": "about:blank",
+    "logFile": "./storage/logs/chrome.log"
   },
 
   "grok": {
