@@ -10,7 +10,18 @@ export function legacyChromeProfileDir(): string {
   return resolve(homedir(), '.chrome-shared')
 }
 
-function hasArg(args: string[], name: string, expected: string): boolean {
+export function procCmdlineHasArg(
+  rawCmdline: string,
+  name: string,
+  expected: string,
+): boolean {
+  // Normal Linux processes expose NUL-separated argv entries. Snap Chromium
+  // can rewrite argv[0] into one space-separated process-title string after
+  // launch, so normalize both representations before matching exact flags.
+  const args = rawCmdline
+    .split('\0')
+    .flatMap((entry) => entry.split(/\s+/))
+    .filter(Boolean)
   return args.some(
     (arg, index) =>
       arg === `${name}=${expected}` ||
@@ -28,12 +39,10 @@ export function chromePidsForProfile(port: number, userDataDir: string): number[
     try {
       const exe = basename(readlinkSync(`/proc/${entry}/exe`)).toLowerCase()
       if (!exe.includes('chrome') && !exe.includes('chromium')) continue
-      const args = readFileSync(`/proc/${entry}/cmdline`, 'utf-8')
-        .split('\0')
-        .filter(Boolean)
+      const rawCmdline = readFileSync(`/proc/${entry}/cmdline`, 'utf-8')
       if (
-        hasArg(args, '--remote-debugging-port', String(port)) &&
-        hasArg(args, '--user-data-dir', userDataDir)
+        procCmdlineHasArg(rawCmdline, '--remote-debugging-port', String(port)) &&
+        procCmdlineHasArg(rawCmdline, '--user-data-dir', userDataDir)
       ) {
         result.push(pid)
       }

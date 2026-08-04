@@ -62,6 +62,14 @@ find_novnc_proxy() {
 
 is_running() { pgrep -f "$1" &>/dev/null; }
 
+cmdline_has_arg() {
+  local cmdline="$1" name="$2" expected="$3"
+  case " ${cmdline} " in
+    *" ${name}=${expected} "*|*" ${name} ${expected} "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 managed_chrome_pids() {
   local proc_dir exe cmdline
   for proc_dir in /proc/[0-9]*; do
@@ -71,9 +79,9 @@ managed_chrome_pids() {
       *chrome*|*chromium*) ;;
       *) continue ;;
     esac
-    cmdline="$(tr '\0' '\n' < "${proc_dir}/cmdline" 2>/dev/null || true)"
-    if grep -Fqx -- "--remote-debugging-port=${CDP_PORT}" <<<"${cmdline}" &&
-       grep -Fqx -- "--user-data-dir=${VNC_PROFILE}" <<<"${cmdline}"; then
+    cmdline="$(tr '\0' ' ' < "${proc_dir}/cmdline" 2>/dev/null || true)"
+    if cmdline_has_arg "${cmdline}" '--remote-debugging-port' "${CDP_PORT}" &&
+       cmdline_has_arg "${cmdline}" '--user-data-dir' "${VNC_PROFILE}"; then
       echo "${proc_dir##*/}"
     fi
   done
