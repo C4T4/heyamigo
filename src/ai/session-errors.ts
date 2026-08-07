@@ -8,6 +8,7 @@ export function isStaleSessionError(err: unknown): boolean {
     msg.includes('invalid session identifier') ||
     msg.includes('input token count exceeds the maximum') ||
     msg.includes('maximum context length') ||
-    msg.includes('context window exceeded')
+    msg.includes('context window exceeded') ||
+    msg.includes('gemini returned empty response text')
   )
 }

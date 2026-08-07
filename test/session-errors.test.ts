@@ -14,6 +14,12 @@ test('recognizes resumed sessions that exceed the model context limit', () => {
   ), true)
 })
 
+test('recognizes Gemini thought-only responses as stale sessions', () => {
+  assert.equal(isStaleSessionError(
+    new Error('gemini returned empty response text'),
+  ), true)
+})
+
 test('does not discard sessions for unrelated provider failures', () => {
   assert.equal(isStaleSessionError(
     new Error('Authentication failed'),

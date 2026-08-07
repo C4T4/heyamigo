@@ -10,7 +10,10 @@ import { config } from '../config.js'
 import { dbPath } from '../db/index.js'
 import { logger } from '../logger.js'
 import { logPrompt, type PromptLogEntry } from '../promptlog.js'
-import { parseGeminiOutput } from './gemini-output.js'
+import {
+  parseGeminiOutput,
+  requireGeminiTextReply,
+} from './gemini-output.js'
 import {
   buildGeminiSystemSettings,
   geminiIsolationArgs,
@@ -245,7 +248,7 @@ async function runGeminiTask(params: RunTaskParams): Promise<RunTaskResult> {
 }
 
 async function askGemini(params: AskParams): Promise<AskResult> {
-  const result = await runGeminiTask({
+  const result = requireGeminiTextReply(await runGeminiTask({
     input: params.input,
     caller: 'worker',
     mode: 'auto',
@@ -254,7 +257,7 @@ async function askGemini(params: AskParams): Promise<AskResult> {
     includeSystemPrompt: true,
     allowedTools: params.allowedTools,
     addDirs: [config.memory.dir, config.storage.mediaDir],
-  })
+  }))
   if (!result.sessionId) {
     throw new Error('gemini ask: response missing session id')
   }

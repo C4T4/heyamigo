@@ -142,3 +142,16 @@ export function parseGeminiOutput(stdout: string): RunTaskResult | null {
     usage: usageFromStats(raw.stats),
   }
 }
+
+// Headless Gemini 3.x can exit 0 with `response: ""` after producing only
+// hidden thought tokens. Tool/task calls may legitimately finish without
+// text, but a chat reply may not: surface it as a stale-session error so the
+// worker clears the poisoned resume thread and retries once from scratch.
+export function requireGeminiTextReply(
+  result: RunTaskResult,
+): RunTaskResult {
+  if (!result.reply.trim()) {
+    throw new Error('gemini returned empty response text')
+  }
+  return result
+}

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { parseGeminiOutput } from '../src/ai/gemini-output.js'
+import {
+  parseGeminiOutput,
+  requireGeminiTextReply,
+} from '../src/ai/gemini-output.js'
 
 test('parses Gemini JSON sessions and aggregates per-model usage', () => {
   const result = parseGeminiOutput(JSON.stringify({
@@ -90,4 +93,22 @@ test('accepts a successful tool-only response with no text', () => {
       numTurns: 0,
     },
   })
+})
+
+test('rejects an empty Gemini result when a chat reply is required', () => {
+  const result = parseGeminiOutput(JSON.stringify({
+    session_id: 'thought-only-session',
+    response: '',
+    stats: {
+      models: {
+        primary: { tokens: { candidates: 8_220 } },
+      },
+    },
+  }))
+
+  assert.ok(result)
+  assert.throws(
+    () => requireGeminiTextReply(result),
+    /gemini returned empty response text/,
+  )
 })
