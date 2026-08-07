@@ -4,6 +4,16 @@ export type GeminiMcpServer = {
   trust: true
 }
 
+export function geminiIsolationArgs(allowedMcpServer?: string): string[] {
+  return [
+    '--extensions',
+    'none',
+    ...(allowedMcpServer
+      ? ['--allowed-mcp-server-names', allowedMcpServer]
+      : []),
+  ]
+}
+
 export function buildGeminiSystemSettings(params: {
   coreTools?: string[]
   playwright?: GeminiMcpServer
@@ -14,6 +24,6 @@ export function buildGeminiSystemSettings(params: {
       : {}),
     ...(params.playwright
       ? { mcpServers: { playwright: params.playwright } }
-      : {}),
+      : { admin: { mcp: { enabled: false } } }),
   }
 }

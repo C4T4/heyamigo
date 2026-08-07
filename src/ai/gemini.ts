@@ -11,7 +11,10 @@ import { dbPath } from '../db/index.js'
 import { logger } from '../logger.js'
 import { logPrompt, type PromptLogEntry } from '../promptlog.js'
 import { parseGeminiOutput } from './gemini-output.js'
-import { buildGeminiSystemSettings } from './gemini-settings.js'
+import {
+  buildGeminiSystemSettings,
+  geminiIsolationArgs,
+} from './gemini-settings.js'
 import type {
   AiProvider,
   AskParams,
@@ -94,7 +97,7 @@ function coreToolsFor(
 type RuntimeSettings = {
   dir: string
   path: string
-  allowedMcpServer: string
+  allowedMcpServer?: string
 }
 
 function createRuntimeSettings(
@@ -138,8 +141,9 @@ function createRuntimeSettings(
     return {
       dir,
       path,
-      // An empty allowlist entry intentionally matches no ambient MCP name.
-      allowedMcpServer: browser ? 'playwright' : '',
+      // Only browser jobs expose the task-scoped VNC Chrome bridge. Normal
+      // restricted jobs disable MCP in their temporary settings instead.
+      allowedMcpServer: browser ? 'playwright' : undefined,
     }
   } catch (err) {
     rmSync(dir, { recursive: true, force: true })
@@ -157,10 +161,7 @@ function buildArgs(params: RunTaskParams, runtime: RuntimeSettings | null): {
     '--output-format', 'json',
   ]
   if (runtime) {
-    args.push(
-      '--allowed-mcp-server-names', runtime.allowedMcpServer,
-      '--extensions', 'none',
-    )
+    args.push(...geminiIsolationArgs(runtime.allowedMcpServer))
   }
 
   if (config.gemini.model) args.push('--model', config.gemini.model)
