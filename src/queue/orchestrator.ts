@@ -18,7 +18,10 @@ import { getDb } from '../db/index.js'
 import { workers } from '../db/schema.js'
 import { logger } from '../logger.js'
 import { reclaimStuckBrowserTasks } from './browser-queue.js'
-import { reclaimStuckInbound } from './inbound.js'
+import {
+  reclaimDeadWorkerInbound,
+  reclaimStuckInbound,
+} from './inbound.js'
 import { reclaimStuckMemoryWrites } from './memory-writes.js'
 import { reclaimStuckOutbound } from './outbound.js'
 import { clearControl, readControl, requestControl } from './control.js'
@@ -149,6 +152,13 @@ async function tick(id: string): Promise<void> {
     }
 
     markDeadWorkers()
+    const reclaimedDeadInbound = reclaimDeadWorkerInbound()
+    if (reclaimedDeadInbound > 0) {
+      logger.info(
+        { reclaimed: reclaimedDeadInbound },
+        'reclaimed inbound rows from dead workers',
+      )
+    }
 
     if (draining) {
       const busy = busyWorkerCount()

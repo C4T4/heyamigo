@@ -6,9 +6,19 @@
 // Same primitives as outbound (claim/done/retry/dlq) with the added
 // `address NOT IN (claimed)` filter in the claim query.
 
-import { and, asc, eq, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNull,
+  lte,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { getDb } from '../db/index.js'
-import { inbound } from '../db/schema.js'
+import { inbound, workers } from '../db/schema.js'
 import { logger } from '../logger.js'
 
 export type InboundStatus = 'pending' | 'claimed' | 'done' | 'failed' | 'dlq'
@@ -287,6 +297,39 @@ export function reclaimStuckInbound(): number {
       updatedAt: sql`${inbound.updatedAt}`,
     })
     .where(and(eq(inbound.status, 'claimed'), lte(inbound.claimedAt, cutoff)))
+    .returning({ id: inbound.id })
+    .all()
+  return result.length
+}
+
+// A graceful restart can outlive its 30s drain window and kill a provider
+// subprocess. Once the old worker is marked dead, its claim is definitively
+// orphaned and can be reclaimed immediately without waiting the 35-minute
+// live-worker TTL.
+export function reclaimDeadWorkerInbound(): number {
+  const db = getDb()
+  const deadWorkerIds = db
+    .select({ id: workers.id })
+    .from(workers)
+    .where(eq(workers.status, 'dead'))
+    .all()
+    .map((row) => row.id)
+  if (deadWorkerIds.length === 0) return 0
+
+  const result = db
+    .update(inbound)
+    .set({
+      status: 'pending',
+      claimedBy: null,
+      claimedAt: null,
+      updatedAt: sql`${inbound.updatedAt}`,
+    })
+    .where(
+      and(
+        eq(inbound.status, 'claimed'),
+        inArray(inbound.claimedBy, deadWorkerIds),
+      ),
+    )
     .returning({ id: inbound.id })
     .all()
   return result.length

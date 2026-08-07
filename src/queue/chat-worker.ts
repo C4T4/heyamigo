@@ -22,6 +22,7 @@ import { getDb } from '../db/index.js'
 import { parseAddress } from '../db/address.js'
 import { workers } from '../db/schema.js'
 import { handleReply } from '../gateway/outgoing.js'
+import { isBareAliasInvocation } from '../gateway/triggers.js'
 import { logger } from '../logger.js'
 import { processJob } from './worker.js'
 import {
@@ -142,7 +143,9 @@ async function processOne(workerId: string, row: InboundRow): Promise<void> {
   }
 
   try {
-    const result = await processJob(job)
+    const result = isBareAliasInvocation(job.text)
+      ? { reply: 'Yeah?' }
+      : await processJob(job)
     // handleReply's third arg was the original WAMessage (used for
     // group quoting). That regression was already deferred in Phase 1;
     // pass an empty stub here too. The compiler type is loose enough.

@@ -1,5 +1,6 @@
 import { config } from '../config.js'
 import type { TriggerMode } from '../config.js'
+import { isBareAliasInvocation as matchesBareAlias } from './trigger-alias.js'
 
 export type TriggerResult = {
   triggered: boolean
@@ -98,6 +99,13 @@ function aliasMatches(text: string, aliases: string[]): string | null {
     if (re.test(text)) return alias
   }
   return null
+}
+
+// A name-only ping is a liveness check, not an agent task. Sending it through
+// an unrestricted CLI can make the model search the project for its own name
+// instead of simply acknowledging the user.
+export function isBareAliasInvocation(text: string): boolean {
+  return matchesBareAlias(text, config.triggers.aliases)
 }
 
 function normalizeAudioText(text: string): string {
