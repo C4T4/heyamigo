@@ -42,7 +42,7 @@ Other providers:
 
 - Codex: install `@openai/codex` and set `ai.provider: "codex"` in `config/config.json`.
 - Grok Build: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, run `grok login`, and set `ai.provider: "grok"`. Chat and non-browser async work are supported; browser jobs fail closed because Grok does not currently expose invocation-scoped MCP isolation.
-- Gemini: set `ai.provider: "gemini"`. Heyamigo uses the already-installed `gemini` CLI with `--yolo`; chat, async, and task-scoped browser jobs all use the CLI's existing login.
+- Gemini: set `ai.provider: "gemini"`. Heyamigo uses the already-installed `gemini` CLI with `--yolo`, pins `gemini-3.6-flash` by default, and uses the CLI's existing login for chat, async, and task-scoped browser jobs.
 
 Browser jobs use `browser.cdpUrl` (default `http://127.0.0.1:9222`). Claude, Codex, and Gemini receive an invocation-scoped Playwright MCP pointing only at that endpoint; ambient Chrome integrations and stale global Playwright entries are not available to the browser worker. A shared SQLite lease registry identifies tabs by stable CDP target ID and filters each MCP to only the tabs owned by its task. Up to `browser.maxWorkers` tasks (default 3) can therefore drive separate background tabs in parallel without mutable global tab indexes. A task can own several tabs, automatically adopts popups opened by an owned tab, and can explicitly claim an existing user tab by stable ID; claimed user tabs stay open, while task-created tabs are cleaned up. Before work is claimed, heyamigo also opens the browser-level CDP WebSocket and runs `Browser.getVersion`. If that check fails, the job stays pending instead of falling back to another browser.
 

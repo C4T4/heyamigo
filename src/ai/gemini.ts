@@ -272,7 +272,7 @@ async function askGemini(params: AskParams): Promise<AskResult> {
 
 export const geminiProvider: AiProvider = {
   name: 'gemini',
-  model: config.gemini.model ?? 'gemini-auto',
+  model: config.gemini.model,
   contextWindow: config.gemini.contextWindow,
   usageReportingMode: 'per-turn',
   ask: askGemini,

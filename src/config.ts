@@ -186,8 +186,7 @@ const ConfigSchema = z.object({
     .object({
       // Installed Gemini CLI. Heyamigo uses its existing login and --yolo.
       bin: z.string().default('gemini'),
-      // Leave unset to follow Gemini CLI's current automatic model choice.
-      model: z.string().optional(),
+      model: z.string().default('gemini-3.6-flash'),
       contextWindow: z.number().int().positive().default(1000000),
       extraArgs: z.array(z.string()).default([]),
     })

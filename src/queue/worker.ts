@@ -1,4 +1,5 @@
 import { getProvider } from '../ai/providers.js'
+import { isStaleSessionError } from '../ai/session-errors.js'
 import {
   clearSession,
   getSessionInfo,
@@ -29,16 +30,6 @@ import { addressForJob } from './job-address.js'
 import { enqueueOutbound } from './outbound.js'
 import { formatLocalTime, resolveTimeExpression } from './time-expr.js'
 import type { Job, JobCard, Result } from './types.js'
-
-function isStaleSessionError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false
-  const msg = err.message.toLowerCase()
-  return (
-    msg.includes('no conversation found') ||
-    msg.includes('session not found') ||
-    msg.includes('no session found')
-  )
-}
 
 async function callClaude(job: Job): Promise<Result> {
   const startedAt = Date.now()
