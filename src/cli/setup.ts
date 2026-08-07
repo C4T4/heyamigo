@@ -110,7 +110,7 @@ function setConfigOwnerNumber(configPath: string, number: string): void {
   } catch {}
 }
 
-type AiProviderChoice = 'claude' | 'codex' | 'grok'
+type AiProviderChoice = 'claude' | 'codex' | 'grok' | 'gemini'
 
 function readConfigObject(configPath: string): Record<string, unknown> | null {
   try {
@@ -125,7 +125,12 @@ function getConfiguredProvider(configPath: string): AiProviderChoice {
   const ai = cfg?.ai
   if (ai && typeof ai === 'object') {
     const provider = (ai as Record<string, unknown>).provider
-    if (provider === 'claude' || provider === 'codex' || provider === 'grok') {
+    if (
+      provider === 'claude' ||
+      provider === 'codex' ||
+      provider === 'grok' ||
+      provider === 'gemini'
+    ) {
       return provider
     }
   }
@@ -348,6 +353,11 @@ export async function runSetup(): Promise<void> {
         label: 'Codex',
         hint: 'OpenAI Codex CLI',
       },
+      {
+        value: 'gemini',
+        label: 'Gemini',
+        hint: 'Google Gemini CLI',
+      },
     ],
     initialValue: currentProvider,
   })
@@ -483,7 +493,7 @@ export async function runSetup(): Promise<void> {
           'Headless servers can also use XAI_API_KEY.',
       )
     }
-  } else {
+  } else if (provider === 'codex') {
     // ── Codex CLI ───────────────────────────────────────────────
     const codexPath = which('codex')
     if (!codexPath) {
@@ -499,6 +509,19 @@ export async function runSetup(): Promise<void> {
       'If Codex is not logged in on this machine yet, run:\n\n' +
         '  codex login',
     )
+  } else {
+    // ── Gemini CLI ──────────────────────────────────────────────
+    const geminiPath = which('gemini')
+    if (!geminiPath) {
+      p.cancel(
+        'Gemini CLI is required but was not found.\n' +
+          'Install it first, then re-run setup:\n\n' +
+          '  npm install -g @google/gemini-cli@latest',
+      )
+      process.exit(1)
+    }
+    p.log.success(`Gemini CLI found: ${geminiPath}`)
+    p.log.info('Using the installed Gemini CLI with --yolo and its existing login.')
   }
 
   // ── Shared browser (optional) ──────────────────────────────────
@@ -522,7 +545,8 @@ export async function runSetup(): Promise<void> {
           'On macOS/Windows: start Chrome with --remote-debugging-port=9222 manually, ' +
           'then for Claude: claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "http://localhost:9222"; ' +
           'for Codex: add [mcp_servers.playwright] to ~/.codex/config.toml; ' +
-          'for Grok: use grok mcp to add the same Playwright MCP server.',
+          'for Grok: use grok mcp to add the same Playwright MCP server. ' +
+          'Gemini needs no global MCP entry; heyamigo injects its task-scoped browser MCP per job.',
       )
     } else {
       // ── Check if already running ─────────────────────────────
@@ -537,6 +561,7 @@ export async function runSetup(): Promise<void> {
         hasClaude && run('claude mcp list 2>/dev/null').output.includes('playwright')
       const hasCodex = !!which('codex')
       const hasGrok = !!which('grok')
+      const hasGemini = !!which('gemini')
 
       p.log.info(`Using the only supported Chrome profile: ${vncProfile}`)
 
@@ -569,6 +594,9 @@ export async function runSetup(): Promise<void> {
           p.log.info(
             'For Grok, add Playwright MCP with grok mcp if it is not already configured.',
           )
+        }
+        if (hasGemini) {
+          p.log.success('Gemini browser isolation ready (task-scoped MCP)')
         }
         p.log.info(
           'View browser (SSH tunnel):\n' +
@@ -613,7 +641,7 @@ export async function runSetup(): Promise<void> {
         let vncInstalled = false
         if (chromeFound) {
           p.log.info(
-            'noVNC lets you watch and interact with the browser Claude is controlling. ' +
+            'noVNC lets you watch and interact with the browser the AI provider is controlling. ' +
               'It runs on localhost:6090 only, accessible via SSH tunnel. Nothing public.',
           )
 
@@ -705,6 +733,9 @@ export async function runSetup(): Promise<void> {
               p.log.info(
                 'For Grok, add Playwright MCP with grok mcp if it is not already configured.',
               )
+            }
+            if (hasGemini) {
+              p.log.success('Gemini browser isolation ready (task-scoped MCP)')
             }
 
             if (vncInstalled) {
@@ -1013,20 +1044,30 @@ export async function runSetup(): Promise<void> {
   }
 
   // ── Personality ──────────────────────────────────────────────
-  const personalities = ['sharp', 'casual', 'professional']
+  const personalities = [
+    'unfiltered-realist',
+    'sharp',
+    'casual',
+    'professional',
+  ]
   const personality = await p.select({
     message: 'Choose a personality',
     options: personalities.map((name) => ({
       value: name,
-      label: name.charAt(0).toUpperCase() + name.slice(1),
+      label: name
+        .split('-')
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' '),
       hint:
-        name === 'sharp'
-          ? 'direct, specific, no marketing-speak (default)'
+        name === 'unfiltered-realist'
+          ? 'direct, non-ideological, proportional, treats adults like adults'
+          : name === 'sharp'
+          ? 'direct, specific, no marketing-speak'
           : name === 'casual'
             ? 'warm, relaxed, friend-over-coffee'
             : 'clear, efficient, business-appropriate',
     })),
-    initialValue: 'sharp',
+    initialValue: 'unfiltered-realist',
   })
 
   if (!p.isCancel(personality)) {

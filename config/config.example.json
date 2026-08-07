@@ -18,7 +18,7 @@
   },
 
   "triggers": {
-    "aliases": ["heyamigo", "amigo", "claude", "clawd", "grok", "codex", "xai"],
+    "aliases": ["heyamigo", "amigo", "claude", "clawd", "grok", "codex", "gemini", "google", "xai"],
     "replyToBotCounts": true
   },
 
@@ -52,7 +52,7 @@
 
   "claude": {
     "model": "claude-opus-4-7",
-    "personalityFile": "./config/personalities/sharp.md",
+    "personalityFile": "./config/personalities/unfiltered-realist.md",
     "addDirs": ["./config/knowledge"],
     "outputFormat": "json",
     "contextWindow": 200000
@@ -83,6 +83,12 @@
     "contextWindow": 1000000,
     "alwaysApprove": true,
     "memory": false,
+    "extraArgs": []
+  },
+
+  "gemini": {
+    "bin": "gemini",
+    "contextWindow": 1000000,
     "extraArgs": []
   },
 

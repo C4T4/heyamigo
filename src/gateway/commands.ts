@@ -1,4 +1,11 @@
-import { clearSession, getSessionInfo } from '../ai/sessions.js'
+import { clearAllSessions, clearSession, getSessionInfo } from '../ai/sessions.js'
+import {
+  currentPersonality,
+  listPersonalities,
+  personalityLabel,
+  resolvePersonalityName,
+  setActivePersonality,
+} from '../ai/personalities.js'
 import { getProvider, reloadAllSystemPrompts } from '../ai/providers.js'
 import { config, ReasoningEffortSchema } from '../config.js'
 import { runDigestNow } from '../memory/scheduler.js'
@@ -18,9 +25,10 @@ export type CommandContext = {
 }
 
 // Feature-level commands (/journal, /snooze, /tasks, etc.) are intentionally
-// absent. Claude is the interface — the owner asks for things in natural
-// language and Claude acts via markers or by editing files directly.
-// Only operational commands live here: reset, status, reload, digest.
+// absent. The AI is the interface — the owner asks for things in natural
+// language and the active provider acts via markers or by editing files.
+// Only operational commands live here: reset, status, personality, reload,
+// digest, and queue/schedule inspection.
 export async function tryCommand(ctx: CommandContext): Promise<boolean> {
   const prefix = config.commands.prefix
   const trimmed = ctx.text.trim()
@@ -107,6 +115,37 @@ export async function tryCommand(ctx: CommandContext): Promise<boolean> {
       ? ' Applies to the next Codex turn.'
       : ` It will apply when Codex is active; current provider is ${provider.name}.`
     await ctx.reply(`Thinking set to ${parsed.data} for this chat.${providerNote}`)
+    return true
+  }
+
+  if (cmd === 'personality') {
+    const available = listPersonalities()
+    const usage = `Use ${prefix}personality <name>. Available: ${available.join(', ')}`
+    if (args.length === 0) {
+      await ctx.reply(
+        `Personality: ${personalityLabel(currentPersonality())}.\n${usage}`,
+      )
+      return true
+    }
+
+    const role = getRoleForContext(ctx.senderNumber, ctx.isGroup)
+    if (role.name !== 'admin') {
+      await ctx.reply('Only admins can change the personality.')
+      return true
+    }
+
+    const requested = resolvePersonalityName(args.join('-'))
+    if (!requested) {
+      await ctx.reply(`Unknown personality. ${usage}`)
+      return true
+    }
+
+    setActivePersonality(requested)
+    reloadAllSystemPrompts()
+    const resetCount = clearAllSessions()
+    await ctx.reply(
+      `Personality set to ${personalityLabel(requested)}. Reset ${resetCount} provider session${resetCount === 1 ? '' : 's'} so the new personality applies immediately.`,
+    )
     return true
   }
 

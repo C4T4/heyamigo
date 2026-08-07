@@ -38,6 +38,10 @@ export type RunClaudeOpts = {
   // env override is only applied when bin is 'claude' — other providers don't
   // understand it and may emit spurious warnings.
   bin?: string
+  // Provider-scoped environment additions. Used for invocation-local config
+  // such as Gemini's strict system settings file. Cannot remove inherited
+  // variables; values here override the process environment.
+  env?: NodeJS.ProcessEnv
 }
 
 export type RunClaudeResult = {
@@ -127,7 +131,7 @@ export function parseStreamJson(stdout: string): ParsedStreamJson | null {
 }
 
 // Kill the process group of a detached child. Playwright MCP and any Chromium
-// children sit under the claude subprocess; without process-group kill they
+// children sit under the provider subprocess; without process-group kill they
 // linger after we SIGTERM the parent and accumulate on the host.
 function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   if (!child.pid) return
@@ -144,9 +148,8 @@ function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
-// Run a `claude -p ...` subprocess with a hard timeout, full-tree kill on
-// expiry, and uniform promptlog handling. All claude spawns in the codebase
-// should go through this.
+// Run a provider CLI subprocess with a hard timeout, full-tree kill on expiry,
+// and uniform promptlog handling. The historical name stays for compatibility.
 export async function runClaude(
   opts: RunClaudeOpts,
 ): Promise<RunClaudeResult> {
@@ -155,7 +158,7 @@ export async function runClaude(
   const startedAt = Date.now()
 
   return new Promise<RunClaudeResult>((resolvePromise, rejectPromise) => {
-    const env: NodeJS.ProcessEnv = { ...process.env }
+    const env: NodeJS.ProcessEnv = { ...process.env, ...opts.env }
     if (bin === 'claude') {
       // ANTHROPIC_LOG=debug surfaces the SDK's HTTP layer to stderr:
       // request URLs, status codes, retries, rate-limit notices. We
@@ -194,7 +197,7 @@ export async function runClaude(
       timedOut = true
       logger.warn(
         { caller, pid: child.pid, timeoutMs },
-        'claude subprocess timed out, killing process group',
+        `${bin} subprocess timed out, killing process group`,
       )
       killGroup(child, 'SIGTERM')
       // Grace window, then SIGKILL if still alive.

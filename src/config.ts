@@ -50,7 +50,7 @@ const ConfigSchema = z.object({
   }),
   ai: z
     .object({
-      provider: z.enum(['claude', 'codex', 'grok']).default('claude'),
+      provider: z.enum(['claude', 'codex', 'grok', 'gemini']).default('claude'),
     })
     .default({ provider: 'claude' }),
   audio: z
@@ -179,6 +179,16 @@ const ConfigSchema = z.object({
       memory: z.boolean().default(false),
       // Appended verbatim to every `grok` invocation. Escape hatch for CLI
       // version drift without changing code.
+      extraArgs: z.array(z.string()).default([]),
+    })
+    .default({}),
+  gemini: z
+    .object({
+      // Installed Gemini CLI. Heyamigo uses its existing login and --yolo.
+      bin: z.string().default('gemini'),
+      // Leave unset to follow Gemini CLI's current automatic model choice.
+      model: z.string().optional(),
+      contextWindow: z.number().int().positive().default(1000000),
       extraArgs: z.array(z.string()).default([]),
     })
     .default({}),

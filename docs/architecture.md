@@ -1,6 +1,6 @@
 # Architecture notes
 
-A chat-resident assistant for WhatsApp and Telegram on top of Claude, Codex, or Grok. The interesting parts are not the LLM calls themselves — those are well-trodden territory — but everything around them: how messages flow, how state survives restarts, how schedules fire in the right timezone, how the agent's reply text becomes durable side effects.
+A chat-resident assistant for WhatsApp and Telegram on top of Claude, Codex, Grok, or Gemini. The interesting parts are not the LLM calls themselves — those are well-trodden territory — but everything around them: how messages flow, how state survives restarts, how schedules fire in the right timezone, how the agent's reply text becomes durable side effects.
 
 This document is a curated set of design notes. The ones that earned their place because the alternative didn't survive contact with real use.
 
@@ -87,7 +87,7 @@ chat reply ──── [ASYNC-BROWSER: ...] ────► browser_tasks (sqli
 
 The shared-Chrome model means the bot doesn't have to re-authenticate to social sites every task. The owner logs in once via noVNC over an SSH tunnel; sessions persist on disk. Browser tasks land back in the originating chat through the same outbound queue, with idempotency keys so retries don't double-post.
 
-Browser selection fails closed. Before a task is claimed, the worker validates `browser.cdpUrl` with `/json/version`, opens its browser-level WebSocket, and executes `Browser.getVersion`. Claude and Codex then receive an invocation-scoped, task-scoped Playwright MCP configured with that exact endpoint; ambient MCP configuration and Chrome integrations are excluded. A stale global Playwright entry therefore cannot launch a fresh unauthenticated browser. Providers without equivalent invocation-scoped isolation cannot run browser jobs.
+Browser selection fails closed. Before a task is claimed, the worker validates `browser.cdpUrl` with `/json/version`, opens its browser-level WebSocket, and executes `Browser.getVersion`. Claude, Codex, and Gemini then receive an invocation-scoped, task-scoped Playwright MCP configured with that exact endpoint; ambient browser integrations are excluded from that job. A stale global Playwright entry therefore cannot launch a fresh unauthenticated browser. Providers without equivalent invocation-scoped isolation cannot run browser jobs.
 
 Parallel tab control is enforced below the model. Each MCP wraps the canonical Chrome `BrowserContext` with a view filtered by leases in `browser_tab_leases`; leases use stable CDP target IDs, heartbeat while the MCP is alive, and expire after a crash. `browser_tabs` indexes are task-local. Tasks may own several pages, child popups inherit the opener task, and an existing user tab must be listed and atomically claimed before its page becomes visible to Playwright. Cleanup closes task-created tabs but releases claimed user tabs without closing them.
 
@@ -127,7 +127,7 @@ A `[DIGEST: <reason>]` tag on the agent's reply triggers a debounced background 
 
 ## Multi-provider
 
-Claude, Codex, and Grok Build implement the same `AiProvider` interface. Swap via `config.ai.provider`. Sessions persist across model switches (the session-id mapping is provider-aware). Cumulative-vs-per-turn token reporting differs by provider — Claude and Grok report per-turn when available, Codex reports cumulative — handled in the worker with a `usageReportingMode` discriminator + delta math. Without that, the context % footer reads `7018% ctx` and the user loses trust.
+Claude, Codex, Grok Build, and Gemini implement the same `AiProvider` interface. Swap via `config.ai.provider`. Sessions persist across model switches (the session-id mapping is provider-aware). Cumulative-vs-per-turn token reporting differs by provider — Claude, Grok, and Gemini report per-turn when available, Codex reports cumulative — handled in the worker with a `usageReportingMode` discriminator + delta math. Without that, the context % footer reads `7018% ctx` and the user loses trust.
 
 ## Defaults that bias toward not-broken
 
@@ -135,7 +135,7 @@ Claude, Codex, and Grok Build implement the same `AiProvider` interface. Swap vi
 - **Proactive messaging defaults to off.** Groups stay silent unless `proactive: true` is explicitly set in `access.json`. The bot never volunteers a message into a group it wasn't invited into the conversation of.
 - **Per-role token quotas.** Each user role has a daily token cap. Once exceeded, replies are dropped silently (logged, not announced).
 - **Per-role file-size caps.** Inbound media over the role's MB limit is rejected before download.
-- **Sessions survive provider swaps.** If you switch between Claude, Codex, and Grok mid-stream, existing sessions stay dormant under their provider key rather than vanishing.
+- **Sessions survive provider swaps.** If you switch between Claude, Codex, Grok, and Gemini mid-stream, existing sessions stay dormant under their provider key rather than vanishing. A global personality change deliberately clears all of them so no dormant session retains the prior system prompt.
 - **Schema migrations through drizzle-kit, never direct DDL.** A schema-drift detector at boot warns when the live SQLite shape diverges from the codebase's expectations.
 - **WAL mode + Litestream-friendly.** Database lives on a single durable volume; remote replication is configured but optional.
 
@@ -165,9 +165,9 @@ The estimate ack hits the chat before the AI even starts processing the message,
 ## Trade-offs the codebase deliberately made
 
 - **SQLite, not Redis.** The bot is a single-process workload with durable-by-default semantics. SQLite with WAL gives us atomic claims, durable rows, and Litestream replication for the price of zero infrastructure. A queue layer would have been overkill.
-- **Tags as the side-effect channel, not tool calls.** The agent emits side effects as text. This works across providers (Claude, Codex, and Grok see the same grammar), survives provider tool-schema differences, and gives us a parseable record per turn. Trade-off: the agent has to be coaxed into using the grammar reliably — that's what the system prompt + per-turn `[Live threads]` / scheduling reminders are for.
+- **Tags as the side-effect channel, not tool calls.** The agent emits side effects as text. This works across providers (Claude, Codex, Grok, and Gemini see the same grammar), survives provider tool-schema differences, and gives us a parseable record per turn. Trade-off: the agent has to be coaxed into using the grammar reliably — that's what the system prompt + per-turn `[Live threads]` / scheduling reminders are for.
 - **Address-bound everything.** Every queue row carries the target JID. Reminders fire to the chat where they were created. Threads belong to a chat. Schedules respect the per-chat proactive gate. No row floats free.
-- **Personality as a separate file.** The bot's voice is a markdown file loaded into the system prompt. The default ("sharp") is opinionated about not people-pleasing, not hedging, not opening with validation. Swap or write your own for a different voice.
+- **Personality as a separate file.** The bot's voice is a markdown file loaded into the system prompt. The default (`unfiltered-realist`) is direct, evidence-first, politically non-aligned, and allergic to moral theater. `/personality <name>` updates the persisted setting, invalidates every provider's prompt cache, and resets all provider sessions so the change is immediate.
 - **No metrics dashboard. Yet.** The footer + `/queues` + `/crons` + `/threads` are the visible state. A real dashboard makes sense once volume warrants it; for personal-bot scale, the chat itself is the dashboard.
 
 ## Where things live
@@ -176,7 +176,7 @@ The estimate ack hits the chat before the AI even starts processing the message,
 |---|---|
 | Queue tables, schema | `src/db/schema.ts`, `migrations/` |
 | Queue dispatch | `src/queue/*.ts` |
-| AI providers | `src/ai/{claude,codex,grok,provider}.ts` |
+| AI providers | `src/ai/{claude,codex,grok,gemini,provider}.ts` |
 | Tag parsing | `src/memory/digest-flag.ts` |
 | Memory layers | `src/memory/{store,router,compressed,journals}.ts` |
 | Preamble assembly | `src/memory/preamble.ts` |

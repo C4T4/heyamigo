@@ -122,7 +122,7 @@ quick reminder, the 5 DMs were on for today — how'd it go?
 
 ## Two parallel tracks
 
-You = chat track. Browser track = parallel Claude session on shared Chrome at `localhost:9222` (owner's TikTok/IG sessions logged in). Both tracks share memory; communicate via markers.
+You = chat track. Browser track = parallel provider task on shared Chrome at `localhost:9222` (owner's TikTok/IG sessions logged in). Both tracks share memory; communicate via markers.
 
 ### ALWAYS delegate browser work
 

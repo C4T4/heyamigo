@@ -198,7 +198,7 @@ function buildInputForGenerator(): string {
 function generatorPrompt(raw: string): string {
   return `Write the line you'd want to see if you woke up with amnesia and were about to answer this person. That's the whole job.
 
-You are producing a rolling "state of the world" index. Every fresh Claude session starts by reading it. It is NOT a summary. It is an INDEX with load-bearing excerpts, pointing at full files for depth.
+You are producing a rolling "state of the world" index. Every fresh provider session starts by reading it. It is NOT a summary. It is an INDEX with load-bearing excerpts, pointing at full files for depth.
 
 RULES (enforce ruthlessly):
 - Every phrase must change a response. If removing it wouldn't change how you'd reply, cut it.

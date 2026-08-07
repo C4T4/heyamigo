@@ -2,12 +2,14 @@ import { config } from '../config.js'
 import { claudeProvider } from './claude.js'
 import { codexProvider } from './codex.js'
 import { grokProvider } from './grok.js'
+import { geminiProvider } from './gemini.js'
 import type { AiProvider, ProviderName } from './provider.js'
 
 const REGISTRY: Record<ProviderName, AiProvider> = {
   claude: claudeProvider,
   codex: codexProvider,
   grok: grokProvider,
+  gemini: geminiProvider,
 }
 
 // Resolve the active provider. Defaults to claude if no override is set in

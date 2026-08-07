@@ -67,6 +67,15 @@ const AUDIO_ALIAS_VARIANTS: Record<string, string[]> = {
     'kodeks',
     'codacs',
   ],
+  gemini: [
+    'gem in eye',
+    'gem and i',
+    'jiminy',
+    'jemini',
+  ],
+  google: [
+    'googol',
+  ],
   xai: [
     'x ai',
     'x a i',

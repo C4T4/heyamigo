@@ -1,5 +1,5 @@
 // Provider abstraction for the user-facing chat ask path. Lets the worker
-// route conversation turns to Claude, Codex, Grok, or any future CLI
+// route conversation turns to Claude, Codex, Grok, Gemini, or any future CLI
 // without knowing the wire details.
 //
 // Scope: covers the interactive worker call and general provider-backed agent
@@ -37,7 +37,7 @@ export type AskResult = {
   usage: AskUsage
 }
 
-export type ProviderName = 'claude' | 'codex' | 'grok'
+export type ProviderName = 'claude' | 'codex' | 'grok' | 'gemini'
 
 // Sandbox/permission tier. Providers map this onto their native permission
 // vocabulary.
@@ -60,7 +60,7 @@ export type RunTaskParams = {
   // explicit extra roots map this to their native flag.
   addDirs?: string[]
   // Resume an existing session (browser worker uses this to keep one
-  // long-lived agent). Opaque provider-native id.
+  // provider-native continuity). Opaque provider-native id.
   sessionId?: string
   // Inject the personality + memory-instructions text. Off by default —
   // headless background jobs (digest, observer, nudger, compressed) carry
@@ -90,7 +90,7 @@ export type RunTaskResult = {
 }
 
 // How the provider's CLI reports usage counts in its result payload.
-//   'per-turn'   — counts represent this one API call (Claude CLI).
+//   'per-turn'   — counts represent this one API call (Claude/Gemini CLI).
 //   'cumulative' — counts represent the entire resume thread to date
 //                  (Codex CLI).
 // Worker uses this to compute per-turn deltas for display so the

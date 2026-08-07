@@ -17,7 +17,7 @@ export type SessionUsage = {
   // Cumulative running totals across the entire resume thread.
   // Used by worker.ts as the baseline for the next turn's delta
   // computation when the provider reports usage cumulatively (Codex).
-  // For per-turn providers (Claude), these accumulate the
+  // For per-turn providers (Claude, Grok, Gemini), these accumulate the
   // per-turn deltas and aren't load-bearing, but kept consistent so
   // /status can report whole-thread stats too.
   cumulativeInputTokens?: number
@@ -78,7 +78,11 @@ function load(): SessionMap {
           ('grok' in obj &&
             typeof obj.grok === 'object' &&
             obj.grok !== null &&
-            'sessionId' in (obj.grok as object))
+            'sessionId' in (obj.grok as object)) ||
+          ('gemini' in obj &&
+            typeof obj.gemini === 'object' &&
+            obj.gemini !== null &&
+            'sessionId' in (obj.gemini as object))
         if (isNamespaced) {
           out[jid] = obj as ProviderSessions
         } else if ('sessionId' in obj) {
@@ -158,6 +162,19 @@ export function clearSession(
   }
   save()
   return true
+}
+
+// A personality is global, while provider sessions are stored per chat. When
+// the global personality changes, every provider thread must start fresh or
+// dormant sessions would silently retain the previous system prompt.
+export function clearAllSessions(): number {
+  let cleared = 0
+  for (const [jid, bucket] of Object.entries(sessions)) {
+    cleared += Object.keys(bucket).length
+    delete sessions[jid]
+  }
+  if (cleared > 0) save()
+  return cleared
 }
 
 // Returns every (jid, provider) pair currently stored. Used by the sweeper to

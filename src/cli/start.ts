@@ -20,6 +20,11 @@ function requiredCli(): { bin: string; install: string } {
         bin: config.grok.bin,
         install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
       }
+    case 'gemini':
+      return {
+        bin: config.gemini.bin,
+        install: 'npm install -g @google/gemini-cli@latest',
+      }
   }
 }
 
