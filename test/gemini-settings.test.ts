@@ -22,7 +22,7 @@ test('browser Gemini tasks expose only Playwright and no core tools', () => {
   }
   const settings = buildGeminiSystemSettings({
     coreTools: [],
-    playwright,
+    mcpServers: { playwright },
   })
 
   assert.deepEqual(settings.mcpServers, { playwright })
@@ -32,10 +32,38 @@ test('browser Gemini tasks expose only Playwright and no core tools', () => {
 
 test('normal restricted tasks never emit an empty MCP allowlist', () => {
   assert.deepEqual(geminiIsolationArgs(), ['--extensions', 'none'])
-  assert.deepEqual(geminiIsolationArgs('playwright'), [
+  assert.deepEqual(geminiIsolationArgs(['playwright']), [
     '--extensions',
     'none',
     '--allowed-mcp-server-names',
     'playwright',
+  ])
+})
+
+test('Gemini can expose Amigospace beside the task-scoped browser', () => {
+  const server = {
+    command: '/usr/bin/node',
+    args: ['scripts/amigospace-mcp.mjs'],
+    trust: true as const,
+  }
+  const settings = buildGeminiSystemSettings({
+    coreTools: [],
+    mcpServers: {
+      playwright: server,
+      amigospace: server,
+    },
+  })
+
+  assert.deepEqual(settings.mcpServers, {
+    playwright: server,
+    amigospace: server,
+  })
+  assert.deepEqual(geminiIsolationArgs(['playwright', 'amigospace']), [
+    '--extensions',
+    'none',
+    '--allowed-mcp-server-names',
+    'playwright',
+    '--allowed-mcp-server-names',
+    'amigospace',
   ])
 })

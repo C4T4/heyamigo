@@ -33,6 +33,17 @@
     "provider": "claude"
   },
 
+  "amigospace": {
+    "enabled": false,
+    "endpoint": "https://space.heyamigo.org/mcp",
+    "clientId": "amigospace-device",
+    "deviceAuthorizationEndpoint": "https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/auth/device",
+    "tokenEndpoint": "https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/token",
+    "scope": "openid offline_access",
+    "credentialFile": "./storage/auth/amigospace/refresh-token",
+    "requestTimeoutMs": 5000
+  },
+
   "audio": {
     "transcription": {
       "enabled": true

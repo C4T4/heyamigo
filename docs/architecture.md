@@ -129,6 +129,15 @@ A `[DIGEST: <reason>]` tag on the agent's reply triggers a debounced background 
 
 Claude, Codex, Grok Build, and Gemini implement the same `AiProvider` interface. Swap via `config.ai.provider`. Sessions persist across model switches (the session-id mapping is provider-aware). Cumulative-vs-per-turn token reporting differs by provider — Claude, Grok, and Gemini report per-turn when available, Codex reports cumulative — handled in the worker with a `usageReportingMode` discriminator + delta math. Without that, the context % footer reads `7018% ctx` and the user loses trust.
 
+Amigospace is a bundled knowledge connector, not another provider or a replacement for the queue
+memory used to operate the bot. A small stdio adapter obtains a short-lived access token from an
+owner-only rotating refresh credential and forwards provider MCP calls through agentgateway to the
+cloud Amigospace Streamable HTTP endpoint. The adapter is injected per invocation for Claude,
+Codex, and Gemini only when the resolved role has the Amigospace tool capability. Tenant and user
+identity come from the validated token rather than model-controlled arguments. When cloud access is
+unavailable the tool fails explicitly; HeyAmigo has no embedded Amigospace runtime or silent local
+fallback. Grok is excluded until its CLI can accept invocation-scoped MCP configuration.
+
 ## Defaults that bias toward not-broken
 
 - **Chat triggers default to off.** Groups and DMs only answer when their own `triggerMode` is set in `access.json` (`mention`, `all`, or `command`). Missing means `off`.

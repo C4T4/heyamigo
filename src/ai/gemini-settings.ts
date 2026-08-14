@@ -4,26 +4,30 @@ export type GeminiMcpServer = {
   trust: true
 }
 
-export function geminiIsolationArgs(allowedMcpServer?: string): string[] {
+export function geminiIsolationArgs(allowedMcpServers: string[] = []): string[] {
   return [
     '--extensions',
     'none',
-    ...(allowedMcpServer
-      ? ['--allowed-mcp-server-names', allowedMcpServer]
-      : []),
+    ...allowedMcpServers.flatMap((name) => [
+      '--allowed-mcp-server-names',
+      name,
+    ]),
   ]
 }
 
 export function buildGeminiSystemSettings(params: {
   coreTools?: string[]
-  playwright?: GeminiMcpServer
+  mcpServers?: Record<string, GeminiMcpServer>
 }): Record<string, unknown> {
+  const hasMcpServers =
+    params.mcpServers !== undefined &&
+    Object.keys(params.mcpServers).length > 0
   return {
     ...(params.coreTools !== undefined
       ? { tools: { core: params.coreTools } }
       : {}),
-    ...(params.playwright
-      ? { mcpServers: { playwright: params.playwright } }
+    ...(hasMcpServers
+      ? { mcpServers: params.mcpServers }
       : { admin: { mcp: { enabled: false } } }),
   }
 }

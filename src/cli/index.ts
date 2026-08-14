@@ -91,6 +91,40 @@ for (const action of ['start', 'stop', 'restart', 'status'] as const) {
     })
 }
 
+const amigospace = program
+  .command('amigospace')
+  .description('Connect HeyAmigo to cloud Amigospace')
+
+amigospace
+  .command('connect')
+  .description('Authorize this HeyAmigo installation with Amigospace')
+  .action(async () => {
+    const { findProjectDir } = await import('./service.js')
+    process.chdir(findProjectDir())
+    try {
+      const { connectAmigospace } = await import('../amigospace/cli.js')
+      await connectAmigospace()
+    } catch (err) {
+      console.error((err as Error).message)
+      process.exitCode = 1
+    }
+  })
+
+amigospace
+  .command('status')
+  .description('Show the Amigospace connector state without contacting the cloud')
+  .action(async () => {
+    const { findProjectDir } = await import('./service.js')
+    process.chdir(findProjectDir())
+    try {
+      const { amigospaceStatus } = await import('../amigospace/cli.js')
+      await amigospaceStatus()
+    } catch (err) {
+      console.error((err as Error).message)
+      process.exitCode = 1
+    }
+  })
+
 program
   .command('import <path>')
   .description('Import external knowledge folder into memory')

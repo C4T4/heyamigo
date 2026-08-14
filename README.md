@@ -44,6 +44,29 @@ Other providers:
 - Grok Build: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, run `grok login`, and set `ai.provider: "grok"`. Chat and non-browser async work are supported; browser jobs fail closed because Grok does not currently expose invocation-scoped MCP isolation.
 - Gemini: set `ai.provider: "gemini"`. Heyamigo uses the already-installed `gemini` CLI with `--yolo`, pins `gemini-3.6-flash` by default, and uses the CLI's existing login for chat, async, and task-scoped browser jobs.
 
+## Bundled Amigospace connector
+
+HeyAmigo ships with a provider-scoped connector to cloud Amigospace. Authorize the installation
+once; the command stores only a rotating refresh credential in an owner-only file and enables the
+connector:
+
+```bash
+heyamigo amigospace connect
+heyamigo amigospace status
+```
+
+The connector is injected into Claude, Codex, and Gemini invocations only when the active role has
+`tools: "all"` or explicitly allows `mcp__amigospace__*`. The default `user` and `guest` roles
+therefore cannot read the owner's workspace. Its path is `HeyAmigo → bundled authenticated MCP
+connector → agentgateway → space.heyamigo.org/mcp`; workspace and principal selection come from the
+validated access token, never model arguments. Access and refresh tokens are never passed through
+model context, command arguments, environment variables, or normal logs. Grok remains fail-closed
+because its current CLI does not provide invocation-scoped MCP configuration.
+
+When the network or Amigospace is unavailable, HeyAmigo itself continues to work but Amigospace
+tools fail explicitly. There is no local Amigospace service and no silent knowledge-store fallback
+that could create a divergent copy.
+
 Browser jobs use `browser.cdpUrl` (default `http://127.0.0.1:9222`). Claude, Codex, and Gemini receive an invocation-scoped Playwright MCP pointing only at that endpoint; ambient Chrome integrations and stale global Playwright entries are not available to the browser worker. A shared SQLite lease registry identifies tabs by stable CDP target ID and filters each MCP to only the tabs owned by its task. Up to `browser.maxWorkers` tasks (default 3) can therefore drive separate background tabs in parallel without mutable global tab indexes. A task can own several tabs, automatically adopts popups opened by an owned tab, and can explicitly claim an existing user tab by stable ID; claimed user tabs stay open, while task-created tabs are cleaned up. Before work is claimed, heyamigo also opens the browser-level CDP WebSocket and runs `Browser.getVersion`. If that check fails, the job stays pending instead of falling back to another browser.
 
 Chrome has its own lifecycle, separate from the bot. Every automatic path uses the single authenticated VNC profile at `~/.config/google-chrome-novnc`; the profile is not configurable, so setup and runtime cannot silently create or select another one. Use `heyamigo chrome status|start|stop|restart`. `heyamigo chrome restart` also recovers the Xvfb, x11vnc, and noVNC stack using the same hardened launcher as setup; it reports missing packages instead of installing them and prints the exact profile it loaded. noVNC binds directly to port 6090 by default, or automatically uses backend port 6080 when an nginx frontend already owns 6090. Generated viewer links enable local scaling by default with `resize=scale`. The command matches both CDP port and profile path before operating and refuses to touch an unknown browser. `heyamigo restart` continues to restart only the Node bot.

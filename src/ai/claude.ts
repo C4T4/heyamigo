@@ -1,5 +1,10 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import {
+  AMIGOSPACE_MCP_SERVER_NAME,
+  AMIGOSPACE_MCP_TOOL_PATTERN,
+  configuredAmigospaceMcp,
+} from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
 import { config } from '../config.js'
 import { dbPath } from '../db/index.js'
@@ -61,6 +66,18 @@ function buildArgs(params: AskClaudeParams): string[] {
     '--permission-mode',
     'acceptEdits',
   ]
+
+  const amigospace = configuredAmigospaceMcp(params.allowedTools)
+  if (amigospace) {
+    args.push(
+      '--mcp-config',
+      JSON.stringify({
+        mcpServers: {
+          [AMIGOSPACE_MCP_SERVER_NAME]: amigospace,
+        },
+      }),
+    )
+  }
 
   if (params.sessionId) {
     args.push('--resume', params.sessionId)
@@ -179,6 +196,8 @@ function buildTaskArgs(params: RunTaskParams): string[] {
     permissionModeFor(params.mode),
   ]
 
+  const amigospace = configuredAmigospaceMcp(params.allowedTools)
+
   if (params.browserCdpUrl) {
     if (!params.browserTaskId) {
       throw new Error('browserTaskId is required for task-scoped browser MCP')
@@ -194,6 +213,9 @@ function buildTaskArgs(params: RunTaskParams): string[] {
           command: mcp.command,
           args: mcp.args,
         },
+        ...(amigospace
+          ? { [AMIGOSPACE_MCP_SERVER_NAME]: amigospace }
+          : {}),
       },
     })
     // Ignore every global/project MCP plus Claude's Chrome extension. The
@@ -205,6 +227,15 @@ function buildTaskArgs(params: RunTaskParams): string[] {
       mcpConfig,
       '--tools',
       '',
+    )
+  } else if (amigospace) {
+    args.push(
+      '--mcp-config',
+      JSON.stringify({
+        mcpServers: {
+          [AMIGOSPACE_MCP_SERVER_NAME]: amigospace,
+        },
+      }),
     )
   }
 
@@ -227,7 +258,10 @@ function buildTaskArgs(params: RunTaskParams): string[] {
   }
 
   const allowedTools = params.browserCdpUrl
-    ? ['mcp__playwright__*']
+    ? [
+        'mcp__playwright__*',
+        ...(amigospace ? [AMIGOSPACE_MCP_TOOL_PATTERN] : []),
+      ]
     : params.allowedTools && params.allowedTools !== 'all'
       ? params.allowedTools
       : defaultAllowedToolsFor(params.mode)

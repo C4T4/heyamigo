@@ -28,6 +28,11 @@
 
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import {
+  AMIGOSPACE_MCP_SERVER_NAME,
+  configuredAmigospaceMcp,
+  type ToolAccess,
+} from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
 import { config, type ReasoningEffort } from '../config.js'
 import { dbPath } from '../db/index.js'
@@ -98,6 +103,7 @@ function buildExecArgs(params: {
   reasoningEffort?: ReasoningEffort
   browserCdpUrl?: string
   browserTaskId?: string
+  allowedTools?: ToolAccess
   prompt: string
 }): { args: string[]; prompt: string } {
   const cfg = config.codex
@@ -121,6 +127,8 @@ function buildExecArgs(params: {
 
   for (const extra of cfg.extraArgs) args.push(extra)
 
+  const amigospace = configuredAmigospaceMcp(params.allowedTools)
+
   if (params.browserCdpUrl) {
     if (!params.browserTaskId) {
       throw new Error('browserTaskId is required for task-scoped browser MCP')
@@ -140,6 +148,15 @@ function buildExecArgs(params: {
       `mcp_servers.playwright.command=${JSON.stringify(mcp.command)}`,
       '-c',
       `mcp_servers.playwright.args=${JSON.stringify(mcp.args)}`,
+    )
+  }
+
+  if (amigospace) {
+    args.push(
+      '-c',
+      `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.command=${JSON.stringify(amigospace.command)}`,
+      '-c',
+      `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.args=${JSON.stringify(amigospace.args)}`,
     )
   }
 
@@ -309,6 +326,7 @@ async function runCodexTask(
     reasoningEffort: params.reasoningEffort,
     browserCdpUrl: params.browserCdpUrl,
     browserTaskId: params.browserTaskId,
+    allowedTools: params.allowedTools,
     prompt: params.input,
   })
 

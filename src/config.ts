@@ -2,6 +2,19 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { z } from 'zod'
 
+function isSecureServiceUrl(value: string): boolean {
+  const url = new URL(value)
+  const loopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(
+    url.hostname,
+  )
+  return (
+    url.username === '' &&
+    url.password === '' &&
+    url.hash === '' &&
+    (url.protocol === 'https:' || (url.protocol === 'http:' && loopback))
+  )
+}
+
 export const TriggerModeSchema = z.enum(['all', 'mention', 'command', 'off'])
 export type TriggerMode = z.infer<typeof TriggerModeSchema>
 
@@ -53,6 +66,58 @@ const ConfigSchema = z.object({
       provider: z.enum(['claude', 'codex', 'grok', 'gemini']).default('claude'),
     })
     .default({ provider: 'claude' }),
+  amigospace: z
+    .object({
+      // `heyamigo amigospace connect` enables this after device authorization.
+      enabled: z.boolean().default(false),
+      endpoint: z
+        .string()
+        .url()
+        .refine(
+          isSecureServiceUrl,
+          'Amigospace MCP endpoint must use HTTPS unless it is loopback',
+        )
+        .default('https://space.heyamigo.org/mcp'),
+      clientId: z.string().min(1).max(255).default('amigospace-device'),
+      deviceAuthorizationEndpoint: z
+        .string()
+        .url()
+        .refine(
+          isSecureServiceUrl,
+          'Amigospace device authorization endpoint must use HTTPS unless it is loopback',
+        )
+        .default(
+          'https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/auth/device',
+        ),
+      tokenEndpoint: z
+        .string()
+        .url()
+        .refine(
+          isSecureServiceUrl,
+          'Amigospace token endpoint must use HTTPS unless it is loopback',
+        )
+        .default(
+          'https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/token',
+        ),
+      scope: z.string().min(1).max(1_024).default('openid offline_access'),
+      credentialFile: z
+        .string()
+        .min(1)
+        .default('./storage/auth/amigospace/refresh-token'),
+      requestTimeoutMs: z.number().int().min(1_000).max(30_000).default(5_000),
+    })
+    .default({
+      enabled: false,
+      endpoint: 'https://space.heyamigo.org/mcp',
+      clientId: 'amigospace-device',
+      deviceAuthorizationEndpoint:
+        'https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/auth/device',
+      tokenEndpoint:
+        'https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/token',
+      scope: 'openid offline_access',
+      credentialFile: './storage/auth/amigospace/refresh-token',
+      requestTimeoutMs: 5_000,
+    }),
   audio: z
     .object({
       transcription: z

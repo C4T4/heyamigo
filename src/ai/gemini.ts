@@ -5,6 +5,10 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
+import {
+  AMIGOSPACE_MCP_SERVER_NAME,
+  configuredAmigospaceMcp,
+} from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
 import { config } from '../config.js'
 import { dbPath } from '../db/index.js'
@@ -100,25 +104,29 @@ function coreToolsFor(
 type RuntimeSettings = {
   dir: string
   path: string
-  allowedMcpServer?: string
+  allowedMcpServers: string[]
 }
 
 function createRuntimeSettings(
   params: RunTaskParams,
 ): RuntimeSettings | null {
   const browser = !!params.browserCdpUrl
+  const amigospace = configuredAmigospaceMcp(params.allowedTools)
   const selectedCoreTools = browser
     ? []
     : coreToolsFor(params.allowedTools, params.mode)
   // The owner's normal unrestricted lane is deliberately just the installed
   // Gemini CLI. A temp settings file is needed only for role tool limits or
   // the task-scoped browser MCP.
-  if (!browser && selectedCoreTools === undefined) return null
+  if (!browser && !amigospace && selectedCoreTools === undefined) return null
 
   const dir = mkdtempSync(join(tmpdir(), 'heyamigo-gemini-'))
   try {
     const path = join(dir, 'system-settings.json')
-    let playwright: { command: string; args: string[]; trust: true } | undefined
+    const mcpServers: Record<
+      string,
+      { command: string; args: string[]; trust: true }
+    > = {}
 
     if (browser) {
       if (!params.browserTaskId) {
@@ -129,24 +137,29 @@ function createRuntimeSettings(
         taskId: params.browserTaskId,
         databasePath: dbPath(),
       })
-      playwright = {
+      mcpServers.playwright = {
         command: mcp.command,
         args: mcp.args,
         trust: true,
       }
     }
 
+    if (amigospace) {
+      mcpServers[AMIGOSPACE_MCP_SERVER_NAME] = {
+        ...amigospace,
+        trust: true,
+      }
+    }
+
     const settings = buildGeminiSystemSettings({
       coreTools: selectedCoreTools,
-      playwright,
+      mcpServers,
     })
     writeFileSync(path, JSON.stringify(settings, null, 2) + '\n', 'utf-8')
     return {
       dir,
       path,
-      // Only browser jobs expose the task-scoped VNC Chrome bridge. Normal
-      // restricted jobs disable MCP in their temporary settings instead.
-      allowedMcpServer: browser ? 'playwright' : undefined,
+      allowedMcpServers: Object.keys(mcpServers),
     }
   } catch (err) {
     rmSync(dir, { recursive: true, force: true })
@@ -164,7 +177,7 @@ function buildArgs(params: RunTaskParams, runtime: RuntimeSettings | null): {
     '--output-format', 'json',
   ]
   if (runtime) {
-    args.push(...geminiIsolationArgs(runtime.allowedMcpServer))
+    args.push(...geminiIsolationArgs(runtime.allowedMcpServers))
   }
 
   if (config.gemini.model) args.push('--model', config.gemini.model)
