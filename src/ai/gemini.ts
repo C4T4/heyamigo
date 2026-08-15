@@ -8,6 +8,7 @@ import { join, resolve } from 'path'
 import {
   AMIGOSPACE_MCP_SERVER_NAME,
   configuredAmigospaceMcp,
+  withAmigospaceRoutingContext,
 } from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
 import { config } from '../config.js'
@@ -171,7 +172,10 @@ function buildArgs(params: RunTaskParams, runtime: RuntimeSettings | null): {
   args: string[]
   prompt: string
 } {
-  let prompt = params.input
+  let prompt = withAmigospaceRoutingContext(
+    params.input,
+    runtime?.allowedMcpServers.includes(AMIGOSPACE_MCP_SERVER_NAME) ?? false,
+  )
   const args = [
     '--yolo',
     '--output-format', 'json',

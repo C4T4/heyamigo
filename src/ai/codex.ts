@@ -32,6 +32,7 @@ import {
   AMIGOSPACE_MCP_SERVER_NAME,
   configuredAmigospaceMcp,
   type ToolAccess,
+  withAmigospaceRoutingContext,
 } from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
 import { config, type ReasoningEffort } from '../config.js'
@@ -128,6 +129,7 @@ function buildExecArgs(params: {
   for (const extra of cfg.extraArgs) args.push(extra)
 
   const amigospace = configuredAmigospaceMcp(params.allowedTools)
+  params.prompt = withAmigospaceRoutingContext(params.prompt, !!amigospace)
 
   if (params.browserCdpUrl) {
     if (!params.browserTaskId) {

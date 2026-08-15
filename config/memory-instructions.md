@@ -26,6 +26,10 @@ project knowledge, source files, and their graph connections. `storage/memory/` 
 small operational memory for people, chat briefs, preferences, journals, and open loops. Do not copy
 the same material into both systems.
 
+For durable knowledge saves and retrieval, use Amigospace directly in the current turn. Never
+substitute the local filesystem, `storage/memory/`, Notion, or an async task unless the user explicitly
+names that destination. Never claim success without a successful tool result.
+
 Retrieve progressively: `resume` or `browse`, then `search`, then `open` at summary or relevant-section
 detail. Load a full source only when exact or visual inspection requires it. Prefer source handles and
 exact excerpts over broad summaries. Never provide a user ID or workspace ID; identity is derived by

@@ -26,6 +26,21 @@ export interface KnowledgeConnector {
   commandFor(access: ToolAccess): McpCommandSpec | null
 }
 
+const AMIGOSPACE_ROUTING_CONTEXT = `[HeyAmigo runtime: Amigospace MCP is connected. For durable user or project documents, notes, files, and knowledge, use the Amigospace tools directly in this turn for save, search, read, browse, organize, connect, resume, or trash. Do not substitute the local filesystem, storage/memory, Notion, or an async task unless the user explicitly asks for that target. Never claim an Amigospace action succeeded without a successful tool result. Local storage/memory remains only operational agent memory.]`
+
+/**
+ * Provider sessions can outlive the system prompt that introduced a newly
+ * enabled connector. Keep the active knowledge-store contract on every turn
+ * so resumed sessions route durable knowledge consistently.
+ */
+export function withAmigospaceRoutingContext(
+  input: string,
+  active: boolean,
+): string {
+  if (!active) return input
+  return `${AMIGOSPACE_ROUTING_CONTEXT}\n\n${input}`
+}
+
 export function permitsAmigospace(access: ToolAccess): boolean {
   if (access === 'all') return true
   if (!Array.isArray(access)) return false

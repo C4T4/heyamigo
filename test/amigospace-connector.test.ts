@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   AmigospaceConnector,
   permitsAmigospace,
+  withAmigospaceRoutingContext,
 } from '../src/amigospace/connector.js'
 
 const configuration = {
@@ -56,4 +57,19 @@ test('disabled connector never reaches a provider', () => {
   )
 
   assert.equal(connector.commandFor('all'), null)
+})
+
+test('active connector adds a per-turn routing contract', () => {
+  const input = 'Save this note for the website project.'
+  const routed = withAmigospaceRoutingContext(input, true)
+
+  assert.match(routed, /Amigospace MCP is connected/)
+  assert.match(routed, /use the Amigospace tools directly in this turn/)
+  assert.match(routed, /Never claim an Amigospace action succeeded/)
+  assert.ok(routed.endsWith(input))
+})
+
+test('inactive connector leaves the user input untouched', () => {
+  const input = 'Save this note locally.'
+  assert.equal(withAmigospaceRoutingContext(input, false), input)
 })

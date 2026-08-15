@@ -4,6 +4,7 @@ import {
   AMIGOSPACE_MCP_SERVER_NAME,
   AMIGOSPACE_MCP_TOOL_PATTERN,
   configuredAmigospaceMcp,
+  withAmigospaceRoutingContext,
 } from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
 import { config } from '../config.js'
@@ -108,6 +109,10 @@ export async function askClaude(
   params: AskClaudeParams,
 ): Promise<AskClaudeResult> {
   const args = buildArgs(params)
+  const input = withAmigospaceRoutingContext(
+    params.input,
+    !!configuredAmigospaceMcp(params.allowedTools),
+  )
   logger.debug(
     { resume: !!params.sessionId, inputChars: params.input.length },
     'spawning claude',
@@ -115,7 +120,7 @@ export async function askClaude(
 
   const { stdout, stderr, durationMs } = await runClaude({
     args,
-    input: params.input,
+    input,
     timeoutMs: TIMEOUT_MS.main,
     caller: 'worker',
   })
@@ -280,9 +285,13 @@ export async function runClaudeTask(
   params: RunTaskParams,
 ): Promise<RunTaskResult> {
   const args = buildTaskArgs(params)
+  const input = withAmigospaceRoutingContext(
+    params.input,
+    !!configuredAmigospaceMcp(params.allowedTools),
+  )
   const { stdout, stderr, durationMs } = await runClaude({
     args,
-    input: params.input,
+    input,
     timeoutMs: laneTimeoutMs(params.lane),
     caller: params.caller as PromptLogEntry['caller'],
   })
