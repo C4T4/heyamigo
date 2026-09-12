@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "heyamigo": "./dist/cli/index.js"
+    "heyamigo": "./dist/cli/index.js",
+    "heyamigo-client": "./scripts/portable-client.mjs"
   },
   "files": [
     "dist/",
@@ -19,6 +20,7 @@
     "scripts/",
     ".gitignore",
     "README.md",
+    "docs/portable-client.md",
     "LICENSE"
   ],
   "scripts": {

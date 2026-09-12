@@ -1,0 +1,30 @@
+services:
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    image: heyamigo-client:local
+    command: start
+    environment:
+      AMIGO_WORKSPACE_ID: ${AMIGO_WORKSPACE_ID:?Set the owning company ID}
+      AMIGO_AGENT_ID: ${AMIGO_AGENT_ID:?Set the Amigo ID}
+      AMIGO_BROWSER_ENABLED: '1'
+    volumes:
+      - amigo:/var/lib/amigo
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m
+    shm_size: 256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./containers/chromium-seccomp.json
+    cpus: 1
+    mem_limit: 1g
+    pids_limit: 256
+    stop_grace_period: 45s
+    restart: unless-stopped
+volumes:
+  amigo:
+    name: ${AMIGO_VOLUME:?Set a distinct persistent volume for this Amigo}

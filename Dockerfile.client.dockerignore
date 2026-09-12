@@ -1,0 +1,20 @@
+# Allowlist: never send live config, credentials, browser profiles or .git to the build.
+**
+!Dockerfile.client
+!Dockerfile.client.dockerignore
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+!migrations/
+!migrations/**
+!scripts/
+!scripts/**
+!config/
+!config/config.example.json
+!config/access.example.json
+!config/memory-instructions.md
+!config/import-instructions.md
+!config/personalities/
+!config/personalities/**

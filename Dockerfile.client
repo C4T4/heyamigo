@@ -1,0 +1,28 @@
+FROM node:22-bookworm-slim AS build
+WORKDIR /opt/heyamigo
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ git && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build && npm prune --omit=dev
+
+FROM node:22-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends chromium tini util-linux ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/amigo && chown node:node /var/lib/amigo && chmod 700 /var/lib/amigo
+# Match the verified local Claude Code version; credentials are never part of the image.
+ARG CLAUDE_CODE_VERSION=2.1.259
+RUN npm install --global @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
+WORKDIR /opt/heyamigo
+COPY --from=build /opt/heyamigo/node_modules ./node_modules
+COPY --from=build /opt/heyamigo/dist ./dist
+COPY package.json ./
+COPY migrations ./migrations
+COPY scripts ./scripts
+COPY config/config.example.json config/access.example.json config/memory-instructions.md config/import-instructions.md ./config/
+COPY config/personalities ./config/personalities
+ENV AMIGO_STATE_DIR=/var/lib/amigo
+USER node
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "/opt/heyamigo/scripts/portable-client.mjs"]
+CMD ["check"]
