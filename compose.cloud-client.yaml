@@ -1,0 +1,13 @@
+# Use after initializing a private volume and importing its Cloud connection file.
+services:
+  client:
+    extends:
+      file: compose.client.yaml
+      service: client
+    command: cloud-start
+    restart: 'no'
+    environment:
+      AMIGO_ALLOW_LOCAL_DOCKER_CLOUD: ${AMIGO_ALLOW_LOCAL_DOCKER_CLOUD:-0}
+volumes:
+  amigo:
+    name: ${AMIGO_VOLUME:?Set a distinct persistent volume for this Amigo}
