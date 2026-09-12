@@ -21,6 +21,7 @@
     ".gitignore",
     "README.md",
     "docs/portable-client.md",
+    "docs/attach-existing-client.md",
     "LICENSE"
   ],
   "scripts": {

@@ -1,5 +1,7 @@
 # Portable Amigo client
 
+To connect an already-running Linux installation without moving its accounts or starting another bot, use the [existing installation attachment](attach-existing-client.md). It reports live process/browser health while the standalone bot keeps ownership of messaging.
+
 Here, **client** means the Amigo's runtime, not the HeyAmigo Cloud web interface. `start` runs the standalone bot; `cloud-start` runs the authenticated Cloud Client and optional private browser. Cloud mode currently accepts runtime checks and does not start standalone model, messaging or reply loops. Cloud's server owns company records and jobs; Amigospace owns authenticated company knowledge and membership.
 
 The client image packages the existing WhatsApp/Telegram runtime and Chromium independently of its private data. One mounted volume contains one Amigo's identity, configuration, browser profile, channel authentication, model-provider home, SQLite queue, conversations and memory. Its manifest contains stable company/Amigo IDs, not a machine hostname or checkout path.

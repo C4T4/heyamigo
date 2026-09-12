@@ -1,0 +1,29 @@
+[Unit]
+Description=HeyAmigo connection to Cloud (existing bot attachment)
+After=network-online.target heyamigo-cloud.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/heyamigo
+EnvironmentFile=/root/heyamigo/storage/cloud-attachment/client.env
+ExecStart=/usr/bin/flock --nonblock --conflict-exit-code 75 --no-fork /root/heyamigo/storage/cloud-attachment/.lock /usr/bin/node /opt/heyamigo-cloud-bridge/scripts/attached-cloud-client.mjs start
+Restart=on-failure
+RestartPreventExitStatus=1 75
+RestartSec=5
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/root/heyamigo/storage/cloud-attachment
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+MemoryMax=192M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

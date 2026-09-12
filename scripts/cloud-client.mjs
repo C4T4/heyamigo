@@ -26,7 +26,7 @@ export function validateCloudUrl(raw, env = {}) {
   return url.origin
 }
 
-function validateConnection(value, state, env) {
+export function validateConnection(value, state, env) {
   if (
     !value ||
     typeof value !== 'object' ||
@@ -47,7 +47,7 @@ function validateConnection(value, state, env) {
   return { ...value, cloudUrl: validateCloudUrl(value.cloudUrl, env) }
 }
 
-async function privateJson(path) {
+export async function privateJson(path) {
   const stat = await lstat(path)
   if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 0o077 || stat.size > 8192)
     throw new Error('Connection files must be owner-only regular files smaller than 8 KB.')
@@ -123,6 +123,17 @@ export async function requestCloud(connection, route, body, signal, http = fetch
 
 export async function runtimeCheck(env, signal) {
   await checkState(env)
+  return {
+    state: 'valid',
+    mode: 'cloud',
+    browser: await browserStatus(env, signal),
+    whatsapp: 'not_connected',
+    telegram: 'not_connected',
+    externalActions: 0,
+  }
+}
+
+export async function browserStatus(env, signal) {
   let browser = 'disabled'
   if (env.AMIGO_BROWSER_ENABLED === '1') {
     browser = 'unavailable'
@@ -151,21 +162,21 @@ export async function runtimeCheck(env, signal) {
       await delay(150, undefined, { signal })
     } while (Date.now() < until)
   }
-  return {
-    state: 'valid',
-    mode: 'cloud',
-    browser,
-    whatsapp: 'not_connected',
-    telegram: 'not_connected',
-    externalActions: 0,
-  }
+  return browser
 }
 
 export async function runCloudClient(
   env,
-  { signal, log = (value) => console.log(JSON.stringify(value)), http = fetch } = {},
+  {
+    signal,
+    log = (value) => console.log(JSON.stringify(value)),
+    http = fetch,
+    loadConnection = loadCloudConnection,
+    checkRuntime = runtimeCheck,
+    clientVersion = 'portable-1',
+  } = {},
 ) {
-  const connection = await loadCloudConnection(env)
+  const connection = await loadConnection(env)
   const instanceId = randomUUID()
   const stop = signal ?? new AbortController().signal
   const request = (route, body, activeSignal = stop) =>
@@ -180,7 +191,7 @@ export async function runCloudClient(
           const hello = await request('connect', {
             protocolVersion: 1,
             instanceId,
-            clientVersion: 'portable-1',
+            clientVersion,
           })
           if (
             hello.protocolVersion !== 1 ||
@@ -222,7 +233,7 @@ export async function runCloudClient(
           pending = {
             taskId: task.id,
             leaseId: task.leaseId,
-            result: await runtimeCheck(env, stop),
+            result: await checkRuntime(env, stop),
           }
           continue
         }
