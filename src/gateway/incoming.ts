@@ -15,8 +15,10 @@ import {
   downloadAndSave,
   getMediaSize,
 } from '../store/media.js'
+import { wasBotOutbound } from '../store/messages.js'
 import { discoverGroupIfNew } from '../wa/whitelist.js'
 import { processIncomingMessage } from './ingest.js'
+import { looksLikeBotStatsFooter } from './trigger-alias.js'
 
 export function attachIncoming(sock: WASocket): void {
   const ownerJid = sock.user?.id
@@ -130,7 +132,7 @@ async function toIncoming(
     mediaBytes: mediaType ? getMediaSize(msg) : null,
     downloadMedia: mediaType ? () => downloadAndSave(msg, jid) : undefined,
     quoteMsgId: msg.key.id ?? null,
-    triggerHints: waTriggerHints(msg, sock),
+    triggerHints: await waTriggerHints(msg, sock, jid),
     selfChat:
       fromMe &&
       !isGroup &&
@@ -161,25 +163,46 @@ function ownerNumbers(sock: WASocket): Set<string> {
   return out
 }
 
-function waTriggerHints(msg: WAMessage, sock: WASocket): TriggerHints {
+function quotedTextFromContext(
+  ci: NonNullable<ReturnType<typeof contextInfo>>,
+): string {
+  const q = ci.quotedMessage
+  if (!q) return ''
+  if (q.conversation) return q.conversation
+  if (q.extendedTextMessage?.text) return q.extendedTextMessage.text
+  if (q.imageMessage?.caption) return q.imageMessage.caption
+  if (q.videoMessage?.caption) return q.videoMessage.caption
+  if (q.documentMessage?.caption) return q.documentMessage.caption
+  return ''
+}
+
+async function waTriggerHints(
+  msg: WAMessage,
+  sock: WASocket,
+  jid: string,
+): Promise<TriggerHints> {
   const ci = msg.message ? contextInfo(msg.message) : undefined
   if (!ci) return {}
 
   const owners = ownerNumbers(sock)
-  let mentionedBot = false
-  for (const m of ci.mentionedJid ?? []) {
-    const user = jidDecode(m)?.user
-    if (user && owners.has(user)) {
-      mentionedBot = true
-      break
-    }
-  }
+
+  // WhatsApp @mention of the owner is talking to the owner, not the bot.
+  // They share one account, so mentionedJid cannot distinguish them.
+  // Invoke with an alias ("heyamigo", "hey claude") or by replying to a
+  // bot message. Telegram still uses its real bot-username mention.
+  const mentionedBot = false
 
   let replyToBot = false
   const quotedParticipant = ci.participant
   if (quotedParticipant) {
     const user = jidDecode(quotedParticipant)?.user
-    replyToBot = !!user && owners.has(user)
+    if (user && owners.has(user)) {
+      const quotedText = quotedTextFromContext(ci)
+      const stanzaId = ci.stanzaId
+      replyToBot =
+        looksLikeBotStatsFooter(quotedText) ||
+        (!!stanzaId && (await wasBotOutbound(jid, stanzaId)))
+    }
   }
 
   return { mentionedBot, replyToBot }

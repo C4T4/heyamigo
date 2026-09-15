@@ -1,5 +1,5 @@
 import { config } from '../config.js'
-import { readLast, type StoredMessage } from '../store/messages.js'
+import { isBotLoggedMessage, readLast, type StoredMessage } from '../store/messages.js'
 
 export type ChatBootstrapMetadata = {
   platform: string
@@ -33,6 +33,9 @@ export async function buildInitPayload(
       lines.push(`Chat type: group`)
       lines.push(`Chat name: "${chat.chatName || 'unknown'}"`)
       if (chat.memberSummary) lines.push(`Members: ${chat.memberSummary}`)
+      lines.push(
+        'You share this account with the owner. Owner messages are human, not you. Reply only when the current message is for you. If people are talking to each other or about another AI/tool, reply empty.',
+      )
     } else {
       lines.push(`Chat type: direct message`)
     }
@@ -63,8 +66,11 @@ function formatLine(m: StoredMessage): string {
     .toISOString()
     .slice(0, 16)
     .replace('T', ' ')
-  const who =
-    m.direction === 'out' ? 'assistant' : m.pushName || m.senderNumber || 'user'
+  const who = isBotLoggedMessage(m)
+    ? 'assistant'
+    : m.direction === 'out'
+      ? 'owner'
+      : m.pushName || m.senderNumber || 'user'
   return `${who} (${date}): ${m.text}`
 }
 

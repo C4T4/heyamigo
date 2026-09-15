@@ -8,6 +8,7 @@ import { enqueueOutbound } from '../queue/outbound.js'
 import type { Job, ReplyStats, Result } from '../queue/types.js'
 import { synthesizeVoiceReply } from '../voice/elevenlabs.js'
 import { detectMediaType } from '../wa/sender.js'
+import { isSilenceNarration } from './trigger-alias.js'
 
 // Matches [FILE: path], [IMAGE: path], [VIDEO: path], [AUDIO: path], [DOCUMENT: path]
 const FILE_TAG_RE = /\[(?:FILE|IMAGE|VIDEO|AUDIO|DOCUMENT):\s*([^\]]+)\]/gi
@@ -98,23 +99,16 @@ function fileSize(filePath: string): number | undefined {
   try { return statSync(filePath).size } catch { return undefined }
 }
 
-function hasSideEffects(stats: ReplyStats | undefined): boolean {
-  if (!stats) return false
-  return (
-    stats.hasDigest ||
-    stats.journalSlugs.length > 0 ||
-    stats.journalCreateCount > 0 ||
-    stats.asyncCount > 0 ||
-    stats.asyncBrowserCount > 0 ||
-    stats.remindCount > 0 ||
-    stats.cronCount > 0 ||
-    stats.sendTextCount > 0 ||
-    stats.threadNewCount > 0 ||
-    stats.threadResolveCount > 0 ||
-    stats.threadDropCount > 0 ||
-    stats.threadCompressCount > 0 ||
-    stats.threadTouchCount > 0
-  )
+function enqueueJobCards(job: Job, result: Result): void {
+  const address = addressForJob(job)
+  for (const card of result.jobCards ?? []) {
+    enqueueOutbound({
+      address,
+      kind: 'text',
+      text: card.text,
+      idempotencyKey: card.idempotencyKey,
+    })
+  }
 }
 
 // `originalMsg` is currently ignored when routing through the outbound
@@ -130,31 +124,19 @@ export async function handleReply(
   const raw = result.reply?.replaceAll('—', ', ').replaceAll('–', '-').trim()
   const address = addressForJob(job)
 
-  if (!raw) {
-    const footer =
-      result.stats && config.reply.showStats
-        ? formatStatsFooter(result.stats)
-        : ''
-    const text = hasSideEffects(result.stats) || (result.jobCards?.length ?? 0) > 0
-      ? 'Done.'
-      : config.reply.errorMessage
-    enqueueOutbound({
-      address,
-      kind: 'text',
-      text: footer ? `${text}\n\n${footer}` : text,
-      idempotencyKey: `reply-empty-${job.jid}-${Date.now()}`,
-    })
-    for (const card of result.jobCards ?? []) {
-      enqueueOutbound({
-        address,
-        kind: 'text',
-        text: card.text,
-        idempotencyKey: card.idempotencyKey,
-      })
-    }
-    logger.warn(
-      { jid: job.jid, cards: result.jobCards?.length ?? 0 },
-      'empty reply converted to fallback outbound',
+  // Empty (or "I'm staying silent") means stay out of the chat.
+  // Memory tags are already applied; job cards still go out so delegated
+  // work is visible. Never invent "Done." — that was leaking into groups
+  // when the model chose not to speak but emitted a DIGEST.
+  if (!raw || isSilenceNarration(raw)) {
+    enqueueJobCards(job, result)
+    logger.info(
+      {
+        jid: job.jid,
+        cards: result.jobCards?.length ?? 0,
+        narration: !!raw,
+      },
+      'empty reply kept silent',
     )
     return
   }

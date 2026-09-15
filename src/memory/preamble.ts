@@ -17,6 +17,7 @@ import { getRoleForContext, type Role, type RoleName } from '../wa/whitelist.js'
 // Per-turn reminders. Full grammar + examples live in the cached
 // system prompt (config/memory-instructions.md). These are terse
 // pointers — the model already has the long form.
+const SPEAK_REMINDER   = `A name match (claude, amigo, …) only wakes you. Decide from context whether the message is for you. Talking to each other or about another AI/tool → empty reply. Empty = silent. Never write "Done.", "No reply.", or "staying silent." Tags like [DIGEST:] are allowed without a body.`
 const DIGEST_REMINDER  = `[DIGEST: <reason>] at end of reply for durable facts. Sparingly.`
 const JOURNAL_REMINDER = `[JOURNAL:<slug> — <note>] at end of reply when content fits an active journal. Use listed slugs only.`
 const ASYNC_REMINDER   = `Browser use/search/current web -> [ASYNC-BROWSER: <task>]. Never WebSearch/WebFetch. File generation/edit/export and long non-browser work -> [ASYNC: <task>]. Irreversible writes: gather -> confirm -> act.`
@@ -116,6 +117,7 @@ export function buildMemoryPreamble(params: {
   // Memory scoping by role
   if (role.memory === 'none') {
     // Guest: no memory at all
+    sections.push(SPEAK_REMINDER)
     sections.push(DIGEST_REMINDER)
     return sections.join('\n\n')
   }
@@ -178,7 +180,7 @@ export function buildMemoryPreamble(params: {
   // ASYNC reminder goes first so it's the most prominent rule — it's the
   // one that prevents the main chat queue from jamming on browser work.
   // The preamble's Capabilities section also reinforces it.
-  const instructions: string[] = [ASYNC_REMINDER, DIGEST_REMINDER]
+  const instructions: string[] = [SPEAK_REMINDER, ASYNC_REMINDER, DIGEST_REMINDER]
   if (journalsBlock) {
     sections.push(`[Journals]\n${journalsBlock}`)
     instructions.push(JOURNAL_REMINDER)

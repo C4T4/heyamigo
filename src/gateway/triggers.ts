@@ -1,6 +1,9 @@
 import { config } from '../config.js'
 import type { TriggerMode } from '../config.js'
-import { isBareAliasInvocation as matchesBareAlias } from './trigger-alias.js'
+import {
+  firstMatchingAlias,
+  isBareAliasInvocation as matchesBareAlias,
+} from './trigger-alias.js'
 
 export type TriggerResult = {
   triggered: boolean
@@ -86,19 +89,12 @@ const AUDIO_ALIAS_VARIANTS: Record<string, string[]> = {
   ],
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+function aliasMatches(text: string, aliases: string[]): string | null {
+  return firstMatchingAlias(text, aliases)
 }
 
-function aliasMatches(text: string, aliases: string[]): string | null {
-  for (const alias of aliases) {
-    const re = new RegExp(
-      `(^|[^a-zA-Z0-9_])${escapeRegex(alias)}([^a-zA-Z0-9_]|$)`,
-      'i',
-    )
-    if (re.test(text)) return alias
-  }
-  return null
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 // A name-only ping is a liveness check, not an agent task. Sending it through

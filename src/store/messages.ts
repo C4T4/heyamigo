@@ -38,6 +38,24 @@ export async function append(msg: StoredMessage): Promise<void> {
   await appendFile(fileFor(msg.jid), line, 'utf-8')
 }
 
+export function isBotLoggedMessage(msg: StoredMessage): boolean {
+  return msg.id.startsWith('outbound-')
+}
+
+// Bot outbound ids are `outbound-<rowId>-<channelMsgId>`. Used to tell
+// "quoted the bot" from "quoted the owner" when they share a WhatsApp account.
+export async function wasBotOutbound(
+  jid: string,
+  channelMsgId: string,
+  lookback = 400,
+): Promise<boolean> {
+  if (!channelMsgId) return false
+  const recent = await readLast(jid, lookback)
+  return recent.some(
+    (m) => isBotLoggedMessage(m) && m.id.endsWith(`-${channelMsgId}`),
+  )
+}
+
 export async function readLast(
   jid: string,
   n: number,

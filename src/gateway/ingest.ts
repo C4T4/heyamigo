@@ -390,6 +390,9 @@ export async function processIncomingMessage(
   const replyWithVoice = wantsVoiceReply(stored.text)
 
   let input = `${memoryPreamble}\n\n---\n\n${core}`
+  if (incoming.isGroup) {
+    input = `${input}\n\n---\n\n[Trigger] ${triggerReason}. A name match only wakes you. Decide from the conversation whether this message is for you. If people are talking to each other or about another AI/tool, reply empty. Empty = nothing is posted.`
+  }
   if (est?.kind === 'image-gen') {
     input = `${input}\n\n---\n\n${buildImageGenRoutingContract()}`
   }
