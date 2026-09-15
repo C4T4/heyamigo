@@ -3,19 +3,19 @@ import { constants } from 'node:fs'
 import { mkdir, open, rename, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
-const MAXIMUM_REFRESH_TOKEN_BYTES = 65_536
+const MAXIMUM_MCP_TOKEN_BYTES = 128
+const MCP_TOKEN_PATTERN = /^amg_pat_[A-Za-z0-9_-]{43}$/
 
 export function credentialPath(path: string): string {
   return isAbsolute(path) ? path : resolve(path)
 }
 
-function parseRefreshToken(value: string): string {
+function parseMcpToken(value: string): string {
   if (
-    value.length < 1 ||
-    Buffer.byteLength(value, 'utf8') > MAXIMUM_REFRESH_TOKEN_BYTES ||
-    !/^[\x21-\x7e]+$/.test(value)
+    Buffer.byteLength(value, 'utf8') > MAXIMUM_MCP_TOKEN_BYTES ||
+    !MCP_TOKEN_PATTERN.test(value)
   ) {
-    throw new Error('Amigospace returned an invalid refresh credential')
+    throw new Error('Amigospace returned an invalid MCP token')
   }
   return value
 }
@@ -69,12 +69,12 @@ export async function prepareCredentialDirectory(path: string): Promise<void> {
   await requireSecureDirectory(directoryPath)
 }
 
-export async function storeRefreshToken(
+export async function storeMcpToken(
   path: string,
-  refreshToken: string,
+  token: string,
 ): Promise<void> {
   const absolutePath = credentialPath(path)
-  const value = parseRefreshToken(refreshToken)
+  const value = parseMcpToken(token)
   await prepareCredentialDirectory(absolutePath)
 
   const directoryPath = dirname(absolutePath)
@@ -104,7 +104,7 @@ export async function storeRefreshToken(
   }
 }
 
-export async function refreshTokenConfigured(path: string): Promise<boolean> {
+export async function mcpTokenConfigured(path: string): Promise<boolean> {
   const absolutePath = credentialPath(path)
   let file
   try {
@@ -117,7 +117,7 @@ export async function refreshTokenConfigured(path: string): Promise<boolean> {
     if (
       !stat.isFile() ||
       stat.size < 1 ||
-      stat.size > MAXIMUM_REFRESH_TOKEN_BYTES + 2
+      stat.size > MAXIMUM_MCP_TOKEN_BYTES + 2
     ) {
       throw new Error('Amigospace credential file is invalid')
     }

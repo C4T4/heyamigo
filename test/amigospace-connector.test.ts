@@ -9,10 +9,7 @@ import {
 const configuration = {
   enabled: true,
   endpoint: 'https://space.heyamigo.org/mcp',
-  clientId: 'amigospace-device',
-  tokenEndpoint:
-    'https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/token',
-  credentialFile: './storage/auth/amigospace/refresh-token',
+  credentialFile: './storage/auth/amigospace/mcp-token',
   requestTimeoutMs: 4_000,
 }
 
@@ -37,12 +34,8 @@ test('bundled connector uses the current Node runtime and cloud proxy', () => {
       '/opt/heyamigo/scripts/amigospace-mcp.mjs',
       '--endpoint',
       configuration.endpoint,
-      '--client-id',
-      configuration.clientId,
-      '--token-endpoint',
-      configuration.tokenEndpoint,
       '--credential-file',
-      `${process.cwd()}/storage/auth/amigospace/refresh-token`,
+      `${process.cwd()}/storage/auth/amigospace/mcp-token`,
       '--timeout-ms',
       '4000',
     ],
@@ -65,6 +58,13 @@ test('active connector adds a per-turn routing contract', () => {
 
   assert.match(routed, /Amigospace MCP is connected/)
   assert.match(routed, /use the Amigospace tools directly in this turn/)
+  assert.match(routed, /call upload_file with the exact absolute path/)
+  assert.match(routed, /never create a file node containing only that path/)
+  assert.match(
+    routed,
+    /https:\/\/space\.heyamigo\.org\/items\/\{nodeId\}/,
+  )
+  assert.match(routed, /use the exact returned ID/)
   assert.match(routed, /Never claim an Amigospace action succeeded/)
   assert.ok(routed.endsWith(input))
 })

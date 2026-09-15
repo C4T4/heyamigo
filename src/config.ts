@@ -68,7 +68,7 @@ const ConfigSchema = z.object({
     .default({ provider: 'claude' }),
   amigospace: z
     .object({
-      // `heyamigo amigospace connect` enables this after device authorization.
+      // `heyamigo amigospace connect` creates and stores one durable MCP token.
       enabled: z.boolean().default(false),
       endpoint: z
         .string()
@@ -78,44 +78,16 @@ const ConfigSchema = z.object({
           'Amigospace MCP endpoint must use HTTPS unless it is loopback',
         )
         .default('https://space.heyamigo.org/mcp'),
-      clientId: z.string().min(1).max(255).default('amigospace-device'),
-      deviceAuthorizationEndpoint: z
-        .string()
-        .url()
-        .refine(
-          isSecureServiceUrl,
-          'Amigospace device authorization endpoint must use HTTPS unless it is loopback',
-        )
-        .default(
-          'https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/auth/device',
-        ),
-      tokenEndpoint: z
-        .string()
-        .url()
-        .refine(
-          isSecureServiceUrl,
-          'Amigospace token endpoint must use HTTPS unless it is loopback',
-        )
-        .default(
-          'https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/token',
-        ),
-      scope: z.string().min(1).max(1_024).default('openid offline_access'),
       credentialFile: z
         .string()
         .min(1)
-        .default('./storage/auth/amigospace/refresh-token'),
+        .default('./storage/auth/amigospace/mcp-token'),
       requestTimeoutMs: z.number().int().min(1_000).max(30_000).default(5_000),
     })
     .default({
       enabled: false,
       endpoint: 'https://space.heyamigo.org/mcp',
-      clientId: 'amigospace-device',
-      deviceAuthorizationEndpoint:
-        'https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/auth/device',
-      tokenEndpoint:
-        'https://identity.heyamigo.org/realms/amigospace/protocol/openid-connect/token',
-      scope: 'openid offline_access',
-      credentialFile: './storage/auth/amigospace/refresh-token',
+      credentialFile: './storage/auth/amigospace/mcp-token',
       requestTimeoutMs: 5_000,
     }),
   audio: z

@@ -16,8 +16,12 @@
   },
   "browser": {
     "enabled": true,
+    "connection": "chrome-cdp",
     "cdp_url_env": "JOB_BROWSER_CDP_URL",
     "default_cdp_url": "http://127.0.0.1:9222",
+    "profile_env": "JOB_BROWSER_PROFILE",
+    "default_profile": "shared-chrome-cdp",
+    "rule": "Use the existing authenticated Chrome profile behind the CDP endpoint. Do not launch a new browser or profile.",
     "required": true
   },
   "installer": {

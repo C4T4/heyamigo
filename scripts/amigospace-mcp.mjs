@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 
-import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, open, rename, rm } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join } from 'node:path'
-import { setTimeout as wait } from 'node:timers/promises'
+import { open } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { basename, dirname, extname, isAbsolute } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -14,12 +13,39 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 
-const MAXIMUM_TOKEN_BYTES = 65_536
-const MAXIMUM_RESPONSE_BYTES = 128 * 1_024
+const MCP_TOKEN_PATTERN = /^amg_pat_[A-Za-z0-9_-]{43}$/
+const MAXIMUM_TOKEN_BYTES = 128
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const MEDIA_TYPES = new Map([
+  ['.avif', 'image/avif'],
+  ['.gif', 'image/gif'],
+  ['.heic', 'image/heic'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.png', 'image/png'],
+  ['.webp', 'image/webp'],
+  ['.mp3', 'audio/mpeg'],
+  ['.m4a', 'audio/mp4'],
+  ['.ogg', 'audio/ogg'],
+  ['.wav', 'audio/wav'],
+  ['.mov', 'video/quicktime'],
+  ['.mp4', 'video/mp4'],
+  ['.webm', 'video/webm'],
+  ['.csv', 'text/csv'],
+  ['.json', 'application/json'],
+  ['.md', 'text/markdown'],
+  ['.pdf', 'application/pdf'],
+  ['.txt', 'text/plain'],
+  ['.doc', 'application/msword'],
+  ['.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ['.ppt', 'application/vnd.ms-powerpoint'],
+  ['.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  ['.xls', 'application/vnd.ms-excel'],
+  ['.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ['.zip', 'application/zip'],
+])
 const allowedOptions = new Set([
   '--endpoint',
-  '--client-id',
-  '--token-endpoint',
   '--credential-file',
   '--timeout-ms',
 ])
@@ -59,15 +85,6 @@ function secureEndpoint(raw, label) {
   return url
 }
 
-function printableToken(value, maximum = MAXIMUM_TOKEN_BYTES) {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= maximum &&
-    /^[\x21-\x7e]+$/.test(value)
-  )
-}
-
 function isFileSystemError(error, code) {
   return error instanceof Error && 'code' in error && error.code === code
 }
@@ -94,19 +111,7 @@ async function requireSecureDirectory(path) {
   }
 }
 
-async function syncDirectory(path) {
-  const directory = await open(
-    path,
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-  )
-  try {
-    await directory.sync()
-  } finally {
-    await directory.close()
-  }
-}
-
-async function loadRefreshToken(path) {
+async function loadMcpToken(path) {
   await requireSecureDirectory(dirname(path))
   let file
   try {
@@ -122,7 +127,9 @@ async function loadRefreshToken(path) {
       : raw.endsWith('\n')
         ? raw.slice(0, -1)
         : raw
-    if (!printableToken(value)) throw new Error('Amigospace credential file is invalid')
+    if (!MCP_TOKEN_PATTERN.test(value)) {
+      throw new Error('Amigospace token is invalid. Run: heyamigo amigospace connect')
+    }
     return value
   } catch (error) {
     if (isFileSystemError(error, 'ENOENT')) {
@@ -134,148 +141,7 @@ async function loadRefreshToken(path) {
   }
 }
 
-async function replaceRefreshToken(path, value) {
-  if (!printableToken(value)) throw new Error('Amigospace returned an invalid refresh credential')
-  const directoryPath = dirname(path)
-  await requireSecureDirectory(directoryPath)
-  const temporaryPath = join(
-    directoryPath,
-    `.${basename(path)}.${randomUUID()}.tmp`,
-  )
-  let temporary
-  try {
-    temporary = await open(
-      temporaryPath,
-      constants.O_CREAT |
-        constants.O_EXCL |
-        constants.O_WRONLY |
-        constants.O_NOFOLLOW,
-      0o600,
-    )
-    await temporary.writeFile(`${value}\n`, 'utf8')
-    await temporary.sync()
-    await temporary.close()
-    temporary = undefined
-    await rename(temporaryPath, path)
-    await syncDirectory(directoryPath)
-  } finally {
-    await temporary?.close()
-    await rm(temporaryPath, { force: true }).catch(() => undefined)
-  }
-}
-
-function processIsAlive(pid) {
-  if (!Number.isInteger(pid) || pid < 1) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return isFileSystemError(error, 'EPERM')
-  }
-}
-
-async function removeAbandonedLock(path, timeoutMs) {
-  let file
-  try {
-    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-    const stat = await file.stat()
-    if (!stat.isFile() || stat.size < 1 || stat.size > 1_024) return false
-    requirePrivateOwnership(stat)
-    const lock = JSON.parse(await file.readFile('utf8'))
-    const old = Date.now() - stat.mtimeMs > timeoutMs * 2
-    if (processIsAlive(lock.pid) && !old) return false
-
-    const current = await lstat(path)
-    if (current.dev !== stat.dev || current.ino !== stat.ino) return false
-    await rm(path)
-    return true
-  } catch (error) {
-    if (isFileSystemError(error, 'ENOENT')) return true
-    return false
-  } finally {
-    await file?.close()
-  }
-}
-
-async function acquireRefreshLock(credentialFile, timeoutMs) {
-  const path = `${credentialFile}.lock`
-  const deadline = Date.now() + timeoutMs
-  await requireSecureDirectory(dirname(credentialFile))
-  while (Date.now() < deadline) {
-    let file
-    try {
-      file = await open(
-        path,
-        constants.O_CREAT |
-          constants.O_EXCL |
-          constants.O_WRONLY |
-          constants.O_NOFOLLOW,
-        0o600,
-      )
-      await file.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }))
-      await file.sync()
-      await file.close()
-      return async () => {
-        await rm(path, { force: true })
-      }
-    } catch (error) {
-      await file?.close().catch(() => undefined)
-      if (!isFileSystemError(error, 'EEXIST')) throw error
-      if (await removeAbandonedLock(path, timeoutMs)) continue
-      await wait(100)
-    }
-  }
-  throw new Error('Amigospace credential refresh is busy; retry the request')
-}
-
-async function readBoundedJson(response) {
-  const declared = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > MAXIMUM_RESPONSE_BYTES) {
-    throw new Error('Amigospace identity service returned an invalid response')
-  }
-  if (!response.body) throw new Error('Amigospace identity service returned an invalid response')
-
-  const reader = response.body.getReader()
-  const chunks = []
-  let total = 0
-  try {
-    while (true) {
-      const result = await reader.read()
-      if (result.done) break
-      total += result.value.byteLength
-      if (total > MAXIMUM_RESPONSE_BYTES) {
-        await reader.cancel()
-        throw new Error('Amigospace identity service returned an invalid response')
-      }
-      chunks.push(result.value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total).toString('utf8'))
-  } catch {
-    throw new Error('Amigospace identity service returned an invalid response')
-  }
-}
-
-async function fetchWithTimeout(url, init, timeoutMs) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } catch {
-    throw new Error('Amigospace identity service is unavailable')
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 const endpoint = secureEndpoint(requiredOption('--endpoint'), 'Amigospace MCP endpoint')
-const tokenEndpoint = secureEndpoint(requiredOption('--token-endpoint'), 'Amigospace token endpoint')
-const clientId = requiredOption('--client-id')
-if (!printableToken(clientId, 255)) throw new Error('Amigospace OIDC client ID is invalid')
-
 const credentialFile = requiredOption('--credential-file')
 if (!isAbsolute(credentialFile)) throw new Error('Amigospace credential path must be absolute')
 
@@ -284,79 +150,239 @@ if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30000) {
   throw new Error('--timeout-ms must be an integer between 1000 and 30000')
 }
 
-let cachedAccessToken
+const token = await loadMcpToken(credentialFile)
+const authenticatedFetch = (input, init = {}) => {
+  const headers = new Headers(init.headers)
+  headers.set('authorization', `Bearer ${token}`)
+  return fetch(input, { ...init, headers, redirect: 'error' })
+}
 
-async function refreshAccessToken() {
-  const release = await acquireRefreshLock(credentialFile, timeoutMs)
-  try {
-    const refreshToken = await loadRefreshToken(credentialFile)
-    const response = await fetchWithTimeout(
-      tokenEndpoint,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: clientId,
-          grant_type: 'refresh_token',
-          refresh_token: refreshToken,
-        }),
-        redirect: 'error',
+const uploadFileTool = {
+  name: 'upload_file',
+  title: 'Upload a local file',
+  description:
+    'Upload the actual bytes of a user-approved local file to private Amigospace storage and create its file node. Use the exact absolute path from the current user message; never save the path as text.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['path', 'projectId', 'parentId'],
+    properties: {
+      path: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 4096,
+        description: 'Exact absolute local path shown in the current user message.',
       },
-      timeoutMs,
-    )
-    const token = await readBoundedJson(response)
-    if (!response.ok) {
-      if (token?.error === 'invalid_grant') {
-        throw new Error('Amigospace login expired. Run: heyamigo amigospace connect')
-      }
-      throw new Error('Amigospace rejected the stored credential')
-    }
+      projectId: { type: 'string', format: 'uuid' },
+      parentId: { type: 'string', format: 'uuid' },
+      title: { type: 'string', minLength: 1, maxLength: 500 },
+      captionMarkdown: { type: 'string', maxLength: 100000 },
+      mediaType: {
+        type: 'string',
+        minLength: 3,
+        maxLength: 255,
+        pattern: '^[^\\s/]+/[^\\s/]+$',
+      },
+    },
+  },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+}
+
+function toolInput(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('UPLOAD_FILE_INPUT_INVALID')
+  }
+  const input = value
+  if (
+    typeof input.path !== 'string' ||
+    input.path.length < 1 ||
+    input.path.length > 4096 ||
+    !isAbsolute(input.path) ||
+    typeof input.projectId !== 'string' ||
+    !UUID_PATTERN.test(input.projectId) ||
+    typeof input.parentId !== 'string' ||
+    !UUID_PATTERN.test(input.parentId) ||
+    (input.title !== undefined &&
+      (typeof input.title !== 'string' || input.title.trim().length < 1 || input.title.length > 500)) ||
+    (input.captionMarkdown !== undefined &&
+      (typeof input.captionMarkdown !== 'string' || input.captionMarkdown.length > 100000)) ||
+    (input.mediaType !== undefined &&
+      (typeof input.mediaType !== 'string' ||
+        input.mediaType.length > 255 ||
+        !/^[^\s/]+\/[^\s/]+$/.test(input.mediaType)))
+  ) {
+    throw new Error('UPLOAD_FILE_INPUT_INVALID')
+  }
+  return input
+}
+
+function uploadFailure(code) {
+  const error = new Error(code)
+  error.code = code
+  return error
+}
+
+async function responseErrorCode(response) {
+  try {
+    const payload = await response.json()
     if (
-      !printableToken(token?.access_token, 32_768) ||
-      !Number.isInteger(token?.expires_in) ||
-      token.expires_in < 1 ||
-      token.expires_in > 86_400 ||
-      typeof token?.token_type !== 'string' ||
-      token.token_type.toLowerCase() !== 'bearer' ||
-      (token.refresh_token !== undefined && !printableToken(token.refresh_token))
+      typeof payload === 'object' &&
+      payload !== null &&
+      typeof payload.code === 'string' &&
+      /^[A-Z][A-Z0-9_]{0,127}$/.test(payload.code)
     ) {
-      throw new Error('Amigospace identity service returned an invalid response')
+      return payload.code
     }
-    if (token.refresh_token && token.refresh_token !== refreshToken) {
-      await replaceRefreshToken(credentialFile, token.refresh_token)
+  } catch {
+    // Proxies can return non-JSON failures; keep one bounded public code.
+  }
+  return `UPLOAD_HTTP_${response.status}`
+}
+
+function blobReceipt(value) {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof value.id !== 'string' ||
+    !UUID_PATTERN.test(value.id) ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    typeof value.mediaType !== 'string' ||
+    !/^[^\s/]+\/[^\s/]+$/.test(value.mediaType) ||
+    typeof value.sizeBytes !== 'number' ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    value.sizeBytes < 0 ||
+    typeof value.originalName !== 'string' ||
+    value.originalName.length < 1
+  ) {
+    throw uploadFailure('UPLOAD_RESPONSE_INVALID')
+  }
+  return value
+}
+
+function multipartBody(file, prefix, suffix) {
+  return (async function* () {
+    yield prefix
+    for await (const chunk of file.createReadStream({ autoClose: false })) {
+      yield chunk
     }
-    cachedAccessToken = {
-      value: token.access_token,
-      expiresAt: Date.now() + token.expires_in * 1_000,
+    yield suffix
+  })()
+}
+
+async function uploadLocalFile(rawInput) {
+  const input = toolInput(rawInput)
+  let file
+  try {
+    file = await open(input.path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    const stat = await file.stat()
+    if (!stat.isFile() || !Number.isSafeInteger(stat.size) || stat.size < 0) {
+      throw uploadFailure('UPLOAD_FILE_INVALID')
     }
-    return cachedAccessToken.value
+
+    const originalName = basename(input.path)
+    if (originalName.length < 1 || originalName.length > 1024) {
+      throw uploadFailure('UPLOAD_FILE_NAME_INVALID')
+    }
+    const mediaType = input.mediaType ?? MEDIA_TYPES.get(extname(originalName).toLowerCase()) ?? 'application/octet-stream'
+    const safeName = originalName.replace(/[\r\n"]/g, '_')
+    const boundary = `amigospace-${randomUUID()}`
+    const prefix = Buffer.from(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
+        `Content-Type: ${mediaType}\r\n\r\n`,
+      'utf8',
+    )
+    const suffix = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')
+    const contentLength = prefix.byteLength + stat.size + suffix.byteLength
+    if (!Number.isSafeInteger(contentLength)) throw uploadFailure('UPLOAD_FILE_TOO_LARGE')
+
+    const requestedBlobId = randomUUID()
+    const response = await authenticatedFetch(new URL('/v1/blobs', endpoint), {
+      method: 'POST',
+      headers: {
+        'content-length': String(contentLength),
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+        'idempotency-key': `connector-upload:${requestedBlobId}`,
+        'x-amigospace-blob-id': requestedBlobId,
+        'x-amigospace-event-id': randomUUID(),
+      },
+      body: multipartBody(file, prefix, suffix),
+      duplex: 'half',
+    })
+    if (!response.ok) throw uploadFailure(await responseErrorCode(response))
+    const registered = blobReceipt(await response.json())
+
+    const nodeId = randomUUID()
+    const saved = await upstream.callTool(
+      {
+        name: 'save',
+        arguments: {
+          mode: 'create',
+          input: {
+            nodeId,
+            versionId: randomUUID(),
+            eventId: randomUUID(),
+            projectId: input.projectId,
+            parentId: input.parentId,
+            title: input.title?.trim() ?? originalName,
+            content: {
+              kind: 'file',
+              blob: {
+                id: registered.id,
+                sha256: registered.sha256,
+                mediaType: registered.mediaType,
+                sizeBytes: registered.sizeBytes,
+                originalName: registered.originalName,
+              },
+              ...(input.captionMarkdown === undefined
+                ? {}
+                : { captionMarkdown: input.captionMarkdown }),
+            },
+            idempotencyKey: `connector-save:${nodeId}`,
+          },
+        },
+      },
+      undefined,
+      { timeout: timeoutMs },
+    )
+
+    if (saved.isError === true) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: 'UPLOAD_NODE_SAVE_FAILED: The file bytes were stored, but its workspace node was not created.',
+        }],
+        structuredContent: {
+          blobId: registered.id,
+          originalName: registered.originalName,
+          sizeBytes: registered.sizeBytes,
+        },
+      }
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: `Uploaded ${registered.originalName} (${registered.sizeBytes} bytes) and saved file node ${nodeId}.`,
+      }],
+      structuredContent: {
+        nodeId,
+        blobId: registered.id,
+        originalName: registered.originalName,
+        mediaType: registered.mediaType,
+        sizeBytes: registered.sizeBytes,
+      },
+    }
   } finally {
-    await release()
+    await file?.close()
   }
-}
-
-async function accessToken() {
-  if (cachedAccessToken && cachedAccessToken.expiresAt - Date.now() > 30_000) {
-    return cachedAccessToken.value
-  }
-  return refreshAccessToken()
-}
-
-async function authenticatedFetch(input, init = {}) {
-  const send = async (token) => {
-    const headers = new Headers(init.headers)
-    headers.set('authorization', `Bearer ${token}`)
-    return fetch(input, { ...init, headers, redirect: 'error' })
-  }
-
-  const current = await accessToken()
-  let response = await send(current)
-  if (response.status !== 401) return response
-
-  await response.body?.cancel().catch(() => undefined)
-  if (cachedAccessToken?.value === current) cachedAccessToken = undefined
-  response = await send(await accessToken())
-  return response
 }
 
 const upstream = new Client(
@@ -377,13 +403,31 @@ const server = new Server(
   },
 )
 
-server.setRequestHandler(ListToolsRequestSchema, async (request) =>
-  upstream.listTools(request.params, { timeout: timeoutMs }),
-)
+server.setRequestHandler(ListToolsRequestSchema, async (request) => {
+  const listed = await upstream.listTools(request.params, { timeout: timeoutMs })
+  if (listed.tools.some(({ name }) => name === uploadFileTool.name)) {
+    throw new Error('Amigospace upstream tool collides with local upload_file')
+  }
+  return { ...listed, tools: [...listed.tools, uploadFileTool] }
+})
 
-server.setRequestHandler(CallToolRequestSchema, async (request) =>
-  upstream.callTool(request.params, undefined, { timeout: timeoutMs }),
-)
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (request.params.name !== uploadFileTool.name) {
+    return upstream.callTool(request.params, undefined, { timeout: timeoutMs })
+  }
+  try {
+    return await uploadLocalFile(request.params.arguments)
+  } catch (error) {
+    const code = error instanceof Error && /^[A-Z][A-Z0-9_]{0,127}$/.test(error.message)
+      ? error.message
+      : 'UPLOAD_FILE_FAILED'
+    return {
+      isError: true,
+      content: [{ type: 'text', text: `${code}: The local file was not uploaded.` }],
+      structuredContent: { code },
+    }
+  }
+})
 
 const stdio = new StdioServerTransport()
 await server.connect(stdio)

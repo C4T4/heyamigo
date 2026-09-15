@@ -6,6 +6,8 @@
 
 A chat-resident assistant for WhatsApp and Telegram. Claude, Codex, Grok, or Gemini under the hood, durable SQLite queues, per-sender timezone scheduling, two-track architecture so browser work never blocks the chat.
 
+[Website](https://heyamigo.org) · [Amigospace](https://space.heyamigo.org) · [Architecture](docs/architecture.md)
+
 ```
 WhatsApp / Telegram ─► inbound ─► chat workers ─► outbound ─► WhatsApp / Telegram
                                      │                ▲
@@ -47,8 +49,8 @@ Other providers:
 ## Bundled Amigospace connector
 
 HeyAmigo ships with a provider-scoped connector to cloud Amigospace. Authorize the installation
-once; the command stores only a rotating refresh credential in an owner-only file and enables the
-connector:
+once; the command creates one permanent, revocable MCP token, stores it in an owner-only file, and
+enables the connector:
 
 ```bash
 heyamigo amigospace connect
@@ -59,9 +61,15 @@ The connector is injected into Claude, Codex, and Gemini invocations only when t
 `tools: "all"` or explicitly allows `mcp__amigospace__*`. The default `user` and `guest` roles
 therefore cannot read the owner's workspace. Its path is `HeyAmigo → bundled authenticated MCP
 connector → agentgateway → space.heyamigo.org/mcp`; workspace and principal selection come from the
-validated access token, never model arguments. Access and refresh tokens are never passed through
+validated MCP token, never model arguments. For a user-approved local file, the same connector
+streams its bytes through exact `POST /v1/blobs`, then invokes MCP `save` with the returned blob
+reference. The token cannot access any other HTTP API route and is never passed through
 model context, command arguments, environment variables, or normal logs. Grok remains fail-closed
 because its current CLI does not provide invocation-scoped MCP configuration.
+
+The browser approval is setup only. Normal MCP calls do not refresh, rotate, or expire the stored
+token. Re-run `heyamigo amigospace connect` only to replace a revoked token or connect another
+installation.
 
 When the network or Amigospace is unavailable, HeyAmigo itself continues to work but Amigospace
 tools fail explicitly. There is no local Amigospace service and no silent knowledge-store fallback

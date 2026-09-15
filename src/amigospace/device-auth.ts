@@ -11,7 +11,6 @@ export interface DeviceAuthorizationOptions {
   tokenEndpoint: string
   scope: string
   requestTimeoutMs: number
-  saveRefreshToken(refreshToken: string): Promise<void>
   present(prompt: DeviceAuthorizationPrompt): Promise<void> | void
   signal?: AbortSignal
   fetch?: typeof fetch
@@ -149,7 +148,7 @@ async function defaultWait(
 
 export async function authorizeAmigospaceDevice(
   options: DeviceAuthorizationOptions,
-): Promise<void> {
+): Promise<string> {
   if (!printable(options.clientId, 255)) {
     throw new Error('Amigospace OIDC client ID is invalid')
   }
@@ -259,7 +258,6 @@ export async function authorizeAmigospaceDevice(
     if (tokenResponse.ok) {
       if (
         !printable(token.access_token, 32_768) ||
-        !printable(token.refresh_token, 65_536) ||
         typeof token.expires_in !== 'number' ||
         !Number.isInteger(token.expires_in) ||
         token.expires_in < 1 ||
@@ -271,8 +269,7 @@ export async function authorizeAmigospaceDevice(
           'Amigospace returned an invalid token response',
         )
       }
-      await options.saveRefreshToken(token.refresh_token)
-      return
+      return token.access_token
     }
 
     switch (token.error) {

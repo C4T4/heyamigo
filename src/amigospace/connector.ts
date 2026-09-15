@@ -15,8 +15,6 @@ export type McpCommandSpec = {
 export type AmigospaceConnectorConfiguration = {
   enabled: boolean
   endpoint: string
-  clientId: string
-  tokenEndpoint: string
   credentialFile: string
   requestTimeoutMs: number
 }
@@ -26,7 +24,10 @@ export interface KnowledgeConnector {
   commandFor(access: ToolAccess): McpCommandSpec | null
 }
 
-const AMIGOSPACE_ROUTING_CONTEXT = `[HeyAmigo runtime: Amigospace MCP is connected. For durable user or project documents, notes, files, and knowledge, use the Amigospace tools directly in this turn for save, search, read, browse, organize, connect, resume, or trash. Do not substitute the local filesystem, storage/memory, Notion, or an async task unless the user explicitly asks for that target. Never claim an Amigospace action succeeded without a successful tool result. Local storage/memory remains only operational agent memory.]`
+function routingContext(endpoint: string): string {
+  const viewerOrigin = new URL(endpoint).origin
+  return `[HeyAmigo runtime: Amigospace MCP is connected. For durable user or project documents, notes, files, and knowledge, use the Amigospace tools directly in this turn for save, upload, search, read, browse, organize, connect, resume, or trash. When the user asks to save an attached or local file, call upload_file with the exact absolute path shown in the current message; never create a file node containing only that path. Every returned nodeId has the stable private link ${viewerOrigin}/items/{nodeId}; use the exact returned ID when referring to an item or linking Amigospace pages, and never guess an ID. Do not substitute the local filesystem, storage/memory, Notion, or an async task unless the user explicitly asks for that target. Never claim an Amigospace action succeeded without a successful tool result. Local storage/memory remains only operational agent memory.]`
+}
 
 /**
  * Provider sessions can outlive the system prompt that introduced a newly
@@ -36,9 +37,10 @@ const AMIGOSPACE_ROUTING_CONTEXT = `[HeyAmigo runtime: Amigospace MCP is connect
 export function withAmigospaceRoutingContext(
   input: string,
   active: boolean,
+  endpoint = config.amigospace.endpoint,
 ): string {
   if (!active) return input
-  return `${AMIGOSPACE_ROUTING_CONTEXT}\n\n${input}`
+  return `${routingContext(endpoint)}\n\n${input}`
 }
 
 export function permitsAmigospace(access: ToolAccess): boolean {
@@ -70,10 +72,6 @@ export class AmigospaceConnector implements KnowledgeConnector {
         this.proxyScript,
         '--endpoint',
         this.configuration.endpoint,
-        '--client-id',
-        this.configuration.clientId,
-        '--token-endpoint',
-        this.configuration.tokenEndpoint,
         '--credential-file',
         resolve(this.configuration.credentialFile),
         '--timeout-ms',

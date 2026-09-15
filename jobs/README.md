@@ -50,6 +50,24 @@ Behavior:
 - `./job.sh install ./somewhere` writes a complete copy there.
 - `./job.sh run ./somewhere my-run-id` runs with an explicit folder and run id.
 
+## Browser Reference
+
+Browser jobs must carry this short reference in both `job.json` and the agent prompt:
+
+```text
+Connect to the existing authenticated Chrome via CDP: ${JOB_BROWSER_CDP_URL}
+Profile/session: ${JOB_BROWSER_PROFILE}. Use this existing profile only.
+Do not launch a new browser, create a new profile, or use AI-internal web search.
+If this browser connection is unavailable, write a failed result. Do not guess.
+```
+
+Defaults:
+
+```bash
+JOB_BROWSER_CDP_URL=http://127.0.0.1:9222
+JOB_BROWSER_PROFILE=shared-chrome-cdp
+```
+
 ## After Install
 
 Immediately after install:
@@ -80,8 +98,12 @@ jobs/yahoo-earnings/
   },
   "browser": {
     "enabled": true,
+    "connection": "chrome-cdp",
     "cdp_url_env": "JOB_BROWSER_CDP_URL",
     "default_cdp_url": "http://127.0.0.1:9222",
+    "profile_env": "JOB_BROWSER_PROFILE",
+    "default_profile": "shared-chrome-cdp",
+    "rule": "Use the existing authenticated Chrome profile behind the CDP endpoint. Do not launch a new browser or profile.",
     "required": true
   },
   "installer": {
@@ -161,6 +183,7 @@ Common environment variables:
 ```bash
 TARGET_DATE=2026-05-27
 JOB_BROWSER_CDP_URL=http://127.0.0.1:9222
+JOB_BROWSER_PROFILE=shared-chrome-cdp
 CLAUDE_BIN=claude
 CLAUDE_MODEL=sonnet
 CLAUDE_EXTRA_ARGS=
@@ -187,9 +210,9 @@ A standalone job must:
 - Write `job.sh`, `job.json`, `.gitignore`, and `runs/`.
 - Keep every run under `runs/<run-id>/`.
 - Always write `result.json`, even on failure.
+- For browser jobs, use the existing Chrome CDP connection and profile. Never launch a new browser/profile.
 - Keep logs under `runs/<run-id>/logs/`.
 - Keep structured data under `runs/<run-id>/data/`.
 - Keep generated attachments under `runs/<run-id>/files/`.
 - Use `job.json.latest` for the latest run status.
 - Be runnable without importing Heyamigo source files.
-

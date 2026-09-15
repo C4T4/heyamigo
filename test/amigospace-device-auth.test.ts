@@ -5,17 +5,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
-  refreshTokenConfigured,
-  storeRefreshToken,
+  mcpTokenConfigured,
+  storeMcpToken,
 } from '../src/amigospace/credentials.js'
 import {
   authorizeAmigospaceDevice,
   type DeviceAuthorizationPrompt,
 } from '../src/amigospace/device-auth.js'
 
-test('device authorization stores only the refresh credential', async () => {
+test('device authorization returns one short-lived setup credential', async () => {
   const credentialDirectory = await mkdtemp(join(tmpdir(), 'heyamigo-device-'))
-  const credentialFile = join(credentialDirectory, 'refresh-token')
+  const credentialFile = join(credentialDirectory, 'mcp-token')
   let origin = ''
   let prompt: DeviceAuthorizationPrompt | undefined
   let tokenRequests = 0
@@ -27,7 +27,7 @@ test('device authorization stores only the refresh credential', async () => {
 
     if (request.method === 'POST' && request.url === '/device') {
       assert.equal(form.get('client_id'), 'amigospace-device')
-      assert.equal(form.get('scope'), 'openid offline_access')
+      assert.equal(form.get('scope'), 'openid')
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(
         JSON.stringify({
@@ -54,7 +54,6 @@ test('device authorization stores only the refresh credential', async () => {
       response.end(
         JSON.stringify({
           access_token: 'short-lived-access-token',
-          refresh_token: 'stored-refresh-token',
           expires_in: 300,
           token_type: 'Bearer',
         }),
@@ -73,26 +72,29 @@ test('device authorization stores only the refresh credential', async () => {
   origin = `http://127.0.0.1:${address.port}`
 
   try {
-    assert.equal(await refreshTokenConfigured(credentialFile), false)
-    await authorizeAmigospaceDevice({
+    assert.equal(await mcpTokenConfigured(credentialFile), false)
+    const accessToken = await authorizeAmigospaceDevice({
       clientId: 'amigospace-device',
       deviceAuthorizationEndpoint: `${origin}/device`,
       tokenEndpoint: `${origin}/token`,
-      scope: 'openid offline_access',
+      scope: 'openid',
       requestTimeoutMs: 5_000,
       wait: async () => undefined,
       present: (value) => {
         prompt = value
       },
-      saveRefreshToken: (refreshToken) =>
-        storeRefreshToken(credentialFile, refreshToken),
     })
 
     assert.equal(prompt?.userCode, 'ABCD-EFGH')
     assert.equal(prompt?.verificationUriComplete, `${origin}/verify?user_code=ABCD-EFGH`)
     assert.equal(tokenRequests, 1)
-    assert.equal(await refreshTokenConfigured(credentialFile), true)
-    assert.equal(await readFile(credentialFile, 'utf8'), 'stored-refresh-token\n')
+    assert.equal(accessToken, 'short-lived-access-token')
+    await storeMcpToken(credentialFile, `amg_pat_${'A'.repeat(43)}`)
+    assert.equal(await mcpTokenConfigured(credentialFile), true)
+    assert.equal(
+      await readFile(credentialFile, 'utf8'),
+      `amg_pat_${'A'.repeat(43)}\n`,
+    )
   } finally {
     await new Promise<void>((resolvePromise, rejectPromise) =>
       server.close((error) =>

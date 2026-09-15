@@ -11,6 +11,7 @@ JOB_DESCRIPTION="Find today's earnings for main public companies on Yahoo Financ
 JOB_SCHEDULE="0 8 * * 1-5"
 JOB_TIMEZONE="America/New_York"
 JOB_BROWSER_CDP_URL_DEFAULT="http://127.0.0.1:9222"
+JOB_BROWSER_PROFILE_DEFAULT="shared-chrome-cdp"
 JOB_TIMEOUT_SECONDS=1800
 JOB_CLAUDE_MODEL_DEFAULT="sonnet"
 JOB_INSTALL_URL_DEFAULT="https://raw.githubusercontent.com/C4T4/heyamigo/main/jobs/yahoo-earnings/job.sh"
@@ -31,6 +32,7 @@ Environment:
   JOB_INSTALL_URL      URL used by streamed installs to write job.sh.
   TARGET_DATE           Override date, YYYY-MM-DD. Default: today in America/New_York.
   JOB_BROWSER_CDP_URL   Browser CDP URL passed to the Claude prompt.
+  JOB_BROWSER_PROFILE   Browser profile/session label. Default: shared-chrome-cdp.
   CLAUDE_BIN            Claude binary. Default: claude.
   CLAUDE_MODEL          Claude model. Default: sonnet.
   CLAUDE_EXTRA_ARGS     Optional extra args appended to claude -p.
@@ -108,8 +110,12 @@ const info = {
   },
   browser: {
     enabled: true,
+    connection: "chrome-cdp",
     cdp_url_env: "JOB_BROWSER_CDP_URL",
     default_cdp_url: "$JOB_BROWSER_CDP_URL_DEFAULT",
+    profile_env: "JOB_BROWSER_PROFILE",
+    default_profile: "$JOB_BROWSER_PROFILE_DEFAULT",
+    rule: "Use the existing authenticated Chrome profile behind the CDP endpoint. Do not launch a new browser or profile.",
     required: true
   },
   installer: {
@@ -157,8 +163,12 @@ const data = {
   },
   browser: {
     enabled: true,
+    connection: 'chrome-cdp',
     cdp_url_env: 'JOB_BROWSER_CDP_URL',
     default_cdp_url: 'http://127.0.0.1:9222',
+    profile_env: 'JOB_BROWSER_PROFILE',
+    default_profile: process.env.JOB_BROWSER_PROFILE || 'shared-chrome-cdp',
+    rule: 'Use the existing authenticated Chrome profile behind the CDP endpoint. Do not launch a new browser or profile.',
     required: true
   },
   installer: {
@@ -251,17 +261,19 @@ build_prompt() {
   local run_dir="$3"
   local date="$4"
   local cdp_url="$5"
+  local browser_profile="$6"
 
   cat <<EOF
 You are running the standalone job "$JOB_NAME".
 
-Use the browser. Open Yahoo Finance's earnings calendar for ${date}:
-https://finance.yahoo.com/calendar/earnings?day=${date}
+BrowserUse reference (mandatory):
+- Connect to the existing authenticated Chrome via CDP: ${cdp_url}
+- Profile/session: ${browser_profile}. Use this existing profile only.
+- Do not launch a new browser, create a new profile, or use AI-internal web search.
+- If this browser connection is unavailable, write a failed result. Do not guess.
 
-Browser:
-- Use any available browser/Playwright tooling.
-- Prefer the shared Chrome CDP endpoint if available: ${cdp_url}
-- If browser access is unavailable, write a failed result. Do not silently fall back to guessing.
+Open Yahoo Finance's earnings calendar for ${date}:
+https://finance.yahoo.com/calendar/earnings?day=${date}
 
 Job folder:
 ${job_dir}
@@ -336,17 +348,19 @@ run_job() {
   local output_file="$run_dir/output.md"
   local date
   local cdp_url
+  local browser_profile
   local started_at
 
   date="$(target_date)"
   cdp_url="${JOB_BROWSER_CDP_URL:-$JOB_BROWSER_CDP_URL_DEFAULT}"
+  browser_profile="${JOB_BROWSER_PROFILE:-$JOB_BROWSER_PROFILE_DEFAULT}"
   started_at="$(utc_now)"
 
   mkdir -p "$logs_dir" "$data_dir" "$files_dir"
   write_job_json "$job_dir" "started" "$run_id" "Run started for $date."
   RUN_ID="$run_id" STARTED_AT="$started_at" write_result_json "$result_file" "started" "Yahoo earnings for $date" "Run started." "" ""
 
-  build_prompt "$job_dir" "$run_id" "$run_dir" "$date" "$cdp_url" > "$run_dir/prompt.md"
+  build_prompt "$job_dir" "$run_id" "$run_dir" "$date" "$cdp_url" "$browser_profile" > "$run_dir/prompt.md"
   write_job_json "$job_dir" "in_progress" "$run_id" "Claude is collecting Yahoo Finance earnings for $date."
   RUN_ID="$run_id" STARTED_AT="$started_at" write_result_json "$result_file" "in_progress" "Yahoo earnings for $date" "Claude is collecting Yahoo Finance earnings." "" ""
 
@@ -434,11 +448,11 @@ case "$cmd" in
     write_info_json
     ;;
   install)
-    shift
+    if (($# > 0)); then shift; fi
     install_job "${1:-$(default_job_dir)}"
     ;;
   run)
-    shift
+    if (($# > 0)); then shift; fi
     run_job "${1:-$(default_job_dir)}" "${2:-}"
     ;;
   help|-h|--help)
