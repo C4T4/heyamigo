@@ -5,19 +5,41 @@
 // knows how to inspect repo config, use MCP, run shell tools, and resume
 // sessions. This adapter keeps the same heyamigo contract Claude/Codex use:
 // one prompt in, one reply out, opaque provider-native session ids.
+//
+// Browser jobs cannot use Grok's ambient MCP set: a global `playwright`
+// server without --cdp-endpoint would launch a fresh unauthenticated
+// browser. There is no Claude `--strict-mcp-config` flag, so isolation is
+// a throwaway GROK_HOME + cwd that contains only the task-scoped MCP.
 
 import {
+  copyFileSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'fs'
-import { tmpdir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { join, resolve } from 'path'
+import {
+  AMIGOSPACE_MCP_SERVER_NAME,
+  configuredAmigospaceMcp,
+  withAmigospaceRoutingContext,
+} from '../amigospace/connector.js'
+import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
 import { config } from '../config.js'
+import { dbPath } from '../db/index.js'
 import { logger } from '../logger.js'
 import { logPrompt, type PromptLogEntry } from '../promptlog.js'
+import {
+  buildGrokIsolatedConfigToml,
+  grokBrowserIsolationArgs,
+  grokBrowserIsolationEnv,
+  grokBrowserPermissionMode,
+  type GrokMcpServer,
+} from './grok-settings.js'
 import type {
   AiProvider,
   AskParams,
@@ -27,6 +49,7 @@ import type {
   RunTaskResult,
   TaskMode,
 } from './provider.js'
+import { stripControlTokens } from './provider.js'
 import { runClaude, TIMEOUT_MS } from './spawn.js'
 
 let cachedSystemPrompt: string | null = null
@@ -82,16 +105,17 @@ function buildArgs(params: {
   prompt: string
   allowedTools?: string[] | 'all'
   promptFile: string
+  browserHome?: string
 }): { args: string[]; prompt: string } {
   const cfg = config.grok
   let prompt = params.prompt
   const args: string[] = [
-    '--cwd',
-    process.cwd(),
     '--output-format',
     'json',
     '--permission-mode',
-    permissionModeFor(params.mode),
+    params.browserHome || (cfg.alwaysApprove && params.mode !== 'read-only')
+      ? grokBrowserPermissionMode()
+      : permissionModeFor(params.mode),
     '--verbatim',
   ]
 
@@ -109,16 +133,22 @@ function buildArgs(params: {
     args.push('--no-memory')
   }
 
-  if (params.allowedTools && params.allowedTools !== 'all') {
-    if (params.allowedTools.length > 0) {
-      args.push('--allow', params.allowedTools.join(','))
-    }
-    if (!hasWebTool(params.allowedTools)) {
-      args.push('--disable-web-search')
+  for (const extra of cfg.extraArgs) args.push(extra)
+
+  if (params.browserHome) {
+    // After extraArgs so cwd/leader/web isolation cannot be overridden.
+    args.push(...grokBrowserIsolationArgs(params.browserHome))
+  } else {
+    args.push('--cwd', process.cwd())
+    if (params.allowedTools && params.allowedTools !== 'all') {
+      if (params.allowedTools.length > 0) {
+        args.push('--allow', params.allowedTools.join(','))
+      }
+      if (!hasWebTool(params.allowedTools)) {
+        args.push('--disable-web-search')
+      }
     }
   }
-
-  for (const extra of cfg.extraArgs) args.push(extra)
 
   if (params.sessionId) {
     args.push('--resume', params.sessionId)
@@ -238,7 +268,10 @@ function parseStreamingJson(stdout: string): RunTaskResult | null {
   if (!reply) return null
 
   return {
-    reply: reply.trim(),
+    // Checked !reply above on the raw accumulation so a stream that produced
+    // only control markers still returns a result (with an empty reply) rather
+    // than null, which the caller would read as "no output to parse".
+    reply: stripControlTokens(reply),
     sessionId,
     usage: {
       inputTokens: 0,
@@ -263,7 +296,7 @@ function parseGrokOutput(stdout: string): RunTaskResult | null {
     if (reply !== null) {
       const id = raw.sessionId ?? raw.session_id
       return {
-        reply: reply.trim(),
+        reply: stripControlTokens(reply),
         sessionId: typeof id === 'string' ? id : undefined,
         usage: usageFrom(raw),
       }
@@ -289,26 +322,75 @@ function removePromptFile(tmp: { dir: string; path: string }): void {
   } catch {}
 }
 
-async function runGrokTask(params: RunTaskParams): Promise<RunTaskResult> {
-  if (params.browserCdpUrl) {
-    // Grok currently has no invocation-scoped/strict MCP configuration flag.
-    // Falling back to its ambient MCPs could select a different browser, so
-    // browser jobs fail closed until the CLI exposes equivalent isolation.
-    throw new Error(
-      'Grok browser lane disabled: cannot enforce the configured CDP endpoint with invocation-scoped MCP isolation',
-    )
-  }
-  const tmp = createPromptFile(params.input)
-  let args: string[] = []
-  let promptForFile = params.input
+function realGrokHome(): string {
+  return process.env.GROK_HOME || join(homedir(), '.grok')
+}
+
+function linkGrokHomeFile(src: string, dest: string): void {
   try {
+    symlinkSync(src, dest)
+  } catch {
+    copyFileSync(src, dest)
+  }
+}
+
+function createIsolatedGrokHome(
+  mcpServers: Record<string, GrokMcpServer>,
+): string {
+  const dir = mkdtempSync(join(tmpdir(), 'heyamigo-grok-browser-'))
+  try {
+    const realHome = realGrokHome()
+    for (const name of ['auth.json', 'models_cache.json'] as const) {
+      const src = join(realHome, name)
+      if (existsSync(src)) linkGrokHomeFile(src, join(dir, name))
+    }
+    writeFileSync(join(dir, 'config.toml'), buildGrokIsolatedConfigToml(mcpServers), {
+      mode: 0o600,
+    })
+    return dir
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true })
+    throw err
+  }
+}
+
+function removeIsolatedGrokHome(dir: string | null): void {
+  if (!dir) return
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch {}
+}
+
+async function runGrokTask(params: RunTaskParams): Promise<RunTaskResult> {
+  const amigospace = configuredAmigospaceMcp(params.allowedTools)
+  const prompt = withAmigospaceRoutingContext(params.input, !!amigospace)
+  const tmp = createPromptFile(prompt)
+  let isolatedHome: string | null = null
+  let args: string[] = []
+  let promptForFile = prompt
+  try {
+    if (params.browserCdpUrl) {
+      if (!params.browserTaskId) {
+        throw new Error('browserTaskId is required for task-scoped browser MCP')
+      }
+      const mcp = browserTaskMcpSpec({
+        cdpEndpoint: params.browserCdpUrl,
+        taskId: params.browserTaskId,
+        databasePath: dbPath(),
+      })
+      const servers: Record<string, GrokMcpServer> = { playwright: mcp }
+      if (amigospace) servers[AMIGOSPACE_MCP_SERVER_NAME] = amigospace
+      isolatedHome = createIsolatedGrokHome(servers)
+    }
+
     const built = buildArgs({
       mode: params.mode,
       sessionId: params.sessionId,
       includeSystemPrompt: params.includeSystemPrompt,
-      prompt: params.input,
+      prompt,
       allowedTools: params.allowedTools,
       promptFile: tmp.path,
+      browserHome: isolatedHome ?? undefined,
     })
     args = built.args
     promptForFile = built.prompt
@@ -320,6 +402,7 @@ async function runGrokTask(params: RunTaskParams): Promise<RunTaskResult> {
         resume: !!params.sessionId,
         argv: args,
         promptChars: promptForFile.length,
+        grokHome: isolatedHome,
       },
       'spawning grok',
     )
@@ -330,6 +413,8 @@ async function runGrokTask(params: RunTaskParams): Promise<RunTaskResult> {
       timeoutMs: laneTimeoutMs(params.lane),
       caller: params.caller as PromptLogEntry['caller'],
       bin: config.grok.bin,
+      cwd: isolatedHome ?? undefined,
+      env: isolatedHome ? grokBrowserIsolationEnv(isolatedHome) : undefined,
     })
     const startedAt = Date.now() - durationMs
 
@@ -355,6 +440,7 @@ async function runGrokTask(params: RunTaskParams): Promise<RunTaskResult> {
     return parsed
   } finally {
     removePromptFile(tmp)
+    removeIsolatedGrokHome(isolatedHome)
   }
 }
 

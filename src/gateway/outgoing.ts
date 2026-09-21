@@ -1,5 +1,6 @@
 import { existsSync, realpathSync, statSync } from 'fs'
 import { extname, isAbsolute, relative, resolve } from 'path'
+import { stripControlTokens } from '../ai/provider.js'
 import { config } from '../config.js'
 import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
@@ -121,7 +122,11 @@ export async function handleReply(
   result: Result,
   _originalMsg: unknown,
 ): Promise<void> {
-  const raw = result.reply?.replaceAll('—', ', ').replaceAll('–', '-').trim()
+  const raw = result.reply
+    ? stripControlTokens(
+        result.reply.replaceAll('—', ', ').replaceAll('–', '-'),
+      )
+    : result.reply
   const address = addressForJob(job)
 
   // Empty (or "I'm staying silent") means stay out of the chat.

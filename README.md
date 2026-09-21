@@ -43,7 +43,7 @@ Telegram is optional. Create a bot with BotFather, set `telegram.enabled: true` 
 Other providers:
 
 - Codex: install `@openai/codex` and set `ai.provider: "codex"` in `config/config.json`.
-- Grok Build: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, run `grok login`, and set `ai.provider: "grok"`. Chat and non-browser async work are supported; browser jobs fail closed because Grok does not currently expose invocation-scoped MCP isolation.
+- Grok Build: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, run `grok login`, and set `ai.provider: "grok"`. Chat, async, and browser jobs are supported. Browser jobs use a throwaway `GROK_HOME` so only heyamigo's task-scoped Playwright MCP (the shared CDP Chrome) is visible.
 - Gemini: set `ai.provider: "gemini"`. Heyamigo uses the already-installed `gemini` CLI with `--yolo`, pins `gemini-3.6-flash` by default, and uses the CLI's existing login for chat, async, and task-scoped browser jobs.
 
 ## Bundled Amigospace connector
@@ -57,15 +57,15 @@ heyamigo amigospace connect
 heyamigo amigospace status
 ```
 
-The connector is injected into Claude, Codex, and Gemini invocations only when the active role has
-`tools: "all"` or explicitly allows `mcp__amigospace__*`. The default `user` and `guest` roles
-therefore cannot read the owner's workspace. Its path is `HeyAmigo → bundled authenticated MCP
-connector → agentgateway → space.heyamigo.org/mcp`; workspace and principal selection come from the
-validated MCP token, never model arguments. For a user-approved local file, the same connector
-streams its bytes through exact `POST /v1/blobs`, then invokes MCP `save` with the returned blob
-reference. The token cannot access any other HTTP API route and is never passed through
-model context, command arguments, environment variables, or normal logs. Grok remains fail-closed
-because its current CLI does not provide invocation-scoped MCP configuration.
+The connector is injected into Claude, Codex, and Gemini invocations, and into Grok browser jobs,
+only when the active role has `tools: "all"` or explicitly allows `mcp__amigospace__*`. The default
+`user` and `guest` roles therefore cannot read the owner's workspace. Its path is `HeyAmigo →
+bundled authenticated MCP connector → agentgateway → space.heyamigo.org/mcp`; workspace and
+principal selection come from the validated MCP token, never model arguments. For a user-approved
+local file, the same connector streams its bytes through exact `POST /v1/blobs`, then invokes MCP
+`save` with the returned blob reference. The token cannot access any other HTTP API route and is
+never passed through model context, command arguments, environment variables, or normal logs. Grok
+chat still uses the installed CLI config and does not inject Amigospace.
 
 The browser approval is setup only. Normal MCP calls do not refresh, rotate, or expire the stored
 token. Re-run `heyamigo amigospace connect` only to replace a revoked token or connect another

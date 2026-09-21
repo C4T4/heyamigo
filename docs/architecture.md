@@ -133,10 +133,12 @@ Amigospace is a bundled knowledge connector, not another provider or a replaceme
 memory used to operate the bot. A small stdio adapter obtains a short-lived access token from an
 owner-only rotating refresh credential and forwards provider MCP calls through agentgateway to the
 cloud Amigospace Streamable HTTP endpoint. The adapter is injected per invocation for Claude,
-Codex, and Gemini only when the resolved role has the Amigospace tool capability. Tenant and user
+Codex, Gemini, and Grok browser jobs when the resolved role has the Amigospace tool capability.
+Grok chat does not inject it. Tenant and user
 identity come from the validated token rather than model-controlled arguments. When cloud access is
 unavailable the tool fails explicitly; HeyAmigo has no embedded Amigospace runtime or silent local
-fallback. Grok is excluded until its CLI can accept invocation-scoped MCP configuration.
+fallback. Grok browser isolation is a throwaway `GROK_HOME` plus cwd, because the CLI has no
+`--strict-mcp-config` flag.
 
 ## Defaults that bias toward not-broken
 

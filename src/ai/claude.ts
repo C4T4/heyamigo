@@ -19,6 +19,7 @@ import type {
   RunTaskResult,
   TaskMode,
 } from './provider.js'
+import { stripControlTokens } from './provider.js'
 import { parseStreamJson, runClaude, TIMEOUT_MS } from './spawn.js'
 
 // Back-compat aliases — older callers import these names.
@@ -145,7 +146,7 @@ export async function askClaude(
   }
 
   const result: AskClaudeResult = {
-    reply: parsed.result,
+    reply: stripControlTokens(parsed.result),
     sessionId: parsed.sessionId,
     usage: {
       inputTokens: parsed.usage?.input_tokens ?? 0,
@@ -309,7 +310,7 @@ export async function runClaudeTask(
     )
   }
 
-  const reply = parsed.result.trim()
+  const reply = stripControlTokens(parsed.result)
   const usage = {
     inputTokens: parsed.usage?.input_tokens ?? 0,
     cacheReadTokens: parsed.usage?.cache_read_input_tokens ?? 0,

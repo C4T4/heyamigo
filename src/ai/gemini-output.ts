@@ -1,4 +1,5 @@
 import type { AskUsage, RunTaskResult } from './provider.js'
+import { stripControlTokens } from './provider.js'
 
 type GeminiModelStats = {
   tokens?: {
@@ -126,7 +127,7 @@ function parseStreamJson(stdout: string): RunTaskResult | null {
     }
   }
   if (!completed) return null
-  return { reply: reply.trim(), sessionId, usage }
+  return { reply: stripControlTokens(reply), sessionId, usage }
 }
 
 export function parseGeminiOutput(stdout: string): RunTaskResult | null {
@@ -137,7 +138,7 @@ export function parseGeminiOutput(stdout: string): RunTaskResult | null {
   }
   if (typeof raw.response !== 'string') return null
   return {
-    reply: raw.response.trim(),
+    reply: stripControlTokens(raw.response),
     sessionId: typeof raw.session_id === 'string' ? raw.session_id : undefined,
     usage: usageFromStats(raw.stats),
   }

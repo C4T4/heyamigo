@@ -89,6 +89,21 @@ export type RunTaskResult = {
   usage?: AskUsage
 }
 
+// Chat-template control markers — `<|eos|>`, `<|endoftext|>`, `<|im_end|>`,
+// `<|eot_id|>` and friends. A model asked to stay silent sometimes writes its
+// stop token as literal text instead of producing no output, and the CLIs pass
+// that straight through in their JSON payload.
+const CONTROL_TOKEN_RE = /<\|[\w.-]*\|>/g
+
+// Strip control markers and trim. A reply that was nothing but markers becomes
+// '' — which the gateway already treats as "stay silent", so the fix needs no
+// new signalling path. Applied per-provider at the parse boundary so the
+// artifact never escapes the layer that produced it, and again in the gateway
+// as a backstop for providers added later.
+export function stripControlTokens(text: string): string {
+  return text.replace(CONTROL_TOKEN_RE, '').trim()
+}
+
 // How the provider's CLI reports usage counts in its result payload.
 //   'per-turn'   — counts represent this one API call (Claude/Gemini CLI).
 //   'cumulative' — counts represent the entire resume thread to date

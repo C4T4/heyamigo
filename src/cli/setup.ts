@@ -544,9 +544,8 @@ export async function runSetup(): Promise<void> {
         'Automated browser setup is available on Linux only. ' +
           'On macOS/Windows: start Chrome with --remote-debugging-port=9222 manually, ' +
           'then for Claude: claude mcp add playwright -- npx @playwright/mcp@latest --cdp-endpoint "http://localhost:9222"; ' +
-          'for Codex: add [mcp_servers.playwright] to ~/.codex/config.toml; ' +
-          'for Grok: use grok mcp to add the same Playwright MCP server. ' +
-          'Gemini needs no global MCP entry; heyamigo injects its task-scoped browser MCP per job.',
+          'for Codex: add [mcp_servers.playwright] to ~/.codex/config.toml. ' +
+          'Grok and Gemini need no global MCP entry; heyamigo injects a task-scoped browser MCP per job.',
       )
     } else {
       // ── Check if already running ─────────────────────────────
@@ -591,9 +590,7 @@ export async function runSetup(): Promise<void> {
           }
         }
         if (hasGrok) {
-          p.log.info(
-            'For Grok, add Playwright MCP with grok mcp if it is not already configured.',
-          )
+          p.log.success('Grok browser isolation ready (task-scoped MCP)')
         }
         if (hasGemini) {
           p.log.success('Gemini browser isolation ready (task-scoped MCP)')
@@ -730,9 +727,7 @@ export async function runSetup(): Promise<void> {
               }
             }
             if (hasGrok) {
-              p.log.info(
-                'For Grok, add Playwright MCP with grok mcp if it is not already configured.',
-              )
+              p.log.success('Grok browser isolation ready (task-scoped MCP)')
             }
             if (hasGemini) {
               p.log.success('Gemini browser isolation ready (task-scoped MCP)')

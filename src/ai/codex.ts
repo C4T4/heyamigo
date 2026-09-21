@@ -47,6 +47,7 @@ import type {
   RunTaskResult,
   TaskMode,
 } from './provider.js'
+import { stripControlTokens } from './provider.js'
 import { runClaude, TIMEOUT_MS } from './spawn.js'
 
 let cachedSystemPrompt: string | null = null
@@ -305,7 +306,7 @@ function parseCodexOutput(stdout: string): RunTaskResult | null {
   }
 
   return {
-    reply: reply.trim(),
+    reply: stripControlTokens(reply),
     sessionId,
     usage: {
       inputTokens,
