@@ -1,5 +1,5 @@
 // Grok Build CLI provider. Maps the neutral AiProvider contract onto
-// `grok` headless mode (`--prompt-file` + `--output-format json`).
+// `grok` headless mode (`--prompt-file` + `--output-format streaming-json`).
 //
 // Grok Build is a local coding-agent CLI, not a plain API model. It already
 // knows how to inspect repo config, use MCP, run shell tools, and resume
@@ -51,6 +51,7 @@ import type {
   RunTaskResult,
   TaskMode,
 } from './provider.js'
+import { assembleGrokStreamReply } from './grok-stream.js'
 import { stripControlTokens } from './provider.js'
 import { runClaude, TIMEOUT_MS } from './spawn.js'
 
@@ -111,7 +112,7 @@ function buildArgs(params: {
   let prompt = params.prompt
   const args: string[] = [
     '--output-format',
-    'json',
+    'streaming-json',
     '--permission-mode',
     params.browserHome || (cfg.alwaysApprove && params.mode !== 'read-only')
       ? grokBrowserPermissionMode()
@@ -187,6 +188,7 @@ type GrokOutput = {
     cached_input_tokens?: number
     input_tokens?: number
     output_tokens?: number
+    cache_read_input_tokens?: number
   }
   [key: string]: unknown
 }
@@ -197,7 +199,10 @@ function usageFrom(raw: GrokOutput): AskUsage {
     inputTokens:
       usage?.inputTokens ?? usage?.input_tokens ?? usage?.prompt_tokens ?? 0,
     cacheReadTokens:
-      usage?.cacheReadTokens ?? usage?.cached_input_tokens ?? 0,
+      usage?.cacheReadTokens ??
+      usage?.cached_input_tokens ??
+      usage?.cache_read_input_tokens ??
+      0,
     cacheCreationTokens: usage?.cacheCreationTokens ?? 0,
     outputTokens:
       usage?.outputTokens ?? usage?.output_tokens ?? usage?.completion_tokens ?? 0,
@@ -240,9 +245,10 @@ function parseJsonObject(stdout: string): GrokOutput | null {
 }
 
 function parseStreamingJson(stdout: string): RunTaskResult | null {
-  let reply = ''
   let sessionId: string | undefined
   let error: string | null = null
+  let usageRaw: GrokOutput['usage']
+  let sawEnd = false
 
   for (const line of stdout.split(/\r?\n/)) {
     const trimmed = line.trim()
@@ -254,35 +260,26 @@ function parseStreamingJson(stdout: string): RunTaskResult | null {
       continue
     }
 
-    if (ev.type === 'text' && typeof ev.data === 'string') {
-      reply += ev.data
-    } else if (typeof ev.type === 'string' && ev.type.includes('tool')) {
-      // Status text before a tool call is not the reply.
-      reply = ''
-    } else if (ev.type === 'end') {
+    if (ev.type === 'end') {
+      sawEnd = true
       const id = ev.sessionId ?? ev.session_id
       if (typeof id === 'string') sessionId = id
+      if (ev.usage) usageRaw = ev.usage
     } else if (ev.type === 'error') {
       error = textFrom(ev) ?? (typeof ev.data === 'string' ? ev.data : null)
     }
   }
 
   if (error) throw new Error(`grok returned error: ${error}`)
-  if (!reply) return null
+  const reply = assembleGrokStreamReply(stdout)
+  if (!reply && !sawEnd) return null
 
   return {
-    // Checked !reply above on the raw accumulation so a stream that produced
-    // only control markers still returns a result (with an empty reply) rather
-    // than null, which the caller would read as "no output to parse".
+    // Checked the raw stream above so a turn that produced only control
+    // markers still returns a result rather than null.
     reply: stripControlTokens(reply),
     sessionId,
-    usage: {
-      inputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      outputTokens: 0,
-      numTurns: 0,
-    },
+    usage: usageFrom({ usage: usageRaw }),
   }
 }
 
