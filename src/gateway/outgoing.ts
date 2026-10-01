@@ -1,6 +1,7 @@
 import { existsSync, realpathSync, statSync } from 'fs'
 import { extname, isAbsolute, relative, resolve } from 'path'
 import { stripControlTokens } from '../ai/provider.js'
+import { enforceReplyShape } from './reply-shape.js'
 import { config } from '../config.js'
 import { formatAddress, jidToAddress } from '../db/address.js'
 import { logger } from '../logger.js'
@@ -123,8 +124,10 @@ export async function handleReply(
   _originalMsg: unknown,
 ): Promise<void> {
   const raw = result.reply
-    ? stripControlTokens(
-        result.reply.replaceAll('—', ', ').replaceAll('–', '-'),
+    ? enforceReplyShape(
+        stripControlTokens(
+          result.reply.replaceAll('—', ', ').replaceAll('–', '-'),
+        ),
       )
     : result.reply
   const address = addressForJob(job)

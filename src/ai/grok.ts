@@ -256,6 +256,9 @@ function parseStreamingJson(stdout: string): RunTaskResult | null {
 
     if (ev.type === 'text' && typeof ev.data === 'string') {
       reply += ev.data
+    } else if (typeof ev.type === 'string' && ev.type.includes('tool')) {
+      // Status text before a tool call is not the reply.
+      reply = ''
     } else if (ev.type === 'end') {
       const id = ev.sessionId ?? ev.session_id
       if (typeof id === 'string') sessionId = id
