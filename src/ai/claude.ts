@@ -7,6 +7,11 @@ import {
   withAmigospaceRoutingContext,
 } from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
+import {
+  claudeHttpMcpServers,
+  claudeHttpToolPatterns,
+} from '../mcp/registry.js'
+import { composeSystemPrompt } from '../pack/loader.js'
 import { config } from '../config.js'
 import { dbPath } from '../db/index.js'
 import { logger } from '../logger.js'
@@ -43,9 +48,7 @@ function systemPrompt(): string {
   } catch {
     // memory instructions optional
   }
-  cachedSystemPrompt = memoryInstructions
-    ? `${personality}\n\n---\n\n${memoryInstructions}`
-    : personality
+  cachedSystemPrompt = composeSystemPrompt(personality, memoryInstructions)
   return cachedSystemPrompt
 }
 
@@ -70,15 +73,13 @@ function buildArgs(params: AskClaudeParams): string[] {
   ]
 
   const amigospace = configuredAmigospaceMcp(params.allowedTools)
-  if (amigospace) {
-    args.push(
-      '--mcp-config',
-      JSON.stringify({
-        mcpServers: {
-          [AMIGOSPACE_MCP_SERVER_NAME]: amigospace,
-        },
-      }),
-    )
+  const shared = claudeHttpMcpServers()
+  const mcpServers = {
+    ...shared,
+    ...(amigospace ? { [AMIGOSPACE_MCP_SERVER_NAME]: amigospace } : {}),
+  }
+  if (Object.keys(mcpServers).length) {
+    args.push('--mcp-config', JSON.stringify({ mcpServers }))
   }
 
   if (params.sessionId) {
@@ -203,6 +204,7 @@ function buildTaskArgs(params: RunTaskParams): string[] {
   ]
 
   const amigospace = configuredAmigospaceMcp(params.allowedTools)
+  const shared = claudeHttpMcpServers()
 
   if (params.browserCdpUrl) {
     if (!params.browserTaskId) {
@@ -219,6 +221,7 @@ function buildTaskArgs(params: RunTaskParams): string[] {
           command: mcp.command,
           args: mcp.args,
         },
+        ...shared,
         ...(amigospace
           ? { [AMIGOSPACE_MCP_SERVER_NAME]: amigospace }
           : {}),
@@ -234,12 +237,13 @@ function buildTaskArgs(params: RunTaskParams): string[] {
       '--tools',
       '',
     )
-  } else if (amigospace) {
+  } else if (amigospace || Object.keys(shared).length) {
     args.push(
       '--mcp-config',
       JSON.stringify({
         mcpServers: {
-          [AMIGOSPACE_MCP_SERVER_NAME]: amigospace,
+          ...shared,
+          ...(amigospace ? { [AMIGOSPACE_MCP_SERVER_NAME]: amigospace } : {}),
         },
       }),
     )
@@ -266,6 +270,7 @@ function buildTaskArgs(params: RunTaskParams): string[] {
   const allowedTools = params.browserCdpUrl
     ? [
         'mcp__playwright__*',
+        ...claudeHttpToolPatterns(),
         ...(amigospace ? [AMIGOSPACE_MCP_TOOL_PATTERN] : []),
       ]
     : params.allowedTools && params.allowedTools !== 'all'

@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "example": {
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer REPLACE_ME"
+      }
+    }
+  }
+}

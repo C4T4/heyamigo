@@ -8,6 +8,7 @@ import { personIdForAddress } from '../db/identity-sync.js'
 import { estimate as estimateJob } from '../estimates/index.js'
 import { logger } from '../logger.js'
 import { buildMemoryPreamble } from '../memory/preamble.js'
+import { mandatoryShapeReminder } from '../pack/loader.js'
 import { enqueueInbound } from '../queue/inbound.js'
 import { enqueueOutbound } from '../queue/outbound.js'
 import type { Job } from '../queue/types.js'
@@ -399,6 +400,7 @@ export async function processIncomingMessage(
   if (replyWithVoice) {
     input = `${input}\n\n---\n\n${buildVoiceReplyContract()}`
   }
+  input = `${input}\n\n---\n\n${mandatoryShapeReminder()}`
 
   logger.info(
     { ...logCtx, resume: !!existingSession, trigger: triggerReason },

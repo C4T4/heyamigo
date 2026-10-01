@@ -6,6 +6,7 @@ import {
   grokBrowserIsolationArgs,
   grokBrowserIsolationEnv,
   grokBrowserPermissionMode,
+  tomlHttpServer,
   tomlStdioServer,
   tomlString,
 } from '../src/ai/grok-settings.js'
@@ -29,6 +30,40 @@ test('stdio MCP blocks pin command, args, and enabled', () => {
       '',
     ].join('\n'),
   )
+})
+
+test('HTTP MCP blocks pin url and headers', () => {
+  assert.equal(
+    tomlHttpServer('example', {
+      url: 'https://example.com/mcp',
+      headers: { Authorization: 'Bearer secret' },
+    }),
+    [
+      '[mcp_servers.example]',
+      'url = "https://example.com/mcp"',
+      'enabled = true',
+      '',
+      '[mcp_servers.example.headers]',
+      'Authorization = "Bearer secret"',
+      '',
+    ].join('\n'),
+  )
+})
+
+test('isolated Grok config keeps an HTTP server beside Playwright', () => {
+  const toml = buildGrokIsolatedConfigToml({
+    playwright: {
+      command: '/usr/bin/node',
+      args: ['dist/browser/task-mcp.js'],
+    },
+    example: {
+      url: 'https://example.com/mcp',
+      headers: { Authorization: 'Bearer secret' },
+    },
+  })
+  assert.match(toml, /\[mcp_servers\.playwright\]/)
+  assert.match(toml, /\[mcp_servers\.example\]\nurl = "https:\/\/example.com\/mcp"/)
+  assert.match(toml, /\[mcp_servers\.example\.headers\]\nAuthorization = "Bearer secret"/)
 })
 
 test('isolated Grok config exposes only the given MCP servers', () => {

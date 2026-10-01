@@ -181,10 +181,19 @@ function scaffoldProject(targetDir: string, pkgDir: string): void {
     'memory-instructions.md',
     'import-instructions.md',
     'import-instructions.HOWTO.md',
+    'pack.example.json',
+    'mcp.example.json',
   ]
   for (const f of configFiles) {
     const src = resolve(pkgDir, 'config', f)
     if (existsSync(src)) copyFileSync(src, resolve(configDir, f))
+  }
+
+  const mandatoryDir = resolve(configDir, 'mandatory')
+  mkdirSync(mandatoryDir, { recursive: true })
+  const mandatorySkill = resolve(pkgDir, 'config', 'mandatory', 'i-have-adhd.md')
+  if (existsSync(mandatorySkill)) {
+    copyFileSync(mandatorySkill, resolve(mandatoryDir, 'i-have-adhd.md'))
   }
 
   // Copy personalities

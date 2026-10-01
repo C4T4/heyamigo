@@ -11,6 +11,8 @@ import {
   withAmigospaceRoutingContext,
 } from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
+import { geminiHttpMcpServers } from '../mcp/registry.js'
+import { composeSystemPrompt } from '../pack/loader.js'
 import { config } from '../config.js'
 import { dbPath } from '../db/index.js'
 import { logger } from '../logger.js'
@@ -22,6 +24,7 @@ import {
 import {
   buildGeminiSystemSettings,
   geminiIsolationArgs,
+  type GeminiMcpServer,
 } from './gemini-settings.js'
 import type {
   AiProvider,
@@ -50,9 +53,7 @@ function systemPrompt(): string {
   } catch {
     // memory instructions optional
   }
-  cachedSystemPrompt = memoryInstructions
-    ? `${personality}\n\n---\n\n${memoryInstructions}`
-    : personality
+  cachedSystemPrompt = composeSystemPrompt(personality, memoryInstructions)
   return cachedSystemPrompt
 }
 
@@ -113,21 +114,26 @@ function createRuntimeSettings(
 ): RuntimeSettings | null {
   const browser = !!params.browserCdpUrl
   const amigospace = configuredAmigospaceMcp(params.allowedTools)
+  const shared = geminiHttpMcpServers()
   const selectedCoreTools = browser
     ? []
     : coreToolsFor(params.allowedTools, params.mode)
   // The owner's normal unrestricted lane is deliberately just the installed
-  // Gemini CLI. A temp settings file is needed only for role tool limits or
-  // the task-scoped browser MCP.
-  if (!browser && !amigospace && selectedCoreTools === undefined) return null
+  // Gemini CLI. A temp settings file is needed for role tool limits, the
+  // task-scoped browser MCP, or shared HTTP MCPs from config/mcp.json.
+  if (
+    !browser &&
+    !amigospace &&
+    !Object.keys(shared).length &&
+    selectedCoreTools === undefined
+  ) {
+    return null
+  }
 
   const dir = mkdtempSync(join(tmpdir(), 'heyamigo-gemini-'))
   try {
     const path = join(dir, 'system-settings.json')
-    const mcpServers: Record<
-      string,
-      { command: string; args: string[]; trust: true }
-    > = {}
+    const mcpServers: Record<string, GeminiMcpServer> = { ...shared }
 
     if (browser) {
       if (!params.browserTaskId) {

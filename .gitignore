@@ -18,6 +18,8 @@ storage/
 # config with private data (live copies, gitignored)
 config/config.json
 config/access.json
+config/mcp.json
+config/pack.json
 
 # logs
 *.log

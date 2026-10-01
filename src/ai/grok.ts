@@ -29,6 +29,8 @@ import {
   withAmigospaceRoutingContext,
 } from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
+import { grokHttpMcpServers } from '../mcp/registry.js'
+import { composeSystemPrompt } from '../pack/loader.js'
 import { config } from '../config.js'
 import { dbPath } from '../db/index.js'
 import { logger } from '../logger.js'
@@ -69,9 +71,7 @@ function systemPrompt(): string {
   } catch {
     // memory instructions optional
   }
-  cachedSystemPrompt = memoryInstructions
-    ? `${personality}\n\n---\n\n${memoryInstructions}`
-    : personality
+  cachedSystemPrompt = composeSystemPrompt(personality, memoryInstructions)
   return cachedSystemPrompt
 }
 
@@ -326,6 +326,79 @@ function realGrokHome(): string {
   return process.env.GROK_HOME || join(homedir(), '.grok')
 }
 
+function unquoteToml(value: string): string {
+  const v = value.trim()
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    try {
+      return JSON.parse(
+        v.startsWith("'") ? `"${v.slice(1, -1).replace(/"/g, '\\"')}"` : v,
+      ) as string
+    } catch {
+      return v.slice(1, -1)
+    }
+  }
+  return v
+}
+
+/** HTTP MCPs from the real user Grok config. Isolated homes must not copy Playwright. */
+const ISOLATED_GROK_MCP_BLOCKLIST = new Set(['playwright'])
+
+function userGrokHttpMcps(): Record<string, { url: string; headers: Record<string, string> }> {
+  const path = join(realGrokHome(), 'config.toml')
+  if (!existsSync(path)) return {}
+  const text = readFileSync(path, 'utf-8')
+  const servers: Record<
+    string,
+    { url: string; headers: Record<string, string>; enabled: boolean }
+  > = {}
+  let current: string | null = null
+  let inHeaders = false
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    const headerMatch = line.match(/^\[mcp_servers\.([^\].]+)\]$/)
+    const headersMatch = line.match(/^\[mcp_servers\.([^\].]+)\.headers\]$/)
+    if (headersMatch) {
+      current = headersMatch[1]
+      inHeaders = true
+      if (!servers[current]) servers[current] = { url: '', headers: {}, enabled: true }
+      continue
+    }
+    if (headerMatch) {
+      current = headerMatch[1]
+      inHeaders = false
+      if (!servers[current]) servers[current] = { url: '', headers: {}, enabled: true }
+      continue
+    }
+    if (line.startsWith('[')) {
+      current = null
+      inHeaders = false
+      continue
+    }
+    if (!current) continue
+    const eq = line.indexOf('=')
+    if (eq < 0) continue
+    const key = line.slice(0, eq).trim()
+    const val = unquoteToml(line.slice(eq + 1))
+    if (inHeaders) {
+      servers[current].headers[key] = val
+      continue
+    }
+    if (key === 'url') servers[current].url = val
+    if (key === 'enabled') servers[current].enabled = val !== 'false'
+  }
+  const out: Record<string, { url: string; headers: Record<string, string> }> = {}
+  for (const [name, spec] of Object.entries(servers)) {
+    if (ISOLATED_GROK_MCP_BLOCKLIST.has(name)) continue
+    if (!spec.url || spec.enabled === false) continue
+    out[name] = { url: spec.url, headers: spec.headers }
+  }
+  return out
+}
+
 function linkGrokHomeFile(src: string, dest: string): void {
   try {
     symlinkSync(src, dest)
@@ -378,7 +451,11 @@ async function runGrokTask(params: RunTaskParams): Promise<RunTaskResult> {
         taskId: params.browserTaskId,
         databasePath: dbPath(),
       })
-      const servers: Record<string, GrokMcpServer> = { playwright: mcp }
+      const servers: Record<string, GrokMcpServer> = {
+        playwright: mcp,
+        ...userGrokHttpMcps(),
+        ...grokHttpMcpServers(),
+      }
       if (amigospace) servers[AMIGOSPACE_MCP_SERVER_NAME] = amigospace
       isolatedHome = createIsolatedGrokHome(servers)
     }

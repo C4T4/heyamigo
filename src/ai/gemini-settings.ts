@@ -1,8 +1,16 @@
-export type GeminiMcpServer = {
+export type GeminiStdioMcpServer = {
   command: string
   args: string[]
   trust: true
 }
+
+export type GeminiHttpMcpServer = {
+  httpUrl: string
+  headers: Record<string, string>
+  trust: true
+}
+
+export type GeminiMcpServer = GeminiStdioMcpServer | GeminiHttpMcpServer
 
 export function geminiIsolationArgs(allowedMcpServers: string[] = []): string[] {
   return [

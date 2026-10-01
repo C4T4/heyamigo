@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "example-skill",
+      "source": "https://github.com/owner/repo",
+      "mode": "always",
+      "file": "./config/skills/example-skill.md",
+      "description": "What it changes about replies."
+    }
+  ],
+  "mcps": [
+    "example"
+  ]
+}

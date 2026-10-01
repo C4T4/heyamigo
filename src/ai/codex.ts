@@ -35,6 +35,8 @@ import {
   withAmigospaceRoutingContext,
 } from '../amigospace/connector.js'
 import { browserTaskMcpSpec } from '../browser/task-mcp-command.js'
+import { codexHttpMcpConfigArgs } from '../mcp/registry.js'
+import { composeSystemPrompt } from '../pack/loader.js'
 import { config, type ReasoningEffort } from '../config.js'
 import { dbPath } from '../db/index.js'
 import { logger } from '../logger.js'
@@ -67,9 +69,7 @@ function systemPrompt(): string {
   } catch {
     // memory instructions optional
   }
-  cachedSystemPrompt = memoryInstructions
-    ? `${personality}\n\n---\n\n${memoryInstructions}`
-    : personality
+  cachedSystemPrompt = composeSystemPrompt(personality, memoryInstructions)
   return cachedSystemPrompt
 }
 
@@ -162,6 +162,7 @@ function buildExecArgs(params: {
       `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.args=${JSON.stringify(amigospace.args)}`,
     )
   }
+  args.push(...codexHttpMcpConfigArgs())
 
   // Keep the chat-selected effort as the final config override so it wins
   // over the global config and any profile supplied through extraArgs.
