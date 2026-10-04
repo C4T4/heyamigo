@@ -38,6 +38,8 @@ test('bundled connector uses the current Node runtime and cloud proxy', () => {
       `${process.cwd()}/storage/auth/amigospace/mcp-token`,
       '--timeout-ms',
       '4000',
+      '--download-dir',
+      `${process.cwd()}/storage/media/amigospace`,
     ],
   })
   assert.equal(connector.commandFor([]), null)

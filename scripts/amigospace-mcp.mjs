@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { constants } from 'node:fs'
-import { open } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
-import { basename, dirname, extname, isAbsolute } from 'node:path'
+import { mkdir, open, rename, unlink } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -48,7 +49,9 @@ const allowedOptions = new Set([
   '--endpoint',
   '--credential-file',
   '--timeout-ms',
+  '--download-dir',
 ])
+const MAXIMUM_DOWNLOAD_BYTES = 200 * 1024 * 1024
 
 function parseOptions(argv) {
   const parsed = new Map()
@@ -149,6 +152,12 @@ const timeoutMs = Number.parseInt(options.get('--timeout-ms') ?? '5000', 10)
 if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30000) {
   throw new Error('--timeout-ms must be an integer between 1000 and 30000')
 }
+
+// HeyAmigo passes its media directory, which every provider may read and the
+// outbound sender may attach. A person's own CLI session (Grok, Claude, Codex)
+// spawns this script from whatever folder it is in, so without the option the
+// files go to one place they can find rather than scattering per project.
+const downloadDirectory = resolve(options.get('--download-dir') ?? join(homedir(), 'Downloads', 'Amigospace'))
 
 const token = await loadMcpToken(credentialFile)
 const authenticatedFetch = (input, init = {}) => {
@@ -385,6 +394,119 @@ async function uploadLocalFile(rawInput) {
   }
 }
 
+const downloadFileTool = {
+  name: 'download_file',
+  title: 'Download a stored file',
+  description:
+    'Fetch the original bytes of a file node from private Amigospace storage into a local file and return its absolute path. Get the blobId from open with detail "full" on the file node. Use the returned path to send the file ([FILE: path]) or attach it elsewhere; never claim a file was fetched without this result.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['blobId'],
+    properties: {
+      blobId: { type: 'string', format: 'uuid', description: 'content.blob.id of the file node.' },
+      fileName: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 255,
+        description: 'Optional local file name; defaults to the stored original name.',
+      },
+    },
+  },
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+}
+
+function downloadInput(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('DOWNLOAD_FILE_INPUT_INVALID')
+  }
+  if (
+    typeof value.blobId !== 'string' ||
+    !UUID_PATTERN.test(value.blobId) ||
+    (value.fileName !== undefined &&
+      (typeof value.fileName !== 'string' || value.fileName.length < 1 || value.fileName.length > 255))
+  ) {
+    throw new Error('DOWNLOAD_FILE_INPUT_INVALID')
+  }
+  return value
+}
+
+function safeFileName(name) {
+  const cleaned = basename(String(name)).replace(/[\u0000-\u001f"<>|:*?\\]/g, '_').trim()
+  if (!cleaned || cleaned === '.' || cleaned === '..') return 'file'
+  return cleaned.slice(0, 255)
+}
+
+async function downloadStoredFile(rawInput) {
+  const input = downloadInput(rawInput)
+  const response = await authenticatedFetch(
+    new URL(`/v1/blobs/${encodeURIComponent(input.blobId)}/original`, endpoint),
+    { method: 'GET' },
+  )
+  if (!response.ok || response.body === null) {
+    throw new Error(`DOWNLOAD_HTTP_${response.status}`)
+  }
+  const declaredBytes = Number.parseInt(response.headers.get('content-length') ?? '', 10)
+  if (Number.isInteger(declaredBytes) && declaredBytes > MAXIMUM_DOWNLOAD_BYTES) {
+    throw new Error('DOWNLOAD_FILE_TOO_LARGE')
+  }
+  const expectedSha256 = response.headers.get('x-amigospace-sha256') ?? ''
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const utf8Name = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  const plainName = disposition.match(/filename="?([^";]+)"?/i)
+  const originalName = utf8Name
+    ? decodeURIComponent(utf8Name[1])
+    : plainName
+      ? plainName[1]
+      : `${input.blobId}${extname(input.fileName ?? '')}`
+  const fileName = safeFileName(input.fileName ?? originalName)
+  const directory = join(downloadDirectory, input.blobId)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const finalPath = join(directory, fileName)
+  const partialPath = `${finalPath}.part-${randomUUID()}`
+  const digest = createHash('sha256')
+  let received = 0
+  let handle
+  try {
+    handle = await open(partialPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
+    for await (const chunk of response.body) {
+      received += chunk.byteLength
+      if (received > MAXIMUM_DOWNLOAD_BYTES) throw new Error('DOWNLOAD_FILE_TOO_LARGE')
+      digest.update(chunk)
+      await handle.write(chunk)
+    }
+    await handle.close()
+    handle = undefined
+    const sha256 = digest.digest('hex')
+    if (expectedSha256 && sha256 !== expectedSha256) throw new Error('DOWNLOAD_CHECKSUM_MISMATCH')
+    await rename(partialPath, finalPath)
+    return {
+      content: [{
+        type: 'text',
+        text: `Downloaded ${fileName} (${received} bytes) to ${finalPath}.`,
+      }],
+      structuredContent: {
+        path: finalPath,
+        fileName,
+        originalName,
+        mediaType: response.headers.get('content-type') ?? 'application/octet-stream',
+        sizeBytes: received,
+        sha256,
+        blobId: input.blobId,
+      },
+    }
+  } catch (error) {
+    await handle?.close().catch(() => {})
+    await unlink(partialPath).catch(() => {})
+    throw error
+  }
+}
+
 const upstream = new Client(
   { name: 'heyamigo-amigospace-connector', version: '1.0.0' },
   { capabilities: {} },
@@ -405,13 +527,29 @@ const server = new Server(
 
 server.setRequestHandler(ListToolsRequestSchema, async (request) => {
   const listed = await upstream.listTools(request.params, { timeout: timeoutMs })
-  if (listed.tools.some(({ name }) => name === uploadFileTool.name)) {
-    throw new Error('Amigospace upstream tool collides with local upload_file')
+  for (const local of [uploadFileTool, downloadFileTool]) {
+    if (listed.tools.some(({ name }) => name === local.name)) {
+      throw new Error(`Amigospace upstream tool collides with local ${local.name}`)
+    }
   }
-  return { ...listed, tools: [...listed.tools, uploadFileTool] }
+  return { ...listed, tools: [...listed.tools, uploadFileTool, downloadFileTool] }
 })
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (request.params.name === downloadFileTool.name) {
+    try {
+      return await downloadStoredFile(request.params.arguments)
+    } catch (error) {
+      const code = error instanceof Error && /^[A-Z][A-Z0-9_]{0,127}$/.test(error.message)
+        ? error.message
+        : 'DOWNLOAD_FILE_FAILED'
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `${code}: The stored file was not downloaded.` }],
+        structuredContent: { code },
+      }
+    }
+  }
   if (request.params.name !== uploadFileTool.name) {
     return upstream.callTool(request.params, undefined, { timeout: timeoutMs })
   }
