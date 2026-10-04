@@ -34,6 +34,11 @@ When the user asks to save an attached or local file, call `upload_file` with th
 path shown in the current message. That tool streams the actual bytes and creates the file node.
 Never save a local path string as if it were an uploaded file.
 
+To send or attach a stored file, `open` its node with detail `full`, take `content.blob.id`, call
+`download_file` with that `blobId`, and use the returned absolute `path` (for chat, `[FILE: path]`).
+Prefer `download_file` over `download`: it writes the bytes to a local file instead of returning
+them as base64 in the conversation. A file node alone is a description of the file, never its bytes.
+
 Retrieve progressively: `resume` or `browse`, then `search`, then `open` at summary or relevant-section
 detail. Load a full source only when exact or visual inspection requires it. Prefer source handles and
 exact excerpts over broad summaries. Never provide a user ID or workspace ID; identity is derived by

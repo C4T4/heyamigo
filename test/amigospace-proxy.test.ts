@@ -135,7 +135,7 @@ test('stdio connector forwards MCP calls with one durable token', async () => {
   try {
     await client.connect(connectorTransport, { timeout: 5_000 })
     const listed = await client.listTools(undefined, { timeout: 5_000 })
-    assert.deepEqual(listed.tools.map((tool) => tool.name), ['browse', 'upload_file'])
+    assert.deepEqual(listed.tools.map((tool) => tool.name), ['browse', 'upload_file', 'download_file'])
 
     const result = await client.callTool(
       { name: 'browse', arguments: {} },

@@ -76,6 +76,8 @@ export class AmigospaceConnector implements KnowledgeConnector {
         resolve(this.configuration.credentialFile),
         '--timeout-ms',
         String(this.configuration.requestTimeoutMs),
+        '--download-dir',
+        resolve(config.storage.mediaDir, 'amigospace'),
       ],
     }
   }
