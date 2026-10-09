@@ -110,6 +110,87 @@ function setConfigOwnerNumber(configPath: string, number: string): void {
   } catch {}
 }
 
+function heyamigoIsRunning(projectDir: string): boolean {
+  const pidFile = resolve(projectDir, 'storage/heyamigo.pid')
+  if (!existsSync(pidFile)) return false
+  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10)
+  if (!Number.isFinite(pid)) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function connectedNote(name: string): string {
+  return [
+    'Connected.',
+    '',
+    'This chat is how you talk to me. Write here and I reply. You do not have to say my name.',
+    '',
+    `I stay quiet in groups until you turn that group on. Then people say "${name}" to reach me.`,
+  ].join('\n')
+}
+
+// Opens the saved WhatsApp session and sends one note to Message Yourself.
+// A second login while the bot is running replaces the live session, so the
+// caller must check that first.
+async function sendConnectedNote(authDir: string, ownerNum: string, name: string): Promise<void> {
+  const { default: makeWASocket, useMultiFileAuthState, fetchLatestWaWebVersion, Browsers } =
+    await import('baileys')
+  const pino = await import('pino')
+  const { state, saveCreds } = await useMultiFileAuthState(authDir)
+  const { version } = await fetchLatestWaWebVersion({})
+  const sock = makeWASocket({
+    auth: state,
+    version,
+    browser: Browsers.macOS('WhatsApp Bot'),
+    logger: pino.default({ level: 'silent' }) as never,
+  })
+  sock.ev.on('creds.update', saveCreds)
+
+  let settled = false
+  let sent = false
+  await new Promise<void>((resolve, reject) => {
+    const finish = (err?: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      try {
+        sock.end(undefined)
+      } catch {
+        // The socket is already closing.
+      }
+      if (err) reject(err)
+      else resolve()
+    }
+    const timeout = setTimeout(
+      () => finish(new Error('WhatsApp did not connect within 30s')),
+      30000,
+    )
+    sock.ev.on('connection.update', (update) => {
+      if (update.connection === 'close') {
+        finish(sent ? undefined : new Error('WhatsApp closed the connection before the note was sent'))
+        return
+      }
+      if (update.connection !== 'open' || sent || settled) return
+      void sock
+        .sendMessage(`${ownerNum}@s.whatsapp.net`, { text: connectedNote(name) })
+        .then(() => {
+          sent = true
+          return new Promise<void>((done) => {
+            setTimeout(done, 2000)
+          })
+        })
+        .then(() => finish())
+        .catch((err: unknown) =>
+          finish(err instanceof Error ? err : new Error(String(err))),
+        )
+    })
+  })
+}
+
 type AiProviderChoice = 'claude' | 'codex' | 'grok' | 'gemini'
 
 function readConfigObject(configPath: string): Record<string, unknown> | null {
@@ -300,6 +381,7 @@ export async function runSetup(): Promise<void> {
   }
 
   let ownerNum = ''
+  let amigoName = 'amigo'
 
   if (!existsSync(accessPath)) {
     const cleanAccess = {
@@ -958,6 +1040,7 @@ export async function runSetup(): Promise<void> {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean)
     if (names.length > 0) {
+      amigoName = names[0]
       // Always include "heyamigo" as a hidden alias
       const aliases = [...new Set([...names, 'heyamigo'])]
       const cfgPath = resolve(cwd, 'config/config.json')
@@ -984,26 +1067,56 @@ export async function runSetup(): Promise<void> {
       '  4. Set triggerMode per chat: "mention", "all", "command", or "off".\n' +
       '     Missing triggerMode means "off".\n\n' +
       '  5. With triggerMode "mention", mention the bot\'s name to get a reply.\n\n' +
-      'DMs work the same way — add numbers to dms.allowed in access.json.',
+      'Message Yourself is turned on during setup. Other DMs stay off until their number is added to dms.allowed.',
   )
 
-  // Auto-add owner as admin if we have the number
+  // Existing auth skips pairing, so the owner number is already in config.
+  if (!ownerNum) {
+    const cfg = readConfigObject(configPath)
+    const owner = cfg?.owner
+    if (owner && typeof owner === 'object') {
+      const number = (owner as { number?: unknown }).number
+      if (typeof number === 'string' && number.trim()) ownerNum = number.trim()
+    }
+  }
+
+  // Auto-add owner as admin, and turn on the chat with themselves.
   if (ownerNum) {
     const accessCfgPath = resolve(cwd, 'config/access.json')
     try {
       const access = JSON.parse(readFileSync(accessCfgPath, 'utf-8'))
+      let changed = false
       const users = access.users ?? {}
       if (!users[ownerNum]) {
         users[ownerNum] = { role: 'admin', name: 'Owner' }
         access.users = users
+        changed = true
+        p.log.success(`Added ${ownerNum} as admin in access.json`)
+      } else {
+        p.log.info(`${ownerNum} already configured as ${users[ownerNum].role}`)
+      }
+      const dms = access.dms ?? { defaultMode: 'off', allowed: [] }
+      const allowed = Array.isArray(dms.allowed) ? dms.allowed : []
+      if (!allowed.some((entry: { number?: string }) => entry?.number === ownerNum)) {
+        allowed.push({
+          number: ownerNum,
+          mode: 'active',
+          triggerMode: 'all',
+          proactive: false,
+        })
+        access.dms = {
+          defaultMode: dms.defaultMode ?? 'off',
+          allowed,
+        }
+        changed = true
+        p.log.success(`Message Yourself is on for ${ownerNum}`)
+      }
+      if (changed) {
         writeFileSync(
           accessCfgPath,
           JSON.stringify(access, null, 2) + '\n',
           'utf-8',
         )
-        p.log.success(`Added ${ownerNum} as admin in access.json`)
-      } else {
-        p.log.info(`${ownerNum} already configured as ${users[ownerNum].role}`)
       }
     } catch {}
   }
@@ -1087,6 +1200,25 @@ export async function runSetup(): Promise<void> {
     }
   }
 
+  // ── Prove the WhatsApp link ─────────────────────────────────
+  if (!existsSync(credsPath) || !ownerNum) {
+    p.log.warning('WhatsApp is not paired, so no connected note was sent.')
+  } else if (heyamigoIsRunning(cwd)) {
+    p.log.warning(
+      'HeyAmigo is already running, so setup did not open a second WhatsApp connection. Message yourself to confirm it.',
+    )
+  } else {
+    const sending = p.spinner()
+    sending.start('Sending a note to Message Yourself')
+    try {
+      await sendConnectedNote(resolve(cwd, 'storage/auth'), ownerNum, amigoName)
+      sending.stop('Sent a note to Message Yourself')
+    } catch (err) {
+      sending.stop('Could not send the connected note')
+      p.log.error(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   // ── Done ─────────────────────────────────────────────────────
   p.note(
     [
@@ -1114,7 +1246,7 @@ export async function runSetup(): Promise<void> {
   )
 
   p.log.warning(
-    'IMPORTANT: The bot won\'t respond until you activate a group!\n\n' +
+    'Message Yourself already answers. Groups stay silent until you activate one.\n\n' +
       '  Step 1 — Start the bot:\n' +
       '    heyamigo start\n\n' +
       '  Step 2 — Send a message in any WhatsApp group.\n' +
