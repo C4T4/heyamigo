@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync, realpathSync } from 'fs'
-import { dirname, resolve, sep } from 'path'
+import { readFileSync } from 'fs'
+import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { Command } from 'commander'
 
@@ -145,63 +145,20 @@ program
   .description('Update heyamigo to the latest version')
   .action(async () => {
     const { execFileSync } = await import('child_process')
-    let latest: string
-    try {
-      latest = execFileSync(
-        'npm',
-        ['view', '@c4t4/heyamigo', 'version'],
-        { encoding: 'utf-8' },
-      ).trim()
-      if (!latest) throw new Error('npm returned an empty version')
-    } catch {
-      console.error('Could not check the latest npm version. Try again later.')
-      process.exit(1)
-    }
-
+    const install =
+      'curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash'
     console.log(`Current version: ${pkgVersion}`)
-    console.log(`Latest version:  ${latest}`)
-
-    if (latest === pkgVersion) {
-      console.log('Already up to date.')
-      return
-    }
-
-    const prefix = installedPrefix()
-    if (!prefix) {
-      console.error(
-        'This heyamigo is not an npm global install, so update does not know where to write.\n' +
-          'Run: curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash',
-      )
-      process.exit(1)
-    }
-
-    console.log(`Updating ${pkgVersion} → ${latest} in ${prefix}...`)
+    console.log('Installing the latest HeyAmigo...')
     try {
-      execFileSync(
-        'npm',
-        ['install', '-g', '--prefix', prefix, `@c4t4/heyamigo@${latest}`],
-        { stdio: 'inherit' },
-      )
-      console.log('\nUpdated. Restart the bot:')
-      console.log('  heyamigo restart')
+      execFileSync('bash', ['-c', install], {
+        stdio: 'inherit',
+        env: { ...process.env, HEYAMIGO_UPDATE: '1' },
+      })
     } catch {
-      console.error(
-        'Update failed. Try manually: curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash',
-      )
+      console.error(`Update failed. Run it again:\n\n  ${install}`)
       process.exit(1)
     }
   })
-
-// npm global layout is <prefix>/lib/node_modules/@c4t4/heyamigo/...
-// The curl installer uses ~/.local. A plain `npm install -g` uses another
-// prefix, so update must write back to the prefix of this running binary.
-function installedPrefix(): string | null {
-  const script = realpathSync(fileURLToPath(import.meta.url))
-  const marker = `${sep}lib${sep}node_modules${sep}`
-  const at = script.indexOf(marker)
-  if (at <= 0) return null
-  return script.slice(0, at)
-}
 
 program
   .command('dev')

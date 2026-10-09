@@ -52,4 +52,9 @@ case ":$PATH:" in
 esac
 
 echo "HeyAmigo $("$bin" --version) installed."
-echo "Next: heyamigo setup"
+if [ "${HEYAMIGO_UPDATE:-}" = "1" ]; then
+  echo "Restart the bot:"
+  echo "  heyamigo restart"
+else
+  echo "Next: heyamigo setup"
+fi
