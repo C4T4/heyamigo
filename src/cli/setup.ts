@@ -4,6 +4,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
 } from 'fs'
@@ -296,12 +297,16 @@ function scaffoldProject(targetDir: string, pkgDir: string): void {
     copyFileSync(mandatorySkill, resolve(mandatoryDir, 'i-have-adhd.md'))
   }
 
-  // Copy personalities
+  // Copy personalities. The default choice is unfiltered-realist.md, so a
+  // fixed list that omits it makes the first reply crash.
   const persDir = resolve(configDir, 'personalities')
+  const persSrc = resolve(pkgDir, 'config', 'personalities')
   mkdirSync(persDir, { recursive: true })
-  for (const f of ['sharp.md', 'casual.md', 'professional.md']) {
-    const src = resolve(pkgDir, 'config', 'personalities', f)
-    if (existsSync(src)) copyFileSync(src, resolve(persDir, f))
+  if (existsSync(persSrc)) {
+    for (const f of readdirSync(persSrc)) {
+      if (!f.endsWith('.md')) continue
+      copyFileSync(resolve(persSrc, f), resolve(persDir, f))
+    }
   }
 
   // Copy scripts
@@ -1181,6 +1186,18 @@ export async function runSetup(): Promise<void> {
         `"personalityFile": "./config/personalities/${personality}.md"`,
       )
       writeFileSync(configPath, cfg)
+      const personalityPath = resolve(
+        cwd,
+        'config',
+        'personalities',
+        `${personality}.md`,
+      )
+      if (!existsSync(personalityPath)) {
+        p.cancel(
+          `Personality file is missing: config/personalities/${personality}.md`,
+        )
+        process.exit(1)
+      }
       p.log.success(`Personality: ${personality}`)
     }
   }
