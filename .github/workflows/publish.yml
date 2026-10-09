@@ -1,21 +1,55 @@
-name: Publish to npm
+name: Release
 on:
   push:
     branches: [main]
 
 permissions:
-  id-token: write
-  contents: read
+  contents: write
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          registry-url: https://registry.npmjs.org
-      - run: npm install
+          node-version: 22
+      - run: npm ci
       - run: npm run build
-      - run: npm publish --access public
+      - run: npm prune --omit=dev
+      - run: bash scripts/pack-release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heyamigo-${{ matrix.os }}
+          path: heyamigo-*.tar.gz
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: archives
+          merge-multiple: true
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+          files=(archives/heyamigo-*.tar.gz)
+          if [ "${#files[@]}" -ne 4 ]; then
+            echo "Expected 4 release archives, found ${#files[@]}" >&2
+            ls -la archives >&2
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber
+          else
+            gh release create "$tag" "${files[@]}" --title "$tag" --notes "HeyAmigo ${tag}"
+          fi

@@ -38,6 +38,8 @@ heyamigo start                          # background, auto-restart
 heyamigo logs                           # tail
 ```
 
+The installer downloads the newest GitHub release for this computer into `~/.local`. Node.js 18 or newer has to be installed already.
+
 Telegram is optional. Create a bot with BotFather, set `telegram.enabled: true` and `telegram.botToken` in `config/config.json`, then allow users/groups in `config/access.json`. Telegram user keys use `tg_<user_id>`; Telegram group entries use addresses like `tg:group:-1001234567890`.
 
 Other providers:
