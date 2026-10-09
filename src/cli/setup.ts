@@ -1221,11 +1221,24 @@ export async function runSetup(): Promise<void> {
     }
   }
 
+  // ── Start ────────────────────────────────────────────────────
+  // The connected note already closed its own WhatsApp socket.
+  if (heyamigoIsRunning(cwd)) {
+    p.log.success('HeyAmigo is already running')
+  } else {
+    const { serviceCmd } = await import('./service.js')
+    await serviceCmd('start')
+    if (!heyamigoIsRunning(cwd)) {
+      p.cancel('HeyAmigo did not start. Check: heyamigo logs')
+      process.exit(1)
+    }
+    p.log.success('HeyAmigo is running')
+  }
+
   // ── Done ─────────────────────────────────────────────────────
   p.note(
     [
-      'Start the bot:',
-      '  heyamigo start',
+      'The bot is running.',
       '',
       'Check logs:',
       '  heyamigo logs',
@@ -1250,18 +1263,16 @@ export async function runSetup(): Promise<void> {
 
   p.log.warning(
     'Message Yourself already answers. Groups stay silent until you activate one.\n\n' +
-      '  Step 1 — Start the bot:\n' +
-      '    heyamigo start\n\n' +
-      '  Step 2 — Send a message in any WhatsApp group.\n' +
+      '  Step 1 — Send a message in any WhatsApp group.\n' +
       '    The bot discovers the group and adds it to config/access.json.\n\n' +
-      '  Step 3 — Open config/access.json and edit:\n' +
+      '  Step 2 — Open config/access.json and edit:\n' +
       '    nano config/access.json\n' +
       '    - Find the group, change mode from "off" to "active"\n' +
       '    - Set allowedSenders to "*" for everyone\n\n' +
       '    - Set triggerMode to "mention" or "all"\n\n' +
-      '  Step 4 — Restart the bot:\n' +
+      '  Step 3 — Restart the bot:\n' +
       '    heyamigo restart\n\n' +
-      '  Step 5 — If triggerMode is "mention", mention the bot\'s name in the group to get a reply.\n\n' +
+      '  Step 4 — If triggerMode is "mention", mention the bot\'s name in the group to get a reply.\n\n' +
       '  Debugging:\n' +
       '    heyamigo logs',
   )

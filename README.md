@@ -33,8 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.
 curl -fsSL https://claude.ai/install.sh | bash
 claude                                  # log in once, then exit
 
-heyamigo setup                          # wizard: pair WhatsApp, pick personality
-heyamigo start                          # background, auto-restart
+heyamigo setup                          # wizard: pair WhatsApp, pick personality, start
 heyamigo logs                           # tail
 ```
 

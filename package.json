@@ -1,6 +1,6 @@
 {
   "name": "@c4t4/heyamigo",
-  "version": "0.13.14",
+  "version": "0.13.15",
   "description": "WhatsApp and Telegram AI bot powered by Claude, Codex, Grok, or Gemini with long-term memory, browser control, and role-based access",
   "type": "module",
   "main": "dist/index.js",
