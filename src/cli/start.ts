@@ -25,7 +25,8 @@ function requiredCli(): { bin: string; install: string } {
     case 'gemini':
       return {
         bin: config.gemini.bin,
-        install: 'brew install gemini-cli',
+        install:
+          'curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install-gemini.sh | bash',
       }
   }
 }

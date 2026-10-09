@@ -35,7 +35,8 @@ function which(bin: string): string | null {
 const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash'
 const CODEX_INSTALL = 'curl -fsSL https://chatgpt.com/codex/install.sh | sh'
 const GROK_INSTALL = 'curl -fsSL https://x.ai/cli/install.sh | bash'
-const GEMINI_INSTALL = 'brew install gemini-cli'
+const GEMINI_INSTALL =
+  'curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install-gemini.sh | bash'
 
 function ensureLocalBinOnPath(): void {
   const localBin = resolve(homedir(), '.local/bin')
@@ -49,12 +50,6 @@ function requireCli(bin: string, label: string, install: string): string {
   ensureLocalBinOnPath()
   let found = which(bin)
   if (!found) {
-    if (install.startsWith('brew ') && !which('brew')) {
-      p.cancel(
-        `${label} is not installed, and Homebrew is not on this machine.\n\n  ${install}`,
-      )
-      process.exit(1)
-    }
     p.log.step(`Installing ${label}...`)
     if (!runLive(install)) {
       p.cancel(`${label} install failed.\n\n  ${install}`)

@@ -46,7 +46,7 @@ Other providers:
 
 - Codex: `curl -fsSL https://chatgpt.com/codex/install.sh | sh`, then set `ai.provider: "codex"` in `config/config.json`.
 - Grok Build: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, run `grok login`, and set `ai.provider: "grok"`. Chat, async, and browser jobs are supported. Browser jobs use a throwaway `GROK_HOME` so only heyamigo's task-scoped Playwright MCP (the shared CDP Chrome) is visible.
-- Gemini: `brew install gemini-cli`, then set `ai.provider: "gemini"`. Heyamigo uses that CLI with `--yolo`, pins `gemini-3.6-flash` by default, and uses the CLI's existing login for chat, async, and task-scoped browser jobs.
+- Gemini: `curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install-gemini.sh | bash`, then set `ai.provider: "gemini"`. Heyamigo uses that CLI with `--yolo`, pins `gemini-3.6-flash` by default, and uses the CLI's existing login for chat, async, and task-scoped browser jobs.
 
 ## Bundled Amigospace connector
 
