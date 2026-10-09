@@ -5,7 +5,7 @@ import { bootBot, installShutdownSignals } from '../boot.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 
-function requiredCli(): { bin: string; install: string } {
+function requiredCli(): { bin: string; install: string | null } {
   switch (config.ai.provider) {
     case 'claude':
       return {
@@ -23,11 +23,7 @@ function requiredCli(): { bin: string; install: string } {
         install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
       }
     case 'gemini':
-      return {
-        bin: config.gemini.bin,
-        install:
-          'curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install-gemini.sh | bash',
-      }
+      return { bin: config.gemini.bin, install: null }
   }
 }
 
@@ -46,8 +42,9 @@ export async function main(): Promise<void> {
     execFileSync('which', [cli.bin], { stdio: 'pipe' })
   } catch {
     console.error(
-      `${config.ai.provider} CLI not found. Install it first:\n\n` +
-        `  ${cli.install}\n`,
+      cli.install
+        ? `${config.ai.provider} CLI not found. Install it first:\n\n  ${cli.install}\n`
+        : `${cli.bin} is not installed. Install it, then start HeyAmigo again.`,
     )
     process.exit(1)
   }

@@ -35,8 +35,6 @@ function which(bin: string): string | null {
 const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash'
 const CODEX_INSTALL = 'curl -fsSL https://chatgpt.com/codex/install.sh | sh'
 const GROK_INSTALL = 'curl -fsSL https://x.ai/cli/install.sh | bash'
-const GEMINI_INSTALL =
-  'curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install-gemini.sh | bash'
 
 function ensureLocalBinOnPath(): void {
   const localBin = resolve(homedir(), '.local/bin')
@@ -588,7 +586,12 @@ export async function runSetup(): Promise<void> {
     )
   } else {
     // ── Gemini CLI ──────────────────────────────────────────────
-    const geminiPath = requireCli('gemini', 'Gemini CLI', GEMINI_INSTALL)
+    ensureLocalBinOnPath()
+    const geminiPath = which('gemini')
+    if (!geminiPath) {
+      p.cancel('Gemini CLI is not installed. Install it, then run setup again.')
+      process.exit(1)
+    }
     p.log.success(`Gemini CLI found: ${geminiPath}`)
     p.log.info('Using the installed Gemini CLI with --yolo and its existing login.')
   }
