@@ -40,7 +40,7 @@ heyamigo logs                           # tail
 
 The installer downloads the newest GitHub release for this computer into `~/.local`. Node.js 18 or newer has to be installed already.
 
-Telegram is optional. Create a bot with BotFather, set `telegram.enabled: true` and `telegram.botToken` in `config/config.json`, then allow users/groups in `config/access.json`. Telegram user keys use `tg_<user_id>`; Telegram group entries use addresses like `tg:group:-1001234567890`.
+Telegram is connected during setup, or later with `heyamigo telegram connect`. That asks for a BotFather token, waits until you message the bot, turns that private chat on, and sends the same connected note as WhatsApp. Groups stay off until you enable them in `config/access.json`. Telegram user keys are `tg_<user_id>`. Group entries use addresses like `tg:group:-1001234567890`.
 
 Other providers:
 

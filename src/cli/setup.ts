@@ -1037,6 +1037,10 @@ export async function runSetup(): Promise<void> {
     }
   }
 
+  // ── Telegram ──────────────────────────────────────────────────
+  const { connectTelegram } = await import('./telegram-connect.js')
+  await connectTelegram({ projectDir: cwd, name: amigoName })
+
   // ── Access rules onboarding ───────────────────────────────────
   p.log.info(
     'How groups work:\n\n' +
@@ -1218,6 +1222,7 @@ export async function runSetup(): Promise<void> {
       'Other commands:',
       '  heyamigo stop / restart / status',
       '  heyamigo chrome status / start / stop / restart',
+      '  heyamigo telegram connect',
       '',
       'Configuration:',
       '  config/config.json   — bot name, model',

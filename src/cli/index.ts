@@ -125,6 +125,30 @@ amigospace
     }
   })
 
+const telegram = program
+  .command('telegram')
+  .description('Connect a Telegram bot')
+
+telegram
+  .command('connect')
+  .description('Save a BotFather token, then turn on the chat that messages the bot')
+  .action(async () => {
+    const { findProjectDir } = await import('./service.js')
+    const projectDir = findProjectDir()
+    process.chdir(projectDir)
+    try {
+      const { connectTelegram, telegramAlias } = await import('./telegram-connect.js')
+      const result = await connectTelegram({
+        projectDir,
+        name: telegramAlias(projectDir),
+      })
+      if (result === 'failed' || result === 'busy') process.exitCode = 1
+    } catch (err) {
+      console.error((err as Error).message)
+      process.exitCode = 1
+    }
+  })
+
 program
   .command('import <path>')
   .description('Import external knowledge folder into memory')
