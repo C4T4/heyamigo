@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from 'fs'
-import { dirname, resolve } from 'path'
+import { readFileSync, realpathSync } from 'fs'
+import { dirname, resolve, sep } from 'path'
 import { fileURLToPath } from 'url'
 import { Command } from 'commander'
 
@@ -166,11 +166,20 @@ program
       return
     }
 
-    console.log(`Updating ${pkgVersion} → ${latest}...`)
+    const prefix = installedPrefix()
+    if (!prefix) {
+      console.error(
+        'This heyamigo is not an npm global install, so update does not know where to write.\n' +
+          'Run: curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash',
+      )
+      process.exit(1)
+    }
+
+    console.log(`Updating ${pkgVersion} → ${latest} in ${prefix}...`)
     try {
       execFileSync(
         'npm',
-        ['install', '-g', `@c4t4/heyamigo@${latest}`],
+        ['install', '-g', '--prefix', prefix, `@c4t4/heyamigo@${latest}`],
         { stdio: 'inherit' },
       )
       console.log('\nUpdated. Restart the bot:')
@@ -182,6 +191,17 @@ program
       process.exit(1)
     }
   })
+
+// npm global layout is <prefix>/lib/node_modules/@c4t4/heyamigo/...
+// The curl installer uses ~/.local. A plain `npm install -g` uses another
+// prefix, so update must write back to the prefix of this running binary.
+function installedPrefix(): string | null {
+  const script = realpathSync(fileURLToPath(import.meta.url))
+  const marker = `${sep}lib${sep}node_modules${sep}`
+  const at = script.indexOf(marker)
+  if (at <= 0) return null
+  return script.slice(0, at)
+}
 
 program
   .command('dev')
