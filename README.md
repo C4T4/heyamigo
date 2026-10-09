@@ -30,7 +30,7 @@ For the why behind these — claim primitives, tag-as-side-effect channel, per-c
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash
-npm install -g @anthropic-ai/claude-code
+curl -fsSL https://claude.ai/install.sh | bash
 claude                                  # log in once, then exit
 
 heyamigo setup                          # wizard: pair WhatsApp, pick personality
@@ -44,9 +44,9 @@ Telegram is optional. Create a bot with BotFather, set `telegram.enabled: true` 
 
 Other providers:
 
-- Codex: install `@openai/codex` and set `ai.provider: "codex"` in `config/config.json`.
+- Codex: `curl -fsSL https://chatgpt.com/codex/install.sh | sh`, then set `ai.provider: "codex"` in `config/config.json`.
 - Grok Build: install with `curl -fsSL https://x.ai/cli/install.sh | bash`, run `grok login`, and set `ai.provider: "grok"`. Chat, async, and browser jobs are supported. Browser jobs use a throwaway `GROK_HOME` so only heyamigo's task-scoped Playwright MCP (the shared CDP Chrome) is visible.
-- Gemini: set `ai.provider: "gemini"`. Heyamigo uses the already-installed `gemini` CLI with `--yolo`, pins `gemini-3.6-flash` by default, and uses the CLI's existing login for chat, async, and task-scoped browser jobs.
+- Gemini: `brew install gemini-cli`, then set `ai.provider: "gemini"`. Heyamigo uses that CLI with `--yolo`, pins `gemini-3.6-flash` by default, and uses the CLI's existing login for chat, async, and task-scoped browser jobs.
 
 ## Bundled Amigospace connector
 

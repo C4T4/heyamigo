@@ -32,6 +32,46 @@ function which(bin: string): string | null {
   return r.ok ? r.output : null
 }
 
+const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash'
+const CODEX_INSTALL = 'curl -fsSL https://chatgpt.com/codex/install.sh | sh'
+const GROK_INSTALL = 'curl -fsSL https://x.ai/cli/install.sh | bash'
+const GEMINI_INSTALL = 'brew install gemini-cli'
+
+function ensureLocalBinOnPath(): void {
+  const localBin = resolve(homedir(), '.local/bin')
+  const parts = (process.env.PATH ?? '').split(':').filter(Boolean)
+  if (!parts.includes(localBin)) {
+    process.env.PATH = [localBin, ...parts].join(':')
+  }
+}
+
+function requireCli(bin: string, label: string, install: string): string {
+  ensureLocalBinOnPath()
+  let found = which(bin)
+  if (!found) {
+    if (install.startsWith('brew ') && !which('brew')) {
+      p.cancel(
+        `${label} is not installed, and Homebrew is not on this machine.\n\n  ${install}`,
+      )
+      process.exit(1)
+    }
+    p.log.step(`Installing ${label}...`)
+    if (!runLive(install)) {
+      p.cancel(`${label} install failed.\n\n  ${install}`)
+      process.exit(1)
+    }
+    ensureLocalBinOnPath()
+    found = which(bin)
+  }
+  if (!found) {
+    p.cancel(
+      `The installer finished, but ${bin} was not found.\n\n  ${install}`,
+    )
+    process.exit(1)
+  }
+  return found
+}
+
 // Ensure Codex's global Playwright entry points at the shared Chrome. An older
 // version only checked whether the TOML section existed; a stale entry without
 // --cdp-endpoint was therefore accepted and launched the wrong browser.
@@ -436,17 +476,8 @@ export async function runSetup(): Promise<void> {
 
   if (provider === 'claude') {
     // ── Claude CLI (critical — bot cannot work without this) ─────
-    const claudePath = which('claude')
-    if (!claudePath) {
-      p.cancel(
-        'Claude CLI is required but was not found.\n' +
-          'Install it first, then re-run setup:\n\n' +
-          '  npm install -g @anthropic-ai/claude-code\n\n' +
-          'For other install methods see: https://docs.anthropic.com/en/docs/claude-code',
-      )
-      process.exit(1)
-    }
-    p.log.success('Claude CLI found')
+    const claudePath = requireCli('claude', 'Claude Code', CLAUDE_INSTALL)
+    p.log.success(`Claude CLI found: ${claudePath}`)
 
     // Auth (critical — bot uses your Claude subscription, not API)
     const authenticated = run('claude auth status').ok
@@ -543,16 +574,8 @@ export async function runSetup(): Promise<void> {
     }
   } else if (provider === 'grok') {
     // ── Grok Build CLI ──────────────────────────────────────────
-    const grokPath = which('grok')
-    if (!grokPath) {
-      p.cancel(
-        'Grok Build CLI is required but was not found.\n' +
-          'Install it first, then re-run setup:\n\n' +
-          '  curl -fsSL https://x.ai/cli/install.sh | bash',
-      )
-      process.exit(1)
-    }
-    p.log.success('Grok Build CLI found')
+    const grokPath = requireCli('grok', 'Grok Build', GROK_INSTALL)
+    p.log.success(`Grok Build CLI found: ${grokPath}`)
     if (!process.env.XAI_API_KEY) {
       p.log.info(
         'If Grok is not logged in on this machine yet, run:\n\n' +
@@ -562,31 +585,15 @@ export async function runSetup(): Promise<void> {
     }
   } else if (provider === 'codex') {
     // ── Codex CLI ───────────────────────────────────────────────
-    const codexPath = which('codex')
-    if (!codexPath) {
-      p.cancel(
-        'Codex CLI is required but was not found.\n' +
-          'Install it first, then re-run setup:\n\n' +
-          '  npm install -g @openai/codex',
-      )
-      process.exit(1)
-    }
-    p.log.success('Codex CLI found')
+    const codexPath = requireCli('codex', 'Codex', CODEX_INSTALL)
+    p.log.success(`Codex CLI found: ${codexPath}`)
     p.log.info(
       'If Codex is not logged in on this machine yet, run:\n\n' +
         '  codex login',
     )
   } else {
     // ── Gemini CLI ──────────────────────────────────────────────
-    const geminiPath = which('gemini')
-    if (!geminiPath) {
-      p.cancel(
-        'Gemini CLI is required but was not found.\n' +
-          'Install it first, then re-run setup:\n\n' +
-          '  npm install -g @google/gemini-cli@latest',
-      )
-      process.exit(1)
-    }
+    const geminiPath = requireCli('gemini', 'Gemini CLI', GEMINI_INSTALL)
     p.log.success(`Gemini CLI found: ${geminiPath}`)
     p.log.info('Using the installed Gemini CLI with --yolo and its existing login.')
   }

@@ -1,4 +1,6 @@
 import { execFileSync } from 'child_process'
+import { homedir } from 'os'
+import { resolve } from 'path'
 import { bootBot, installShutdownSignals } from '../boot.js'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
@@ -8,12 +10,12 @@ function requiredCli(): { bin: string; install: string } {
     case 'claude':
       return {
         bin: 'claude',
-        install: 'npm install -g @anthropic-ai/claude-code',
+        install: 'curl -fsSL https://claude.ai/install.sh | bash',
       }
     case 'codex':
       return {
         bin: 'codex',
-        install: 'npm install -g @openai/codex',
+        install: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
       }
     case 'grok':
       return {
@@ -23,12 +25,21 @@ function requiredCli(): { bin: string; install: string } {
     case 'gemini':
       return {
         bin: config.gemini.bin,
-        install: 'npm install -g @google/gemini-cli@latest',
+        install: 'brew install gemini-cli',
       }
   }
 }
 
+function ensureLocalBinOnPath(): void {
+  const localBin = resolve(homedir(), '.local/bin')
+  const parts = (process.env.PATH ?? '').split(':').filter(Boolean)
+  if (!parts.includes(localBin)) {
+    process.env.PATH = [localBin, ...parts].join(':')
+  }
+}
+
 export async function main(): Promise<void> {
+  ensureLocalBinOnPath()
   const cli = requiredCli()
   try {
     execFileSync('which', [cli.bin], { stdio: 'pipe' })
