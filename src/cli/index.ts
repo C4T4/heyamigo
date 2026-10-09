@@ -176,7 +176,9 @@ program
       console.log('\nUpdated. Restart the bot:')
       console.log('  heyamigo restart')
     } catch {
-      console.error('Update failed. Try manually: npm install -g @c4t4/heyamigo@latest')
+      console.error(
+        'Update failed. Try manually: curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash',
+      )
       process.exit(1)
     }
   })

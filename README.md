@@ -29,8 +29,8 @@ For the why behind these — claim primitives, tag-as-side-effect channel, per-c
 ## Quick start
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash
 npm install -g @anthropic-ai/claude-code
-npm install -g @c4t4/heyamigo
 claude                                  # log in once, then exit
 
 heyamigo setup                          # wizard: pair WhatsApp, pick personality
