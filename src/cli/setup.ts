@@ -239,20 +239,6 @@ function findPackageDir(): string | null {
 function scaffoldProject(targetDir: string, pkgDir: string): void {
   mkdirSync(targetDir, { recursive: true })
 
-  // Generate package.json for the project
-  const projectPkg = {
-    name: 'my-heyamigo',
-    private: true,
-    type: 'module',
-    dependencies: {
-      '@c4t4/heyamigo': '*',
-    },
-  }
-  writeFileSync(
-    resolve(targetDir, 'package.json'),
-    JSON.stringify(projectPkg, null, 2) + '\n',
-  )
-
   // Copy config templates
   const configDir = resolve(targetDir, 'config')
   mkdirSync(configDir, { recursive: true })
@@ -349,22 +335,12 @@ export async function runSetup(): Promise<void> {
       s0.stop(`Project created at ${targetDir}`)
     } else {
       p.cancel(
-        'Could not find heyamigo package files. Try:\n' +
-          '  git clone https://github.com/C4T4/heyamigo.git\n' +
-          '  cd heyamigo\n' +
-          '  npm install && npm run setup',
+        'Could not find heyamigo package files. Install it with:\n\n' +
+          '  curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash',
       )
       process.exit(1)
     }
   }
-
-  // ── Dependencies ─────────────────────────────────────────────
-  p.log.step('Installing dependencies...')
-  if (!runLive('npm install --no-fund --no-audit')) {
-    p.cancel('npm install failed. Check output above and retry.')
-    process.exit(1)
-  }
-  p.log.success('Dependencies installed')
 
   // ── Config files ─────────────────────────────────────────────
   const configPath = resolve(cwd, 'config/config.json')
