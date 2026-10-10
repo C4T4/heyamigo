@@ -374,7 +374,7 @@ export async function runSetup(): Promise<void> {
     } else {
       p.cancel(
         'Could not find heyamigo package files. Install it with:\n\n' +
-          '  curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash',
+          '  curl -fsSL https://heyamigo.org/install.sh | bash',
       )
       process.exit(1)
     }

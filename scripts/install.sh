@@ -2,7 +2,7 @@
 # HeyAmigo installer.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash
+#   curl -fsSL https://heyamigo.org/install.sh | bash
 #
 # Downloads the newest GitHub release for this computer into ~/.local.
 # Override the location with HEYAMIGO_PREFIX.

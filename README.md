@@ -29,7 +29,7 @@ For the why behind these — claim primitives, tag-as-side-effect channel, per-c
 ## Quick start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash
+curl -fsSL https://heyamigo.org/install.sh | bash
 curl -fsSL https://claude.ai/install.sh | bash
 claude                                  # log in once, then exit
 

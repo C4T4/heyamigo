@@ -170,7 +170,7 @@ program
   .action(async () => {
     const { execFileSync } = await import('child_process')
     const install =
-      'curl -fsSL https://raw.githubusercontent.com/C4T4/heyamigo/main/scripts/install.sh | bash'
+      'curl -fsSL https://heyamigo.org/install.sh | bash'
     console.log(`Current version: ${pkgVersion}`)
     console.log('Installing the latest HeyAmigo...')
     try {
