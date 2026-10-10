@@ -31,7 +31,7 @@ cp config/config.example.json config/access.example.json \
   config/import-instructions.HOWTO.md config/pack.example.json \
   config/mcp.example.json "$dest/config/"
 cp -R config/personalities config/mandatory "$dest/config/"
-cp scripts/portable-client.mjs "$dest/scripts/"
+cp scripts/portable-client.mjs scripts/start-browser.sh "$dest/scripts/"
 cp docs/portable-client.md docs/attach-existing-client.md "$dest/docs/"
 
 archive="$PWD/heyamigo-${target}.tar.gz"
