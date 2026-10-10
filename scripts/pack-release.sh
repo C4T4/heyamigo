@@ -24,14 +24,28 @@ fi
 stage="$(mktemp -d)"
 dest="$stage/heyamigo"
 mkdir -p "$dest/config" "$dest/scripts" "$dest/docs"
-cp package.json LICENSE README.md "$dest/"
+cp package.json LICENSE README.md .gitignore "$dest/"
 cp -R dist migrations node_modules "$dest/"
 cp config/config.example.json config/access.example.json \
   config/memory-instructions.md config/import-instructions.md \
   config/import-instructions.HOWTO.md config/pack.example.json \
   config/mcp.example.json "$dest/config/"
 cp -R config/personalities config/mandatory "$dest/config/"
-cp scripts/portable-client.mjs scripts/start-browser.sh "$dest/scripts/"
+for f in \
+  scripts/portable-client.mjs \
+  scripts/start-browser.sh \
+  scripts/amigospace-mcp.mjs \
+  scripts/cloud-client.mjs \
+  scripts/attached-cloud-client.mjs
+do
+  if [ ! -f "$f" ]; then
+    echo "Release is missing $f" >&2
+    exit 1
+  fi
+done
+cp scripts/portable-client.mjs scripts/start-browser.sh \
+  scripts/amigospace-mcp.mjs scripts/cloud-client.mjs \
+  scripts/attached-cloud-client.mjs "$dest/scripts/"
 cp docs/portable-client.md docs/attach-existing-client.md "$dest/docs/"
 
 archive="$PWD/heyamigo-${target}.tar.gz"
