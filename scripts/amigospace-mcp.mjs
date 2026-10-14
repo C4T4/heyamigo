@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import { constants } from 'node:fs'
-import { mkdir, open, rename, unlink } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -50,6 +50,9 @@ const allowedOptions = new Set([
   '--credential-file',
   '--timeout-ms',
   '--download-dir',
+  '--pack-file',
+  '--skills-dir',
+  '--pack-root',
 ])
 const MAXIMUM_DOWNLOAD_BYTES = 200 * 1024 * 1024
 
@@ -158,6 +161,18 @@ if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30000) {
 // spawns this script from whatever folder it is in, so without the option the
 // files go to one place they can find rather than scattering per project.
 const downloadDirectory = resolve(options.get('--download-dir') ?? join(homedir(), 'Downloads', 'Amigospace'))
+
+// HeyAmigo passes its pack file, the skills folder beside it, and the root its
+// loader resolves `file` entries against. Without all three there is no pack to
+// install into (a person's own CLI session), so install_skill is not offered.
+const packOptions = ['--pack-file', '--skills-dir', '--pack-root'].map((name) => options.get(name))
+if (packOptions.some((value) => value !== undefined) && packOptions.some((value) => value === undefined)) {
+  throw new Error('--pack-file, --skills-dir and --pack-root must be given together')
+}
+const packFile = packOptions[0] === undefined ? null : resolve(packOptions[0])
+const skillsDirectory = packOptions[1] === undefined ? null : resolve(packOptions[1])
+const packRoot = packOptions[2] === undefined ? null : resolve(packOptions[2])
+const skillInstallEnabled = packFile !== null && skillsDirectory !== null && packRoot !== null
 
 const token = await loadMcpToken(credentialFile)
 const authenticatedFetch = (input, init = {}) => {
@@ -507,6 +522,198 @@ async function downloadStoredFile(rawInput) {
   }
 }
 
+const SKILL_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/
+// The pack loader injects always-on skills until this many characters are used.
+const ALWAYS_ON_SKILL_CAP = 24_000
+const MANDATORY_SKILL_ID = 'i-have-adhd'
+const skillSourcePrefix = `${new URL(endpoint).origin}/items/`
+
+const installSkillTool = {
+  name: 'install_skill',
+  title: 'Install a skill from the Amigospace vault into HeyAmigo',
+  description:
+    'Install one skill record from the Amigospace skills collection into this HeyAmigo: writes config/skills/<skill_id>.md and the pack.json entry (mode, description, source pinned to the installed version). Pass the record nodeId; pass versionId from open detail "versions" to install an older retained version. The body is verified against the version digest before anything is written. HeyAmigo applies the changed pack from the next message.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['nodeId'],
+    properties: {
+      nodeId: { type: 'string', format: 'uuid', description: 'Record page of the skill in the skills collection.' },
+      versionId: {
+        type: 'string',
+        format: 'uuid',
+        description: 'One retained version id from open detail "versions". Omit for the current version.',
+      },
+    },
+  },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+}
+
+function installInput(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('INSTALL_SKILL_INPUT_INVALID')
+  }
+  if (
+    typeof value.nodeId !== 'string' ||
+    !UUID_PATTERN.test(value.nodeId) ||
+    (value.versionId !== undefined &&
+      (typeof value.versionId !== 'string' || !UUID_PATTERN.test(value.versionId)))
+  ) {
+    throw new Error('INSTALL_SKILL_INPUT_INVALID')
+  }
+  return value
+}
+
+async function upstreamStructured(name, args) {
+  const result = await upstream.callTool({ name, arguments: args }, undefined, { timeout: timeoutMs })
+  const structured = result.structuredContent
+  if (result.isError) {
+    const code = structured && typeof structured.code === 'string' && /^[A-Z][A-Z0-9_]{0,127}$/.test(structured.code)
+      ? structured.code
+      : 'UPSTREAM_CALL_FAILED'
+    throw new Error(code)
+  }
+  if (!structured || typeof structured !== 'object') throw new Error('UPSTREAM_RESULT_UNSTRUCTURED')
+  return structured
+}
+
+function knownValue(values, key) {
+  const entry = values && typeof values === 'object' ? values[key] : undefined
+  if (!entry || entry.state !== 'known') throw new Error('SKILL_FIELDS_INCOMPLETE')
+  return entry.value
+}
+
+async function readPack() {
+  let text
+  try {
+    text = await readFile(packFile, 'utf8')
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return { version: 1, skills: [], mcps: [] }
+    throw error
+  }
+  let parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error('PACK_FILE_INVALID')
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('PACK_FILE_INVALID')
+  return parsed
+}
+
+async function writeAtomically(path, text) {
+  const partialPath = `${path}.part-${randomUUID()}`
+  let handle
+  try {
+    handle = await open(partialPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
+    await handle.writeFile(text, 'utf8')
+    await handle.close()
+    handle = undefined
+    await rename(partialPath, path)
+  } catch (error) {
+    await handle?.close().catch(() => {})
+    await unlink(partialPath).catch(() => {})
+    throw error
+  }
+}
+
+async function installSkill(rawInput) {
+  const input = installInput(rawInput)
+
+  const resolved = await upstreamStructured('structure', { operation: 'resolve', nodeId: input.nodeId })
+  if (!resolved.record || !resolved.collection) throw new Error('SKILL_NOT_A_RECORD')
+  if (resolved.collection.semanticRole !== 'skill') throw new Error('SKILL_COLLECTION_MISMATCH')
+
+  const queried = await upstreamStructured('query', {
+    collectionId: resolved.record.collectionId,
+    recordNodeId: input.nodeId,
+    select: ['skill_id', 'mode', 'summary'],
+    limit: 1,
+  })
+  const record = Array.isArray(queried.records) ? queried.records[0] : undefined
+  if (!record || record.nodeId !== input.nodeId) throw new Error('SKILL_RECORD_NOT_FOUND')
+  const skillId = knownValue(record.values, 'skill_id')
+  const mode = knownValue(record.values, 'mode')
+  const summary = knownValue(record.values, 'summary')
+  if (typeof skillId !== 'string' || !SKILL_ID_PATTERN.test(skillId)) throw new Error('SKILL_ID_INVALID')
+  if (skillId === MANDATORY_SKILL_ID) throw new Error('SKILL_ID_RESERVED')
+  if (mode !== 'always' && mode !== 'demand') throw new Error('SKILL_MODE_INVALID')
+  if (typeof summary !== 'string' || summary.trim() === '') throw new Error('SKILL_FIELDS_INCOMPLETE')
+
+  const history = await upstreamStructured('open', { nodeId: input.nodeId, detail: 'versions' })
+  const versions = Array.isArray(history.versions) ? history.versions : []
+  const target = input.versionId === undefined
+    ? versions.find((version) => version && version.isCurrent === true)
+    : versions.find((version) => version && version.id === input.versionId)
+  if (!target || typeof target.contentSha256 !== 'string') throw new Error('SKILL_VERSION_NOT_RETAINED')
+
+  const opened = await upstreamStructured('open', { nodeId: input.nodeId, detail: 'full', versionId: target.id })
+  if (!opened.version || opened.version.id !== target.id) throw new Error('SKILL_VERSION_MISMATCH')
+  const content = opened.content
+  if (!content || content.kind !== 'page' || typeof content.bodyMarkdown !== 'string') {
+    throw new Error('SKILL_CONTENT_NOT_A_PAGE')
+  }
+  const body = content.bodyMarkdown
+  // A record created before its text was written has an empty body; the pack loader would skip
+  // the file silently, so refuse here instead of installing nothing.
+  if (body.trim() === '') throw new Error('SKILL_BODY_EMPTY')
+  const sha256 = createHash('sha256').update(body, 'utf8').digest('hex')
+  if (sha256 !== target.contentSha256) throw new Error('SKILL_INTEGRITY_FAILED')
+  if (mode === 'always' && body.length > ALWAYS_ON_SKILL_CAP) throw new Error('SKILL_TOO_LARGE_FOR_ALWAYS')
+
+  const pack = await readPack()
+  const skills = Array.isArray(pack.skills) ? pack.skills : []
+  const existing = skills.find((entry) => entry && typeof entry === 'object' && entry.id === skillId)
+  if (existing && !(typeof existing.source === 'string' && existing.source.startsWith(skillSourcePrefix))) {
+    throw new Error('SKILL_LOCALLY_OWNED')
+  }
+
+  const filePath = join(skillsDirectory, `${skillId}.md`)
+  const fileEntry = `./${relative(packRoot, filePath).split(sep).join('/')}`
+  await mkdir(skillsDirectory, { recursive: true, mode: 0o700 })
+  await writeAtomically(filePath, body)
+
+  const entry = {
+    ...(existing ?? {}),
+    id: skillId,
+    file: fileEntry,
+    mode,
+    source: `${skillSourcePrefix}${input.nodeId}?version=${target.id}`,
+    description: summary,
+  }
+  const nextPack = {
+    ...pack,
+    version: typeof pack.version === 'number' ? pack.version : 1,
+    skills: existing ? skills.map((candidate) => (candidate === existing ? entry : candidate)) : [...skills, entry],
+    mcps: Array.isArray(pack.mcps) ? pack.mcps : [],
+  }
+  await writeAtomically(packFile, `${JSON.stringify(nextPack, null, 2)}\n`)
+
+  const packEntry = existing ? 'updated' : 'created'
+  return {
+    content: [{
+      type: 'text',
+      text: `Installed skill ${skillId} revision ${target.revision} (${mode}) to ${filePath}; pack entry ${packEntry}. HeyAmigo applies the new pack from the next message.`,
+    }],
+    structuredContent: {
+      skillId,
+      path: filePath,
+      file: fileEntry,
+      nodeId: input.nodeId,
+      versionId: target.id,
+      revision: target.revision,
+      mode,
+      sha256,
+      packEntry,
+    },
+  }
+}
+
 const upstream = new Client(
   { name: 'heyamigo-amigospace-connector', version: '1.0.0' },
   { capabilities: {} },
@@ -525,17 +732,35 @@ const server = new Server(
   },
 )
 
+const localTools = skillInstallEnabled
+  ? [uploadFileTool, downloadFileTool, installSkillTool]
+  : [uploadFileTool, downloadFileTool]
+
 server.setRequestHandler(ListToolsRequestSchema, async (request) => {
   const listed = await upstream.listTools(request.params, { timeout: timeoutMs })
-  for (const local of [uploadFileTool, downloadFileTool]) {
+  for (const local of localTools) {
     if (listed.tools.some(({ name }) => name === local.name)) {
       throw new Error(`Amigospace upstream tool collides with local ${local.name}`)
     }
   }
-  return { ...listed, tools: [...listed.tools, uploadFileTool, downloadFileTool] }
+  return { ...listed, tools: [...listed.tools, ...localTools] }
 })
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (request.params.name === installSkillTool.name && skillInstallEnabled) {
+    try {
+      return await installSkill(request.params.arguments)
+    } catch (error) {
+      const code = error instanceof Error && /^[A-Z][A-Z0-9_]{0,127}$/.test(error.message)
+        ? error.message
+        : 'INSTALL_SKILL_FAILED'
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `${code}: The skill was not installed; nothing was written.` }],
+        structuredContent: { code },
+      }
+    }
+  }
   if (request.params.name === downloadFileTool.name) {
     try {
       return await downloadStoredFile(request.params.arguments)

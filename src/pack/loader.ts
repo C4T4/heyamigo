@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { loadSharedHttpMcps } from '../mcp/registry.js'
+import { packPath } from './path.js'
 
-const DEFAULT_PACK = './config/pack.json'
+export { packPath }
 const MANDATORY_SKILL = './config/mandatory/i-have-adhd.md'
 const ALWAYS_CAP = 24_000
 const MANDATORY_ID = 'i-have-adhd'
@@ -19,10 +20,6 @@ export type Pack = {
   version: 1
   skills: PackSkill[]
   mcps: string[]
-}
-
-export function packPath(): string {
-  return resolve(process.cwd(), process.env.HEYAMIGO_PACK || DEFAULT_PACK)
 }
 
 function asSkill(raw: unknown): PackSkill | null {

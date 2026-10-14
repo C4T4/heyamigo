@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { config } from '../config.js'
+import { packPath } from '../pack/path.js'
 
 export const AMIGOSPACE_MCP_SERVER_NAME = 'amigospace'
 export const AMIGOSPACE_MCP_TOOL_PATTERN = 'mcp__amigospace__*'
@@ -78,6 +79,14 @@ export class AmigospaceConnector implements KnowledgeConnector {
         String(this.configuration.requestTimeoutMs),
         '--download-dir',
         resolve(config.storage.mediaDir, 'amigospace'),
+        // install_skill writes where the pack loader reads: the pack file, its
+        // skills folder, and the root the loader resolves `file` entries against.
+        '--pack-file',
+        packPath(),
+        '--skills-dir',
+        resolve(dirname(packPath()), 'skills'),
+        '--pack-root',
+        process.cwd(),
       ],
     }
   }
