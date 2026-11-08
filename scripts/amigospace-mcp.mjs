@@ -718,10 +718,27 @@ const upstream = new Client(
   { name: 'heyamigo-amigospace-connector', version: '1.0.0' },
   { capabilities: {} },
 )
-const upstreamTransport = new StreamableHTTPClientTransport(endpoint, {
-  fetch: authenticatedFetch,
-})
-await upstream.connect(upstreamTransport, { timeout: timeoutMs })
+// Codex starts this proxy once per job and keeps whatever tool list it gets.
+// A restart of the Amigospace server answers 503 for a few seconds; one failed
+// connect here would start the whole job without Amigospace tools. Retry the
+// connect a few times with a short pause, well inside Codex's startup budget.
+const connectAttempts = 3
+const connectPauseMs = [1500, 3000]
+for (let attempt = 1; ; attempt += 1) {
+  const upstreamTransport = new StreamableHTTPClientTransport(endpoint, {
+    fetch: authenticatedFetch,
+  })
+  try {
+    await upstream.connect(upstreamTransport, { timeout: timeoutMs })
+    break
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`amigospace-mcp: connect attempt ${attempt}/${connectAttempts} failed: ${message}\n`)
+    if (attempt >= connectAttempts) throw error
+    await upstreamTransport.close().catch(() => undefined)
+    await new Promise(resolve => setTimeout(resolve, connectPauseMs[attempt - 1]))
+  }
+}
 
 const server = new Server(
   { name: 'amigospace', version: '1.0.0' },

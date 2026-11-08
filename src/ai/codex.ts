@@ -160,6 +160,11 @@ function buildExecArgs(params: {
       `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.command=${JSON.stringify(amigospace.command)}`,
       '-c',
       `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.args=${JSON.stringify(amigospace.args)}`,
+      // The connector retries its upstream connect through a server restart
+      // (three attempts, pauses of 1.5 s and 3 s). Codex must wait for that
+      // instead of starting the job with no Amigospace tools after 10 s.
+      '-c',
+      `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.startup_timeout_sec=30`,
     )
   }
   args.push(...codexHttpMcpConfigArgs())

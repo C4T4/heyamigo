@@ -371,3 +371,74 @@ test('install_skill writes a verified skill version into the pack and refuses ta
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('stdio connector retries the upstream connect through a short 503 window', async () => {
+  const credentialDirectory = await mkdtemp(join(tmpdir(), 'heyamigo-amigospace-'))
+  const credentialFile = join(credentialDirectory, 'mcp-token')
+  const token = `amg_pat_${'B'.repeat(43)}`
+  await writeFile(credentialFile, `${token}\n`, { mode: 0o600 })
+  let mcpRequests = 0
+  let refused = 0
+
+  // The first two connects land in a restart window, as agentgateway answers
+  // while the Amigospace server reboots; everything after that is normal.
+  const httpServer = createServer(async (request, response) => {
+    if (request.method !== 'POST' || request.url !== '/mcp') {
+      response.writeHead(405).end()
+      return
+    }
+    mcpRequests += 1
+    if (mcpRequests <= 2) {
+      refused += 1
+      response.writeHead(503, { 'content-type': 'text/plain' }).end('upstream call failed')
+      return
+    }
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as unknown
+    const mcp = upstreamServer(() => undefined)
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+    await mcp.connect(transport)
+    await transport.handleRequest(request, response, body)
+    response.once('close', () => {
+      void Promise.allSettled([transport.close(), mcp.close()])
+    })
+  })
+  await new Promise<void>((resolvePromise) => httpServer.listen(0, '127.0.0.1', resolvePromise))
+  const address = httpServer.address()
+  assert.ok(address && typeof address !== 'string')
+
+  const connectorTransport = new StdioClientTransport({
+    command: process.execPath,
+    args: [
+      resolve('scripts/amigospace-mcp.mjs'),
+      '--endpoint',
+      `http://127.0.0.1:${address.port}/mcp`,
+      '--credential-file',
+      credentialFile,
+      '--timeout-ms',
+      '5000',
+    ],
+    stderr: 'pipe',
+  })
+  const stderrChunks: string[] = []
+  connectorTransport.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk.toString('utf8')))
+  const client = new Client({ name: 'heyamigo-connector-test', version: '1.0.0' }, { capabilities: {} })
+  const started = Date.now()
+  try {
+    await client.connect(connectorTransport, { timeout: 15_000 })
+    const listed = await client.listTools(undefined, { timeout: 5_000 })
+    assert.deepEqual(listed.tools.map((tool) => tool.name), ['browse', 'upload_file', 'download_file'])
+    assert.equal(refused, 2)
+    assert.ok(Date.now() - started >= 4_000, 'the proxy must have paused between attempts')
+    assert.match(stderrChunks.join(''), /connect attempt 1\/3 failed/)
+    assert.match(stderrChunks.join(''), /connect attempt 2\/3 failed/)
+  } finally {
+    await client.close().catch(() => undefined)
+    await connectorTransport.close().catch(() => undefined)
+    await new Promise<void>((resolvePromise, rejectPromise) =>
+      httpServer.close((error) => (error ? rejectPromise(error) : resolvePromise())),
+    )
+    await rm(credentialDirectory, { recursive: true, force: true })
+  }
+})
