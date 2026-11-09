@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { constants } from 'node:fs'
+import { appendFileSync, constants, mkdirSync } from 'node:fs'
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
@@ -53,6 +53,7 @@ const allowedOptions = new Set([
   '--pack-file',
   '--skills-dir',
   '--pack-root',
+  '--log-file',
 ])
 const MAXIMUM_DOWNLOAD_BYTES = 200 * 1024 * 1024
 
@@ -722,18 +723,36 @@ const upstream = new Client(
 // A restart of the Amigospace server answers 503 for a few seconds; one failed
 // connect here would start the whole job without Amigospace tools. Retry the
 // connect a few times with a short pause, well inside Codex's startup budget.
-const connectAttempts = 3
-const connectPauseMs = [1500, 3000]
+// Codex discards what an MCP server writes to stderr, so a connector that
+// dies at startup leaves no trace. With --log-file every attempt is recorded.
+const logFile = options.get('--log-file') ?? null
+if (logFile !== null && !isAbsolute(logFile)) throw new Error('--log-file must be an absolute path')
+function connectorLog(line) {
+  const text = `${new Date().toISOString()} pid=${process.pid} ${line}`
+  process.stderr.write(`amigospace-mcp: ${text}\n`)
+  if (logFile === null) return
+  try {
+    mkdirSync(dirname(logFile), { recursive: true })
+    appendFileSync(logFile, `${text}\n`, { mode: 0o600 })
+  } catch {
+    // Logging must never take the connector down.
+  }
+}
+
+const connectAttempts = 4
+const connectPauseMs = [1500, 3000, 6000]
+const connectStarted = Date.now()
 for (let attempt = 1; ; attempt += 1) {
   const upstreamTransport = new StreamableHTTPClientTransport(endpoint, {
     fetch: authenticatedFetch,
   })
   try {
     await upstream.connect(upstreamTransport, { timeout: timeoutMs })
+    connectorLog(`connected to ${endpoint.host} after ${attempt} attempt(s) in ${Date.now() - connectStarted} ms`)
     break
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    process.stderr.write(`amigospace-mcp: connect attempt ${attempt}/${connectAttempts} failed: ${message}\n`)
+    const message = error instanceof Error ? `${error.message}${error.cause instanceof Error ? ` (${error.cause.message})` : ''}` : String(error)
+    connectorLog(`connect attempt ${attempt}/${connectAttempts} failed: ${message}`)
     if (attempt >= connectAttempts) throw error
     await upstreamTransport.close().catch(() => undefined)
     await new Promise(resolve => setTimeout(resolve, connectPauseMs[attempt - 1]))

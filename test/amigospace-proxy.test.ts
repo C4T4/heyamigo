@@ -431,8 +431,8 @@ test('stdio connector retries the upstream connect through a short 503 window', 
     assert.deepEqual(listed.tools.map((tool) => tool.name), ['browse', 'upload_file', 'download_file'])
     assert.equal(refused, 2)
     assert.ok(Date.now() - started >= 4_000, 'the proxy must have paused between attempts')
-    assert.match(stderrChunks.join(''), /connect attempt 1\/3 failed/)
-    assert.match(stderrChunks.join(''), /connect attempt 2\/3 failed/)
+    assert.match(stderrChunks.join(''), /connect attempt 1\/4 failed/)
+    assert.match(stderrChunks.join(''), /connect attempt 2\/4 failed/)
   } finally {
     await client.close().catch(() => undefined)
     await connectorTransport.close().catch(() => undefined)

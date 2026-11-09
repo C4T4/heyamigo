@@ -87,6 +87,8 @@ export class AmigospaceConnector implements KnowledgeConnector {
         resolve(dirname(packPath()), 'skills'),
         '--pack-root',
         process.cwd(),
+        '--log-file',
+        resolve(dirname(config.storage.messagesDir), 'logs', 'amigospace-connector.log'),
       ],
     }
   }

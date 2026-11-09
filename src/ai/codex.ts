@@ -151,6 +151,13 @@ function buildExecArgs(params: {
       `mcp_servers.playwright.command=${JSON.stringify(mcp.command)}`,
       '-c',
       `mcp_servers.playwright.args=${JSON.stringify(mcp.args)}`,
+      // Codex builds the first tool list after a 1 s grace for optional MCP
+      // servers and runs the turn without the stragglers. A browser job
+      // without its browser is not a job: wait for the server, fail loudly.
+      '-c',
+      'mcp_servers.playwright.required=true',
+      '-c',
+      'mcp_servers.playwright.startup_timeout_sec=30',
     )
   }
 
@@ -160,9 +167,14 @@ function buildExecArgs(params: {
       `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.command=${JSON.stringify(amigospace.command)}`,
       '-c',
       `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.args=${JSON.stringify(amigospace.args)}`,
-      // The connector retries its upstream connect through a server restart
-      // (three attempts, pauses of 1.5 s and 3 s). Codex must wait for that
-      // instead of starting the job with no Amigospace tools after 10 s.
+      // Codex waits only 1 s for optional servers before it builds the first
+      // tool list; the connector needs 2 to 4 s, more on a busy box, so jobs
+      // started without Amigospace tools and declared them unavailable.
+      // Required: Codex waits for the connector (up to 30 s, which covers
+      // its own connect retries) and fails the session with the real error
+      // when it cannot start. The queue retries a failed session.
+      '-c',
+      `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.required=true`,
       '-c',
       `mcp_servers.${AMIGOSPACE_MCP_SERVER_NAME}.startup_timeout_sec=30`,
     )

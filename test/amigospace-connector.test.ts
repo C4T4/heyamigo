@@ -46,6 +46,8 @@ test('bundled connector uses the current Node runtime and cloud proxy', () => {
       `${process.cwd()}/config/skills`,
       '--pack-root',
       process.cwd(),
+      '--log-file',
+      `${process.cwd()}/storage/logs/amigospace-connector.log`,
     ],
   })
   assert.equal(connector.commandFor([]), null)

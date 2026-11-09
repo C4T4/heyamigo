@@ -254,32 +254,14 @@ async function executeAsyncTask(task: AsyncTask): Promise<void> {
   // journal entries, digests, new journal creation — not a substitute for
   // the chat reply.
   const chatText = clean.trim()
-  const anyMarkerFired =
-    appendedCount > 0 || journalCreates.length > 0 || digest !== null
 
   if (chatText.length > 0) {
     await initiate({ jid: task.jid, address: task.address, text: chatText })
-  } else if (anyMarkerFired) {
-    // Worker emitted only markers, no chat text. That's contract-breaking
-    // (chat reply is the primary output) but recoverable — send a short
-    // completion note so the owner isn't left with silence.
-    const bits: string[] = []
-    if (appendedCount > 0) {
-      bits.push(`${appendedCount} journal ${appendedCount === 1 ? 'entry' : 'entries'}`)
-    }
-    if (journalCreates.length > 0) {
-      bits.push(
-        `${journalCreates.length} journal${journalCreates.length === 1 ? '' : 's'} created`,
-      )
-    }
-    if (digest) bits.push('digest scheduled')
-    await initiate({
-      jid: task.jid,
-      address: task.address,
-      text: `Done. ${bits.join(', ')}.`,
-    })
   }
-  // Else: no chat text AND no markers — worker produced nothing. Log only.
+  // Marker-only results (digest, journal entries) stay silent: the markers
+  // were persisted above and a "Done. digest scheduled." note every quarter
+  // hour is noise the owner asked to stop. No chat text and no markers means
+  // the worker produced nothing; the log line below records it.
 
   logger.info(
     {
@@ -508,27 +490,8 @@ export async function runBrowserTask(task: AsyncTask): Promise<void> {
   const chatText = clean.trim()
   if (chatText.length > 0) {
     await initiate({ jid: task.jid, address: task.address, text: chatText })
-  } else if (
-    appendedCount > 0 ||
-    journalCreates.length > 0 ||
-    digest !== null
-  ) {
-    const bits: string[] = []
-    if (appendedCount > 0) {
-      bits.push(`${appendedCount} journal ${appendedCount === 1 ? 'entry' : 'entries'}`)
-    }
-    if (journalCreates.length > 0) {
-      bits.push(
-        `${journalCreates.length} journal${journalCreates.length === 1 ? '' : 's'} created`,
-      )
-    }
-    if (digest) bits.push('digest scheduled')
-    await initiate({
-      jid: task.jid,
-      address: task.address,
-      text: `Done. ${bits.join(', ')}.`,
-    })
   }
+  // Marker-only results stay silent; see the note in the sibling path above.
 
   logger.info(
     {
